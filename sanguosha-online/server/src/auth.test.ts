@@ -1,0 +1,342 @@
+import bcrypt from "bcryptjs";
+import session from "express-session";
+import request from "supertest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createApplication } from "./app.js";
+import type { AppConfig } from "./config.js";
+import { HttpError } from "./errors.js";
+import { RoomService } from "./rooms.js";
+import { SecurityEvents } from "./security-events.js";
+import type {
+  CreateUserInput,
+  PublicUser,
+  UserStore,
+  UserWithPassword,
+  SessionUser,
+} from "./users.js";
+
+const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
+const PLAYER_ID = "22222222-2222-4222-8222-222222222222";
+
+class MemoryUserStore implements UserStore {
+  private readonly records = new Map<string, UserWithPassword>();
+  private counter = 3;
+  readonly audits: Array<{ actorId: string; action: string; targetUserId: string; details: object }> = [];
+
+  constructor() {
+    this.put(ADMIN_ID, "admin", "管理员", "admin-password", "admin", false);
+    this.put(PLAYER_ID, "player", "玩家", "player-password", "player", false);
+  }
+
+  async findById(id: string): Promise<PublicUser | undefined> {
+    const value = this.records.get(id);
+    return value ? this.public(value) : undefined;
+  }
+
+  async findSessionUser(id: string): Promise<SessionUser | undefined> {
+    const value = this.records.get(id);
+    return value ? { user: this.public(value), sessionVersion: value.sessionVersion } : undefined;
+  }
+
+  async findByUsernameWithPassword(username: string): Promise<UserWithPassword | undefined> {
+    return [...this.records.values()].find(
+      (candidate) => candidate.username.toLowerCase() === username.toLowerCase(),
+    );
+  }
+
+  async list(): Promise<PublicUser[]> {
+    return [...this.records.values()].map((value) => this.public(value));
+  }
+
+  async create(input: CreateUserInput): Promise<PublicUser> {
+    if ([...this.records.values()].some((value) => value.username.toLowerCase() === input.username.toLowerCase())) {
+      throw new HttpError(409, "USERNAME_EXISTS", "用户名已存在");
+    }
+    const digit = String(this.counter++).padStart(12, "0");
+    const id = `33333333-3333-4333-8333-${digit}`;
+    this.put(
+      id,
+      input.username,
+      input.displayName,
+      input.password,
+      input.role ?? "player",
+      input.mustChangePassword ?? true,
+    );
+    return this.public(this.records.get(id)!);
+  }
+
+  async setDisabled(id: string, disabled: boolean): Promise<PublicUser | undefined> {
+    const value = this.records.get(id);
+    if (!value) return undefined;
+    value.disabled = disabled;
+    value.sessionVersion += 1;
+    value.updatedAt = new Date().toISOString();
+    return this.public(value);
+  }
+
+  async resetPassword(
+    id: string,
+    password: string,
+    mustChangePassword = true,
+  ): Promise<PublicUser | undefined> {
+    const value = this.records.get(id);
+    if (!value) return undefined;
+    value.passwordHash = bcrypt.hashSync(password, 4);
+    value.mustChangePassword = mustChangePassword;
+    value.sessionVersion += 1;
+    value.updatedAt = new Date().toISOString();
+    return this.public(value);
+  }
+
+  async changePassword(id: string, password: string): Promise<SessionUser | undefined> {
+    const value = this.records.get(id);
+    if (!value) return undefined;
+    value.passwordHash = bcrypt.hashSync(password, 4);
+    value.mustChangePassword = false;
+    value.sessionVersion += 1;
+    value.updatedAt = new Date().toISOString();
+    return { user: this.public(value), sessionVersion: value.sessionVersion };
+  }
+
+  async recordAudit(
+    actorId: string,
+    action: string,
+    targetUserId: string,
+    details: object = {},
+  ): Promise<void> {
+    this.audits.push({ actorId, action, targetUserId, details });
+  }
+
+  private put(
+    id: string,
+    username: string,
+    displayName: string,
+    password: string,
+    role: "admin" | "player",
+    mustChangePassword: boolean,
+  ): void {
+    const now = new Date().toISOString();
+    this.records.set(id, {
+      id,
+      username,
+      displayName,
+      passwordHash: bcrypt.hashSync(password, 4),
+      sessionVersion: 0,
+      role,
+      disabled: false,
+      mustChangePassword,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  private public(value: UserWithPassword): PublicUser {
+    const { passwordHash: _passwordHash, sessionVersion: _sessionVersion, ...publicUser } = value;
+    return { ...publicUser };
+  }
+}
+
+const config: AppConfig = {
+  nodeEnv: "test",
+  port: 3_000,
+  databaseUrl: "postgresql://unused",
+  sessionSecret: "test-session-secret-at-least-32-characters",
+  initialAdmin: { username: "admin", password: "admin-password", displayName: "管理员" },
+  trustProxy: 0,
+  secureCookies: false,
+  appVersion: "test-release",
+  buildSha: "0123456789abcdef",
+};
+
+describe("account allocation and authorization", () => {
+  let users: MemoryUserStore;
+  let app: ReturnType<typeof createApplication>;
+
+  beforeEach(() => {
+    users = new MemoryUserStore();
+    app = createApplication({
+      config,
+      pool: { query: async () => ({ rows: [{ "?column?": 1 }] }) } as never,
+      sessionMiddleware: session({ secret: config.sessionSecret, resave: false, saveUninitialized: false }),
+      users,
+      rooms: new RoomService(),
+      securityEvents: new SecurityEvents(),
+    });
+  });
+
+  it("exposes uncached health and non-secret build metadata without authentication", async () => {
+    const health = await request(app).get("/healthz").expect(200);
+    expect(health.headers["cache-control"]).toBe("no-store");
+    expect(health.body).toEqual({ status: "ok", database: "up" });
+
+    const version = await request(app).get("/version").expect(200);
+    expect(version.headers["cache-control"]).toBe("no-store");
+    expect(version.body).toEqual({
+      service: "sanguosha-online",
+      version: "test-release",
+      buildSha: "0123456789abcdef",
+    });
+  });
+
+  it("does not expose registration and rejects anonymous admin requests", async () => {
+    await request(app).post("/api/auth/register").send({}).expect(404);
+    const response = await request(app).get("/api/admin/users").expect(401);
+    expect(response.body.error.code).toBe("UNAUTHENTICATED");
+  });
+
+  it("allows only admins to allocate, disable and reset player accounts", async () => {
+    const playerAgent = request.agent(app);
+    await playerAgent.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    await playerAgent.get("/api/admin/users").expect(403);
+
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+
+    const created = await adminAgent.post("/api/admin/users")
+      .send({ username: "new_player", displayName: "新玩家", password: "initial-password" })
+      .expect(201);
+    expect(created.body.user).toMatchObject({
+      username: "new_player",
+      role: "player",
+      disabled: false,
+      mustChangePassword: true,
+    });
+    expect(created.body.user).not.toHaveProperty("passwordHash");
+
+    const reset = await adminAgent.post(`/api/admin/users/${PLAYER_ID}/reset-password`)
+      .send({ password: "replacement-password" })
+      .expect(200);
+    expect(reset.body.user.mustChangePassword).toBe(true);
+    expect(reset.body.user).not.toHaveProperty("passwordHash");
+    expect(reset.body.user).not.toHaveProperty("sessionVersion");
+    await request(app).post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(401);
+    await playerAgent.get("/api/auth/me").expect(401);
+    await playerAgent.post("/api/auth/login")
+      .send({ username: "player", password: "replacement-password" })
+      .expect(200);
+
+    await adminAgent.patch(`/api/admin/users/${PLAYER_ID}/status`)
+      .send({ disabled: true })
+      .expect(200);
+    const disabledResponse = await playerAgent.get("/api/auth/me").expect(403);
+    expect(disabledResponse.body.error.code).toBe("ACCOUNT_DISABLED");
+    expect(JSON.stringify(users.audits)).not.toContain("replacement-password");
+    expect(JSON.stringify(users.audits)).not.toContain("passwordHash");
+  });
+
+  it("requires allocated users to replace their temporary password before entering the lobby", async () => {
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+    await adminAgent.post("/api/admin/users")
+      .send({ username: "forced_player", displayName: "待改密玩家", password: "temporary-password" })
+      .expect(201);
+
+    const playerAgent = request.agent(app);
+    const login = await playerAgent.post("/api/auth/login")
+      .send({ username: "forced_player", password: "temporary-password" })
+      .expect(200);
+    expect(login.body.user.mustChangePassword).toBe(true);
+    expect(login.body.user).not.toHaveProperty("passwordHash");
+
+    const blockedLobby = await playerAgent.get("/api/rooms").expect(403);
+    expect(blockedLobby.body.error.code).toBe("PASSWORD_CHANGE_REQUIRED");
+
+    const wrongCurrentPassword = await playerAgent.post("/api/auth/change-password")
+      .send({ currentPassword: "wrong-password", newPassword: "new-player-password" })
+      .expect(401);
+    expect(wrongCurrentPassword.body.error.code).toBe("INVALID_CURRENT_PASSWORD");
+
+    const unchangedPassword = await playerAgent.post("/api/auth/change-password")
+      .send({ currentPassword: "temporary-password", newPassword: "temporary-password" })
+      .expect(400);
+    expect(unchangedPassword.body.error.code).toBe("PASSWORD_UNCHANGED");
+
+    const changed = await playerAgent.post("/api/auth/change-password")
+      .send({ currentPassword: "temporary-password", newPassword: "new-player-password" })
+      .expect(200);
+    expect(changed.body.user.mustChangePassword).toBe(false);
+    expect(changed.body.user).not.toHaveProperty("passwordHash");
+    expect(changed.body.user).not.toHaveProperty("sessionVersion");
+    await playerAgent.get("/api/auth/me").expect(200);
+    await playerAgent.get("/api/rooms").expect(200);
+
+    await request(app).post("/api/auth/login")
+      .send({ username: "forced_player", password: "temporary-password" })
+      .expect(401);
+    await request(app).post("/api/auth/login")
+      .send({ username: "forced_player", password: "new-player-password" })
+      .expect(200);
+    expect(JSON.stringify(users.audits)).not.toContain("new-player-password");
+  });
+
+  it("lets admins opt out of forced change and makes reset require it again by default", async () => {
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+    const created = await adminAgent.post("/api/admin/users")
+      .send({
+        username: "trusted_player",
+        displayName: "可信玩家",
+        password: "trusted-password",
+        mustChangePassword: false,
+      })
+      .expect(201);
+    expect(created.body.user.mustChangePassword).toBe(false);
+
+    const playerAgent = request.agent(app);
+    await playerAgent.post("/api/auth/login")
+      .send({ username: "trusted_player", password: "trusted-password" })
+      .expect(200);
+    await playerAgent.get("/api/rooms").expect(200);
+
+    const reset = await adminAgent.post(`/api/admin/users/${created.body.user.id}/reset-password`)
+      .send({ password: "reset-password" })
+      .expect(200);
+    expect(reset.body.user.mustChangePassword).toBe(true);
+    await playerAgent.get("/api/auth/me").expect(401);
+
+    const relogged = request.agent(app);
+    await relogged.post("/api/auth/login")
+      .send({ username: "trusted_player", password: "reset-password" })
+      .expect(200);
+    const blockedLobby = await relogged.get("/api/rooms").expect(403);
+    expect(blockedLobby.body.error.code).toBe("PASSWORD_CHANGE_REQUIRED");
+  });
+
+  it("also gates an administrator after a self-reset until the new password is replaced", async () => {
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+    await adminAgent.post(`/api/admin/users/${ADMIN_ID}/reset-password`)
+      .send({ password: "temporary-admin-password" })
+      .expect(200);
+    await adminAgent.get("/api/auth/me").expect(401);
+
+    const relogged = request.agent(app);
+    const login = await relogged.post("/api/auth/login")
+      .send({ username: "admin", password: "temporary-admin-password" })
+      .expect(200);
+    expect(login.body.user.mustChangePassword).toBe(true);
+    const blockedAdmin = await relogged.get("/api/admin/users").expect(403);
+    expect(blockedAdmin.body.error.code).toBe("PASSWORD_CHANGE_REQUIRED");
+
+    const changed = await relogged.post("/api/auth/change-password")
+      .send({
+        currentPassword: "temporary-admin-password",
+        newPassword: "private-admin-password",
+      })
+      .expect(200);
+    expect(changed.body.user.mustChangePassword).toBe(false);
+    await relogged.get("/api/admin/users").expect(200);
+  });
+});

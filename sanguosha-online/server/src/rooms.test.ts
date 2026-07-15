@@ -1,0 +1,1045 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  applyAction,
+  getCardDefinition,
+  grantSkill,
+  type Card,
+  type CardKind,
+  type GameAction,
+  type GameSession,
+} from "@sanguosha/shared";
+import { HttpError } from "./errors.js";
+import { RoomService, type RoomPlayerView } from "./rooms.js";
+import type { PublicUser } from "./users.js";
+
+function user(id: string, username: string): PublicUser {
+  const now = new Date().toISOString();
+  return {
+    id,
+    username,
+    displayName: username,
+    role: "player",
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+const owner = user("11111111-1111-4111-8111-111111111111", "owner");
+const guest = user("22222222-2222-4222-8222-222222222222", "guest");
+const third = user("33333333-3333-4333-8333-333333333333", "third");
+const fourth = user("44444444-4444-4444-8444-444444444444", "fourth");
+const fifth = user("55555555-5555-4555-8555-555555555555", "fifth");
+
+function standardCard(id: string, kind: CardKind, suit: Card["suit"] = "spade"): Card {
+  return { id, kind, ...getCardDefinition(kind), suit, rank: 7 };
+}
+
+interface InternalRoom {
+  status: "waiting" | "playing" | "finished";
+  players: Array<RoomPlayerView & { departed: boolean }>;
+  game?: GameSession;
+}
+
+interface RoomInternals {
+  rooms: Map<string, InternalRoom>;
+  botContinuations: Map<string, NodeJS.Immediate>;
+  runBots: (room: InternalRoom) => void;
+  actionForBot: (game: GameSession, bot: RoomPlayerView & { departed: boolean }) => GameAction;
+}
+
+function roomInternals(rooms: RoomService): RoomInternals {
+  return rooms as unknown as RoomInternals;
+}
+
+function startHumanRoom(rooms: RoomService, participants: PublicUser[]): string {
+  const [roomOwner, ...guests] = participants;
+  if (!roomOwner) throw new Error("Missing room owner");
+  const room = rooms.create(roomOwner, { name: "多人韧性", maxPlayers: participants.length });
+  for (const participant of guests) rooms.join(room.id, participant);
+  for (const participant of participants) {
+    rooms.setConnected(participant.id, true);
+    rooms.setReady(room.id, participant.id, true);
+  }
+  rooms.start(room.id, roomOwner.id);
+  return room.id;
+}
+
+describe("RoomService", () => {
+  it("lets one human add a ready bot and start a game that auto-plays bot prompts", () => {
+    const rooms = new RoomService();
+    const created = rooms.create(owner, { name: "单人机器人局", maxPlayers: 2 });
+    rooms.setConnected(owner.id, true);
+    const withBot = rooms.addBot(created.id, owner.id);
+    const bot = withBot.players.find((player) => player.isBot);
+    if (!bot) throw new Error("Bot missing");
+    expect(bot).toMatchObject({ ready: true, connected: true, isBot: true });
+    rooms.setReady(created.id, owner.id, true);
+
+    const started = rooms.start(created.id, owner.id);
+
+    expect(started.status).toBe("playing");
+    const ownerView = rooms.getGameView(created.id, owner.id)!;
+    expect(ownerView.players.find((player) => player.id === owner.id)?.hand).not.toBeNull();
+    expect(ownerView.players.find((player) => player.id === bot.id)?.hand).toBeNull();
+    expect(ownerView.prompt.type === "play" ? ownerView.prompt.playerId : ownerView.prompt.type).not.toBe(bot.id);
+  });
+
+  it("allows only the owner to remove a waiting-room bot", () => {
+    const rooms = new RoomService();
+    const room = rooms.create(owner, { name: "机器人管理", maxPlayers: 3 });
+    const withBot = rooms.addBot(room.id, owner.id);
+    const bot = withBot.players.find((player) => player.isBot)!;
+    expect(() => rooms.removeBot(room.id, guest.id, bot.id)).toThrowError(HttpError);
+    expect(rooms.removeBot(room.id, owner.id, bot.id).players).toHaveLength(1);
+  });
+
+  it("deletes a room when its last human leaves instead of transferring ownership to a bot", () => {
+    const rooms = new RoomService();
+    const room = rooms.create(owner, { name: "机器人清理", maxPlayers: 2 });
+    rooms.addBot(room.id, owner.id);
+    rooms.leave(room.id, owner.id);
+    expect(rooms.get(room.id)).toBeUndefined();
+    expect(rooms.list()).toEqual([]);
+  });
+
+  it("closes a started bot room explicitly when its last human leaves", () => {
+    const rooms = new RoomService();
+    const room = rooms.create(owner, { name: "开局后清理", maxPlayers: 2 });
+    rooms.setConnected(owner.id, true);
+    rooms.addBot(room.id, owner.id);
+    rooms.setReady(room.id, owner.id, true);
+    rooms.start(room.id, owner.id);
+
+    rooms.leave(room.id, owner.id);
+
+    expect(rooms.get(room.id)).toBeUndefined();
+    expect(rooms.allRoomIds()).not.toContain(room.id);
+  });
+
+  it("enforces membership/readiness/ownership and creates a private game view", () => {
+    const rooms = new RoomService();
+    const room = rooms.create(owner, { name: "测试房", maxPlayers: 2 });
+    rooms.join(room.id, guest);
+    rooms.setConnected(owner.id, true);
+    rooms.setConnected(guest.id, true);
+    rooms.setReady(room.id, owner.id, true);
+    rooms.setReady(room.id, guest.id, true);
+
+    expect(() => rooms.start(room.id, guest.id)).toThrowError(HttpError);
+    const started = rooms.start(room.id, owner.id);
+    expect(started.status).toBe("playing");
+
+    const ownerView = rooms.getGameView(room.id, owner.id)!;
+    const guestView = rooms.getGameView(room.id, guest.id)!;
+    expect(ownerView.players.find((player) => player.id === owner.id)?.hand).not.toBeNull();
+    expect(ownerView.players.find((player) => player.id === guest.id)?.hand).toBeNull();
+    expect(guestView.players.find((player) => player.id === guest.id)?.hand).not.toBeNull();
+    rooms.leave(room.id, guest.id);
+    expect(rooms.get(room.id)).toMatchObject({ status: "finished", playerCount: 1 });
+    expect(rooms.getGameView(room.id, owner.id)).toMatchObject({
+      status: "finished",
+      prompt: { type: "finished" },
+    });
+  });
+
+  it("rejects actions that impersonate another account", () => {
+    const rooms = new RoomService();
+    const room = rooms.create(owner, { name: "防作弊" });
+    rooms.join(room.id, guest);
+    rooms.setConnected(owner.id, true);
+    rooms.setConnected(guest.id, true);
+    rooms.setReady(room.id, owner.id, true);
+    rooms.setReady(room.id, guest.id, true);
+    rooms.start(room.id, owner.id);
+
+    expect(() => rooms.applyAction(room.id, owner.id, {
+      type: "end_play",
+      playerId: guest.id,
+    })).toThrowError(/不能替其他玩家/);
+  });
+
+  it("gives disconnected players a reconnect grace period, then forfeits", () => {
+    vi.useFakeTimers();
+    try {
+      const rooms = new RoomService(1_000);
+      const room = rooms.create(owner, { name: "断线托管", maxPlayers: 2 });
+      rooms.join(room.id, guest);
+      rooms.setConnected(owner.id, true);
+      rooms.setConnected(guest.id, true);
+      rooms.setReady(room.id, owner.id, true);
+      rooms.setReady(room.id, guest.id, true);
+      rooms.start(room.id, owner.id);
+
+      rooms.setConnected(guest.id, false);
+      vi.advanceTimersByTime(900);
+      rooms.setConnected(guest.id, true);
+      vi.advanceTimersByTime(200);
+      expect(rooms.get(room.id)?.status).toBe("playing");
+
+      rooms.setConnected(guest.id, false);
+      vi.advanceTimersByTime(1_000);
+      expect(rooms.get(room.id)).toMatchObject({ status: "finished", playerCount: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("eliminates a leaving human but keeps a five-player identity game running", () => {
+    const participants = [owner, guest, third, fourth, fifth];
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, participants);
+    const internals = roomInternals(rooms);
+    const game = internals.rooms.get(roomId)?.game;
+    const loyalist = game?.players.find((player) => player.role === "loyalist");
+    if (!loyalist) throw new Error("Missing Loyalist");
+
+    rooms.leave(roomId, loyalist.id);
+
+    expect(rooms.get(roomId)).toMatchObject({ status: "playing", playerCount: 4 });
+    expect(rooms.members(roomId)).not.toContain(loyalist.id);
+    expect(rooms.getForUser(loyalist.id)).toBeUndefined();
+    expect(internals.rooms.get(roomId)?.game?.players.find((player) => player.id === loyalist.id)).toMatchObject({
+      alive: false,
+      hp: 0,
+      hand: [],
+    });
+    const snapshotRoom = rooms.exportSnapshot().rooms.find((room) => room.id === roomId);
+    expect(snapshotRoom?.players).toHaveLength(5);
+    expect(snapshotRoom?.players.find((player) => player.id === loyalist.id)).toMatchObject({
+      departed: true,
+      connected: false,
+    });
+
+    const restored = new RoomService();
+    restored.restoreSnapshot(JSON.parse(JSON.stringify(rooms.exportSnapshot())));
+    expect(restored.get(roomId)).toMatchObject({ status: "playing", playerCount: 4 });
+    expect(restored.getForUser(loyalist.id)).toBeUndefined();
+    expect(restored.members(roomId)).not.toContain(loyalist.id);
+  });
+
+  it("uses the same continuing-game rule after a disconnect timeout", () => {
+    vi.useFakeTimers();
+    try {
+      const participants = [owner, guest, third, fourth, fifth];
+      const rooms = new RoomService(1_000);
+      const roomId = startHumanRoom(rooms, participants);
+      const game = roomInternals(rooms).rooms.get(roomId)?.game;
+      const loyalist = game?.players.find((player) => player.role === "loyalist");
+      if (!loyalist) throw new Error("Missing Loyalist");
+
+      rooms.setConnected(loyalist.id, false);
+      vi.advanceTimersByTime(1_000);
+
+      expect(rooms.get(roomId)).toMatchObject({ status: "playing", playerCount: 4 });
+      expect(roomInternals(rooms).rooms.get(roomId)?.game?.players.find((player) => player.id === loyalist.id)).toMatchObject({
+        alive: false,
+        hp: 0,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("continues bot work asynchronously after a batch limit instead of sticking", async () => {
+    const rooms = new RoomService(90_000, 1);
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    if (!room || !game || !bot || !botPlayer) throw new Error("Missing bot test state");
+    bot.isBot = true;
+    const injectedCard: Card = {
+      id: "bot-batch-horse",
+      kind: "chi_tu",
+      name: "赤兔",
+      category: "equipment",
+      suit: "heart",
+      rank: 5,
+    };
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [injectedCard];
+    game.currentPlayerId = bot.id;
+    game.turn = {
+      number: game.turn.number,
+      playerId: bot.id,
+      phase: "play",
+      slashUsed: false,
+      wineUsed: false,
+      slashDamageBonus: 0,
+      requiredDiscardCount: 0,
+      skipDraw: false,
+      skipPlay: false,
+    };
+    game.pendingResponse = null;
+    const changed = vi.fn();
+    rooms.onChanged(changed);
+
+    internals.runBots(room);
+
+    expect(internals.botContinuations.has(roomId)).toBe(true);
+    await vi.waitFor(() => {
+      expect(internals.botContinuations.has(roomId)).toBe(false);
+      const current = internals.rooms.get(roomId)?.game;
+      expect(
+        current?.status === "finished" ||
+        current?.currentPlayerId !== bot.id ||
+        current.pendingResponse?.targetId !== bot.id,
+      ).toBe(true);
+    });
+    expect(changed).toHaveBeenCalled();
+  });
+
+  it("contains a bot action exception and settles through authoritative elimination", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const victim = game?.players.find((player) => player.id === owner.id);
+    if (!room || !game || !bot || !victim) throw new Error("Missing bot failure state");
+    bot.isBot = true;
+    game.discardPile.push(...victim.hand, ...Object.values(victim.equipment), ...victim.judgment);
+    victim.hand = [];
+    victim.equipment = {};
+    victim.judgment = [];
+    const resolvingCard: Card = {
+      id: "broken-zone-selection",
+      kind: "guo_he_chai_qiao",
+      name: "过河拆桥",
+      category: "trick",
+      suit: "spade",
+      rank: 3,
+    };
+    game.resolvingCards.push(resolvingCard);
+    game.currentPlayerId = bot.id;
+    game.turn.playerId = bot.id;
+    game.turn.phase = "respond";
+    game.pendingResponse = {
+      type: "zone_selection",
+      attackerId: bot.id,
+      targetId: bot.id,
+      victimId: victim.id,
+      cardId: resolvingCard.id,
+      cardKind: "guo_he_chai_qiao",
+      mode: "discard",
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect(() => internals.runBots(room)).not.toThrow();
+      expect(rooms.get(roomId)?.status).toBe("finished");
+      expect(room.game?.players.find((player) => player.id === bot.id)?.alive).toBe(false);
+      expect(consoleError).toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("uses conversion skills only as a fallback and never activates Kurou", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    if (!room || !game || !bot || !botPlayer) throw new Error("Missing conversion-skill bot fixture");
+    bot.isBot = true;
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-wusheng-dodge",
+      kind: "dodge",
+      name: "闪",
+      category: "basic",
+      suit: "heart",
+      rank: 2,
+    }];
+    botPlayer.generalId = "guan_yu";
+    game.currentPlayerId = bot.id;
+    game.turn = {
+      ...game.turn,
+      playerId: bot.id,
+      phase: "play",
+      slashUsed: false,
+      requiredDiscardCount: 0,
+    };
+    game.pendingResponse = null;
+
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill",
+      playerId: bot.id,
+      skillId: "wusheng",
+      cardIds: ["bot-wusheng-dodge"],
+      targetId: owner.id,
+    });
+
+    botPlayer.generalId = "huang_gai";
+    expect(internals.actionForBot(game, bot)).toEqual({ type: "end_play", playerId: bot.id });
+  });
+
+  it("uses Fanjian and ordered Lijian, and answers a restored Fanjian suit prompt", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest, third, fourth]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    if (!room || !game || !bot || !botPlayer) throw new Error("Missing Fanjian/Lijian bot fixture");
+    bot.isBot = true;
+    for (const player of game.players.filter((player) => player.id !== bot.id)) player.generalId = "liu_bei";
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-skill-cost",
+      kind: "dodge",
+      name: "闪",
+      category: "basic",
+      suit: "club",
+      rank: 8,
+    }];
+    game.currentPlayerId = bot.id;
+    game.turn = {
+      ...game.turn,
+      playerId: bot.id,
+      phase: "play",
+      skillUseCounts: {},
+      requiredDiscardCount: 0,
+    };
+    game.pendingResponse = null;
+
+    botPlayer.generalId = "zhou_yu";
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "fanjian", targetId: owner.id,
+    });
+
+    botPlayer.generalId = "diao_chan";
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill",
+      playerId: bot.id,
+      skillId: "lijian",
+      cardIds: ["bot-skill-cost"],
+      targetIds: [owner.id, third.id],
+    });
+
+    game.currentPlayerId = owner.id;
+    game.turn = { ...game.turn, playerId: owner.id, phase: "respond", skillUseCounts: { fanjian: 1 } };
+    game.pendingResponse = {
+      type: "fanjian_suit",
+      attackerId: owner.id,
+      targetId: bot.id,
+      eventId: 7,
+      promptId: `skill:7:fanjian:${bot.id}:0`,
+    };
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "choose_fanjian_suit",
+      playerId: bot.id,
+      suit: "spade",
+      promptId: `skill:7:fanjian:${bot.id}:0`,
+    });
+  });
+
+  it("answers response prompts with Wusheng, Longdan, or Qingguo when no physical response exists", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    if (!room || !game || !bot || !botPlayer) throw new Error("Missing response-skill bot fixture");
+    bot.isBot = true;
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-wusheng-peach",
+      kind: "peach",
+      name: "桃",
+      category: "basic",
+      suit: "heart",
+      rank: 3,
+    }];
+    botPlayer.generalId = "guan_yu";
+    game.turn.phase = "respond";
+    game.pendingResponse = {
+      type: "duel",
+      attackerId: owner.id,
+      targetId: bot.id,
+      cardId: "bot-duel",
+      initiatorId: owner.id,
+      originalTargetId: bot.id,
+    };
+
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill",
+      playerId: bot.id,
+      skillId: "wusheng",
+      cardIds: ["bot-wusheng-peach"],
+    });
+
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-longdan-slash",
+      kind: "slash",
+      name: "杀",
+      category: "basic",
+      suit: "spade",
+      rank: 7,
+    }];
+    botPlayer.generalId = "zhao_yun";
+    game.pendingResponse = {
+      type: "slash",
+      attackerId: owner.id,
+      targetId: bot.id,
+      cardId: "bot-incoming-slash",
+      slashKind: "slash",
+      damage: 1,
+      nature: "normal",
+      color: "black",
+      remainingTargetIds: [],
+      zhuQueChecked: true,
+      ciXiongChecked: true,
+    };
+
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill",
+      playerId: bot.id,
+      skillId: "longdan",
+      cardIds: ["bot-longdan-slash"],
+    });
+
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-qingguo-black",
+      kind: "peach",
+      name: "桃",
+      category: "basic",
+      suit: "spade",
+      rank: 4,
+    }];
+    botPlayer.generalId = "zhen_ji";
+
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill",
+      playerId: bot.id,
+      skillId: "qingguo",
+      cardIds: ["bot-qingguo-black"],
+    });
+  });
+
+  it("answers both serialized Dodge prompts against a Wushuang Slash", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    const attacker = game?.players.find((player) => player.id === owner.id);
+    if (!room || !game || !bot || !botPlayer || !attacker) throw new Error("Missing Wushuang bot fixture");
+    bot.isBot = true;
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [
+      { id: "bot-dodge-1", kind: "dodge", name: "闪", category: "basic", suit: "heart", rank: 2 },
+      { id: "bot-dodge-2", kind: "dodge", name: "闪", category: "basic", suit: "diamond", rank: 3 },
+    ];
+    attacker.generalId = "lv_bu";
+    const incoming: Card = {
+      id: "bot-wushuang-slash", kind: "slash", name: "杀", category: "basic", suit: "spade", rank: 7,
+    };
+    game.resolvingCards.push(incoming);
+    game.turn.phase = "respond";
+    game.pendingResponse = {
+      type: "slash",
+      attackerId: attacker.id,
+      targetId: bot.id,
+      cardId: incoming.id,
+      slashKind: "slash",
+      damage: 1,
+      nature: "normal",
+      color: "black",
+      requiredDodgeCount: 2,
+      dodgesPlayed: 0,
+      remainingTargetIds: [],
+      zhuQueChecked: true,
+      ciXiongChecked: true,
+    };
+
+    const first = internals.actionForBot(game, bot);
+    expect(first).toEqual({ type: "respond", playerId: bot.id, cardId: "bot-dodge-1" });
+    room.game = applyAction(game, first);
+    expect(room.game.pendingResponse).toMatchObject({ type: "slash", targetId: bot.id, dodgesPlayed: 1 });
+
+    const second = internals.actionForBot(room.game, bot);
+    expect(second).toEqual({ type: "respond", playerId: bot.id, cardId: "bot-dodge-2" });
+    room.game = applyAction(room.game, second);
+    expect(room.game.pendingResponse).toBeNull();
+    expect(room.game.players.find((player) => player.id === bot.id)?.hp).toBe(botPlayer.hp);
+  });
+
+  it("uses the second active-skill batch with bounded conservative choices", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    const targetPlayer = game?.players.find((player) => player.id === owner.id);
+    if (!room || !game || !bot || !botPlayer || !targetPlayer) throw new Error("Missing active-skill bot fixture");
+    bot.isBot = true;
+    botPlayer.role = "rebel";
+    targetPlayer.role = "lord";
+    game.currentPlayerId = bot.id;
+    game.turn = {
+      ...game.turn,
+      playerId: bot.id,
+      phase: "play",
+      slashUsed: false,
+      requiredDiscardCount: 0,
+      skillUseCounts: {},
+      rendeGivenCount: 0,
+      rendeRecovered: false,
+    };
+    game.pendingResponse = null;
+    game.virtualCardOrigins = {};
+    game.discardPile.push(...targetPlayer.judgment);
+    targetPlayer.judgment = [];
+    targetPlayer.generalId = "guan_yu";
+    targetPlayer.hp = targetPlayer.maxHp - 1;
+
+    const setDodgeHand = (prefix: string, count: number, suit: Card["suit"] = "spade"): string[] => {
+      game.discardPile.push(...botPlayer.hand);
+      botPlayer.hand = Array.from({ length: count }, (_, index) => ({
+        id: `${prefix}-${index + 1}`,
+        kind: "dodge" as const,
+        name: "闪" as const,
+        category: "basic" as const,
+        suit,
+        rank: (index + 2) as Card["rank"],
+      }));
+      return botPlayer.hand.map((card) => card.id);
+    };
+
+    botPlayer.generalId = "sun_quan";
+    const [zhihengCard] = setDodgeHand("bot-zhiheng", 1);
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "zhiheng", cardIds: [zhihengCard],
+    });
+
+    botPlayer.generalId = "liu_bei";
+    botPlayer.hp = botPlayer.maxHp - 1;
+    const rendeCards = setDodgeHand("bot-rende", 2);
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "rende", cardIds: rendeCards, targetId: owner.id,
+    });
+    game.turn.rendeRecovered = true;
+    expect(internals.actionForBot(game, bot)).toEqual({ type: "end_play", playerId: bot.id });
+    game.turn.rendeRecovered = false;
+
+    botPlayer.generalId = "hua_tuo";
+    botPlayer.hp = botPlayer.maxHp - 1;
+    const [qingnangCard] = setDodgeHand("bot-qingnang", 1);
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "qingnang", cardIds: [qingnangCard], targetId: bot.id,
+    });
+
+    botPlayer.generalId = "sun_shang_xiang";
+    botPlayer.hp = botPlayer.maxHp - 1;
+    const jieyinCards = setDodgeHand("bot-jieyin", 2);
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "jieyin", cardIds: jieyinCards, targetId: owner.id,
+    });
+
+    botPlayer.generalId = "da_qiao";
+    botPlayer.hp = botPlayer.maxHp;
+    const [guoseCard] = setDodgeHand("bot-guose", 1, "diamond");
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "guose", cardIds: [guoseCard], targetId: owner.id,
+    });
+    game.virtualCardOrigins = { "already-used-guose": "dodge" };
+    expect(internals.actionForBot(game, bot)).toEqual({ type: "end_play", playerId: bot.id });
+  });
+
+  it("prefers physical rescue cards and otherwise answers dying with Jijiu", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    const victim = game?.players.find((player) => player.id === owner.id);
+    if (!room || !game || !bot || !botPlayer || !victim) throw new Error("Missing Jijiu bot fixture");
+    bot.isBot = true;
+    botPlayer.generalId = "hua_tuo";
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-jijiu-red",
+      kind: "dodge",
+      name: "闪",
+      category: "basic",
+      suit: "heart",
+      rank: 6,
+    }];
+    game.currentPlayerId = owner.id;
+    game.turn.playerId = owner.id;
+    game.turn.phase = "respond";
+    victim.alive = true;
+    victim.hp = 0;
+    game.pendingResponse = {
+      type: "dying",
+      victimId: victim.id,
+      damageSourceId: null,
+      targetId: bot.id,
+      remainingResponderIds: [owner.id],
+      resume: { type: "finish_effect" },
+    };
+
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "use_skill", playerId: bot.id, skillId: "jijiu", cardIds: ["bot-jijiu-red"],
+    });
+
+    botPlayer.hand.unshift({
+      id: "bot-physical-peach",
+      kind: "peach",
+      name: "桃",
+      category: "basic",
+      suit: "diamond",
+      rank: 5,
+    });
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "respond", playerId: bot.id, cardId: "bot-physical-peach",
+    });
+  });
+
+  it("accepts beneficial phase skills but uses Luoyi only with health and an immediate damage card", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    if (!room || !game || !bot || !botPlayer) throw new Error("Missing skill-choice bot fixture");
+    bot.isBot = true;
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [{
+      id: "bot-luoyi-slash",
+      kind: "slash",
+      name: "杀",
+      category: "basic",
+      suit: "spade",
+      rank: 9,
+    }];
+    botPlayer.hp = Math.min(2, botPlayer.maxHp);
+    game.turn.phase = "respond";
+    game.pendingResponse = {
+      type: "skill_choice",
+      targetId: bot.id,
+      skillId: "luoyi",
+      resume: { type: "finish_draw", playerId: bot.id },
+    };
+
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "resolve_skill",
+      playerId: bot.id,
+      skillId: "luoyi",
+      activate: true,
+    });
+
+    botPlayer.hp = 1;
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "resolve_skill",
+      playerId: bot.id,
+      skillId: "luoyi",
+      activate: false,
+    });
+
+    game.pendingResponse = {
+      type: "skill_choice",
+      targetId: bot.id,
+      skillId: "keji",
+      resume: { type: "enter_discard", playerId: bot.id, count: 1 },
+    };
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "resolve_skill",
+      playerId: bot.id,
+      skillId: "keji",
+      activate: true,
+    });
+
+    const jizhiCard: Card = {
+      id: "bot-jizhi-ex",
+      kind: "ex_nihilo",
+      name: "无中生有",
+      category: "trick",
+      suit: "heart",
+      rank: 7,
+    };
+    botPlayer.hand.push(jizhiCard);
+    game.nextUseId = 2;
+    game.nextEventId = 2;
+    const jizhiTriggerId = `1:jizhi:${bot.id}:0`;
+    game.pendingResponse = {
+      type: "skill_choice",
+      targetId: bot.id,
+      skillId: "jizhi",
+      promptId: `skill:${jizhiTriggerId}`,
+      triggerId: jizhiTriggerId,
+      resume: {
+        type: "card_use",
+        stage: "card_use_declared",
+        eventId: 1,
+        remainingTriggers: [],
+        intent: {
+          useId: 1,
+          sourceId: bot.id,
+          physicalCardId: jizhiCard.id,
+          physicalKind: jizhiCard.kind,
+          effectiveKind: jizhiCard.kind,
+          suit: jizhiCard.suit,
+          rank: jizhiCard.rank,
+          targetIds: [bot.id],
+          method: "use",
+          viaSkill: null,
+        },
+      },
+    };
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "resolve_skill",
+      playerId: bot.id,
+      skillId: "jizhi",
+      promptId: `skill:${jizhiTriggerId}`,
+      activate: true,
+    });
+
+    for (const [index, skillId] of (["lianying", "xiaoji"] as const).entries()) {
+      const eventId = 2 + index;
+      const triggerId = `${eventId}:${skillId}:${bot.id}:0`;
+      game.afterMove = { queuedTriggers: [], suspendedPhase: "play", suspendedResponse: null };
+      game.pendingResponse = {
+        type: "skill_choice",
+        targetId: bot.id,
+        skillId,
+        promptId: `skill:${triggerId}`,
+        triggerId,
+        resume: { type: "after_move", eventId },
+      };
+      expect(internals.actionForBot(game, bot)).toEqual({
+        type: "resolve_skill",
+        playerId: bot.id,
+        skillId,
+        promptId: `skill:${triggerId}`,
+        activate: true,
+      });
+    }
+    game.afterMove = { queuedTriggers: [], suspendedPhase: null, suspendedResponse: null };
+
+    const beneficialChoices = [
+      { skillId: "yingzi" as const, resume: { type: "finish_draw" as const, playerId: bot.id } },
+      { skillId: "biyue" as const, resume: { type: "finish_turn" as const, playerId: bot.id } },
+      { skillId: "luoshen" as const, resume: { type: "continue_judgment" as const, playerId: bot.id }, iteration: 4 },
+    ];
+    for (const choice of beneficialChoices) {
+      game.pendingResponse = {
+        type: "skill_choice",
+        targetId: bot.id,
+        ...choice,
+      };
+      expect(internals.actionForBot(game, bot)).toEqual({
+        type: "resolve_skill",
+        playerId: bot.id,
+        skillId: choice.skillId,
+        activate: true,
+      });
+    }
+  });
+
+  it("answers serialized standard-skill prompts with bounded deterministic choices", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest, third]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    const ownerPlayer = game?.players.find((player) => player.id === owner.id);
+    const thirdPlayer = game?.players.find((player) => player.id === third.id);
+    if (!room || !game || !bot || !botPlayer || !ownerPlayer || !thirdPlayer) {
+      throw new Error("Missing standard-skill bot fixture");
+    }
+    bot.isBot = true;
+    for (const player of game.players) {
+      game.discardPile.push(...player.hand, ...Object.values(player.equipment));
+      player.hand = [];
+      player.equipment = {};
+      player.extraPiles = {};
+      player.generalId = "gan_ning";
+    }
+    game.turn = { ...game.turn, phase: "respond", requiredDiscardCount: 0 };
+
+    game.deck = [standardCard("bot-gx-first", "slash"), standardCard("bot-gx-second", "dodge")];
+    game.pendingResponse = {
+      type: "standard_skill",
+      targetId: bot.id,
+      promptId: `standard:21:guanxing:${bot.id}:guanxing_reorder`,
+      eventId: 21,
+      skillId: "guanxing",
+      stage: "guanxing_reorder",
+      selectedCardIds: ["bot-gx-second", "bot-gx-first"],
+    };
+    expect(internals.actionForBot(game, bot)).toEqual({
+      type: "resolve_standard_skill",
+      playerId: bot.id,
+      promptId: `standard:21:guanxing:${bot.id}:guanxing_reorder`,
+      activate: true,
+      topCardIds: ["bot-gx-second", "bot-gx-first"],
+      bottomCardIds: [],
+    });
+
+    ownerPlayer.hand = [standardCard("bot-tuxi-owner", "peach")];
+    thirdPlayer.hand = [standardCard("bot-tuxi-third", "dodge")];
+    game.pendingResponse = {
+      type: "standard_skill",
+      targetId: bot.id,
+      promptId: `standard:22:tuxi:${bot.id}:tuxi_select`,
+      eventId: 22,
+      skillId: "tuxi",
+      stage: "tuxi_select",
+    };
+    const tuxi = internals.actionForBot(game, bot);
+    expect(tuxi).toMatchObject({
+      type: "resolve_standard_skill",
+      playerId: bot.id,
+      activate: true,
+      tokens: ["hand:0", "hand:0"],
+    });
+    expect(tuxi.type === "resolve_standard_skill" ? new Set(tuxi.targetIds) : null).toEqual(new Set([owner.id, third.id]));
+
+    botPlayer.extraPiles[`yiji:23:${bot.id}`] = [
+      standardCard("bot-yiji-one", "slash"),
+      standardCard("bot-yiji-two", "peach"),
+    ];
+    game.pendingResponse = {
+      type: "standard_skill",
+      targetId: bot.id,
+      promptId: `standard:23:yiji:${bot.id}:yiji_distribute`,
+      eventId: 23,
+      skillId: "yiji",
+      stage: "yiji_distribute",
+      selectedCardIds: ["bot-yiji-one", "bot-yiji-two"],
+    };
+    expect(internals.actionForBot(game, bot)).toMatchObject({
+      type: "resolve_standard_skill",
+      activate: true,
+      allocations: [
+        { cardId: "bot-yiji-one", targetId: bot.id },
+        { cardId: "bot-yiji-two", targetId: bot.id },
+      ],
+    });
+
+    botPlayer.hand = [standardCard("bot-ganglie-one", "slash"), standardCard("bot-ganglie-two", "dodge")];
+    game.pendingResponse = {
+      type: "standard_skill",
+      targetId: bot.id,
+      promptId: `standard:24:ganglie:${bot.id}:ganglie_punish`,
+      eventId: 24,
+      skillId: "ganglie",
+      stage: "ganglie_punish",
+      sourceId: owner.id,
+    };
+    expect(internals.actionForBot(game, bot)).toMatchObject({
+      type: "resolve_standard_skill",
+      activate: true,
+      cardIds: ["bot-ganglie-one", "bot-ganglie-two"],
+    });
+
+    game.discardPile.push(...ownerPlayer.hand, ...thirdPlayer.hand, ...botPlayer.hand);
+    ownerPlayer.hand = [standardCard("bot-bagua-slash", "slash")];
+    thirdPlayer.hand = [];
+    botPlayer.hand = [standardCard("bot-guicai-cost", "dodge", "club")];
+    botPlayer.equipment.armor = standardCard("bot-bagua", "ba_gua_zhen");
+    grantSkill(game.completeRules.lifecycle, {
+      ownerId: bot.id,
+      skillId: "guicai",
+      sourcePlayerId: bot.id,
+      sourceSkillId: "bot-test",
+      expiry: { type: "permanent" },
+    });
+    game.deck = [standardCard("bot-bagua-judgment", "peach", "heart")];
+    game.resolvingCards = [];
+    game.currentPlayerId = owner.id;
+    game.turn = { ...game.turn, playerId: owner.id, phase: "play", slashUsed: false };
+    game.pendingResponse = null;
+    const attacked = applyAction(game, {
+      type: "play_card", playerId: owner.id, cardId: "bot-bagua-slash", targetId: bot.id,
+    });
+    const judging = applyAction(attacked, { type: "activate_armor", playerId: bot.id, activate: true });
+    room.game = judging;
+    expect(internals.actionForBot(judging, bot)).toMatchObject({
+      type: "resolve_standard_skill",
+      playerId: bot.id,
+      activate: false,
+      promptId: expect.stringContaining("judgment:"),
+    });
+  });
+
+  it("removes a disconnected dead member without crashing or ending the match", () => {
+    vi.useFakeTimers();
+    try {
+      const rooms = new RoomService(1_000);
+      const room = rooms.create(owner, { name: "阵亡离席", maxPlayers: 3 });
+      rooms.join(room.id, guest);
+      rooms.join(room.id, third);
+      for (const player of [owner, guest, third]) {
+        rooms.setConnected(player.id, true);
+        rooms.setReady(room.id, player.id, true);
+      }
+      rooms.start(room.id, owner.id);
+
+      const internalRooms = (rooms as unknown as {
+        rooms: Map<string, { game?: GameSession }>;
+      }).rooms;
+      const game = internalRooms.get(room.id)?.game;
+      const deadPlayer = game?.players.find((player) => player.id === guest.id);
+      if (!deadPlayer) throw new Error("test game player missing");
+      deadPlayer.alive = false;
+      deadPlayer.hp = 0;
+
+      rooms.setConnected(guest.id, false);
+      expect(() => vi.advanceTimersByTime(1_000)).not.toThrow();
+      expect(rooms.get(room.id)).toMatchObject({ status: "playing", playerCount: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("round-trips room and private game state through a restart snapshot", () => {
+    const rooms = new RoomService();
+    const room = rooms.create(owner, { name: "持久化对局", maxPlayers: 2 });
+    rooms.join(room.id, guest);
+    rooms.setConnected(owner.id, true);
+    rooms.setConnected(guest.id, true);
+    rooms.setReady(room.id, owner.id, true);
+    rooms.setReady(room.id, guest.id, true);
+    rooms.start(room.id, owner.id);
+
+    const serialized = JSON.stringify(rooms.exportSnapshot());
+    const restored = new RoomService();
+    restored.restoreSnapshot(JSON.parse(serialized));
+
+    expect(restored.get(room.id)).toMatchObject({
+      status: "playing",
+      playerCount: 2,
+      players: [
+        { id: owner.id, connected: false },
+        { id: guest.id, connected: false },
+      ],
+    });
+    const ownerView = restored.getGameView(room.id, owner.id)!;
+    expect(ownerView.players.find((player) => player.id === owner.id)?.hand).not.toBeNull();
+    expect(ownerView.players.find((player) => player.id === guest.id)?.hand).toBeNull();
+  });
+});
