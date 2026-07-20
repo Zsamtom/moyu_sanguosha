@@ -2,7 +2,7 @@
 
 面向电脑浏览器的多人文字版三国杀，采用 React、Node.js、PostgreSQL 与服务端权威规则引擎实现。支持管理员分配账号、真人或机器人开房、实时对局、断线恢复，以及标准、SP、风、火、林、山、神武将包。
 
-示例网站：moyu.pdcat.cn
+示例网站：https://moyu.pdcat.cn
 
 正式项目源码只位于 [`sanguosha-online`](./sanguosha-online)。其中包含完整的项目介绍、本地开发步骤、Docker/Nginx 生产部署说明、测试命令及发布约定：
 
