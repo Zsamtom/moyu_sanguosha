@@ -1807,18 +1807,6 @@ p {
   width: 100%;
 }
 
-.public-card-pool {
-  margin: 14px 0;
-  padding: 14px;
-  border: 1px dashed rgba(138, 92, 45, 0.45);
-  border-radius: 12px;
-  background: rgba(255, 247, 220, 0.58);
-}
-
-.public-card-pool .hand-cards {
-  margin-top: 10px;
-}
-
 /* Desktop document workspace */
 :root {
   color: #202123;
@@ -2734,8 +2722,7 @@ body {
 }
 
 .general-skill-zone,
-.card-inspector,
-.public-card-pool {
+.card-inspector {
   border-color: var(--paper-line);
   border-radius: 5px;
   background: #f8f8f8;
@@ -2988,35 +2975,36 @@ body {
 }
 
 .battle-player {
-  height: 232px;
-  min-height: 232px;
-  max-height: 232px;
+  height: 190px;
+  min-height: 190px;
+  max-height: 190px;
   box-sizing: border-box;
+  padding: 10px;
 }
 
 .battle-player__effects {
   display: flex;
-  height: 54px;
+  height: 44px;
   align-content: flex-start;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 6px;
   overflow: hidden;
   flex-wrap: wrap;
 }
 
 .battle-player__effects > span {
   display: inline-flex;
-  height: 22px;
+  height: 20px;
   max-width: 100%;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 6px;
   overflow: hidden;
   border: 1px solid #d0d0d0;
   border-radius: 4px;
   background: #fafafa;
   color: #555555;
-  font-size: 10px;
-  line-height: 20px;
+  font-size: 9px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3024,16 +3012,16 @@ body {
 .battle-player__effects:empty::after {
   color: #aaaaaa;
   content: "暂无装备或状态";
-  font-size: 10px;
-  line-height: 22px;
+  font-size: 9px;
+  line-height: 20px;
 }
 
 .general-mark {
-  width: 64px;
-  height: 42px;
+  width: 84px;
+  height: 38px;
   padding: 0 6px;
   border-radius: 4px;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.2;
   text-align: center;
   white-space: nowrap;
@@ -3043,38 +3031,110 @@ body {
   justify-content: center;
 }
 
-.hand-table-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
-  gap: 14px;
-  align-items: stretch;
+.battle-player__name {
+  margin-block: 8px 7px;
 }
 
-.hand-table-layout > .hand-cards,
-.public-card-pool .hand-cards {
-  min-width: 0;
-  min-height: 172px;
+.battle-player__name strong {
+  font-size: 13px;
+}
+
+.health-row {
+  margin-bottom: 7px;
+}
+
+.public-cards-popup {
+  position: fixed;
+  z-index: 50;
+  top: 50%;
+  left: 50%;
+  width: max-content;
+  min-width: min(320px, calc(100vw - 32px));
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid #333333;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.2);
+  transform: translate(-50%, -50%);
+}
+
+.public-cards-popup__heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dddddd;
+}
+
+.public-cards-popup__heading > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.public-cards-popup__heading p {
   margin: 0;
+  color: #777777;
+  font-size: 11px;
 }
 
-.public-card-pool {
-  min-width: 0;
-  min-height: 172px;
-  margin: 0;
-  padding: 12px;
+.public-cards-popup__grid {
+  display: flex;
+  max-width: 688px;
+  max-height: min(55vh, 440px);
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  padding-top: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-.public-card-pool .game-card--disabled {
+.public-cards-popup .game-card--disabled {
   filter: none;
   opacity: 1;
   cursor: default;
 }
 
-.public-card-pool__empty {
-  width: 100%;
-  color: #999999;
-  font-size: 11px;
-  text-align: center;
+.game-page {
+  padding-block: 12px;
+}
+
+.game-statusbar {
+  min-height: 44px;
+  margin-bottom: 8px;
+}
+
+.players-grid {
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hand-zone {
+  padding: 14px;
+}
+
+.hand-zone__heading {
+  margin-bottom: 8px;
+}
+
+.game-card {
+  width: 82px;
+  height: 112px;
+  flex-basis: 82px;
+}
+
+.game-card > strong {
+  max-width: 70px;
+  font-size: 18px;
+}
+
+.hand-zone .ant-divider {
+  margin-block: 10px;
 }
 
 .activity-overlay {
@@ -3149,11 +3209,13 @@ body {
 }
 
 .card-description-tooltip {
-  max-width: min(340px, calc(100vw - 24px));
+  max-width: min(300px, calc(100vw - 32px));
 }
 
 .card-description-tooltip .ant-tooltip-inner {
+  max-height: min(45vh, 220px);
   padding: 10px 12px;
+  overflow-y: auto;
   border: 1px solid #333333;
   background: #ffffff;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
@@ -3208,6 +3270,18 @@ body {
   overflow-y: auto;
 }
 
+.battle-log__heading {
+  padding-block: 11px;
+}
+
+.player-detail-tooltip {
+  max-width: min(360px, calc(100vw - 32px));
+}
+
+.player-detail-tooltip .ant-tooltip-inner {
+  max-height: min(55vh, 420px);
+}
+
 @media (max-width: 720px) {
   .activity-overlay {
     right: 8px;
@@ -3220,11 +3294,17 @@ body {
   }
 
   .battle-player {
-    height: 232px;
-    min-height: 232px;
+    height: 190px;
+    min-height: 190px;
   }
 
-  .hand-table-layout {
-    grid-template-columns: 1fr;
+  .public-cards-popup {
+    padding: 12px;
+  }
+
+  .public-cards-popup__heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
   }
 }

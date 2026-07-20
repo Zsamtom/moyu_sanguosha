@@ -598,6 +598,9 @@ export function normalizeGameView(
     for (const [playerId, displayName] of displayNameById) {
       result = result.replaceAll(playerId, displayName);
     }
+    for (const [skillId, name] of Object.entries(generalSkillNames)) {
+      result = result.replace(new RegExp(`\\b${skillId}\\b`, 'g'), name);
+    }
     return result;
   };
 

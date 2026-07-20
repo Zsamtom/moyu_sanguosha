@@ -99,7 +99,10 @@ describe('server payload adapters', () => {
       turn: { number: 2, playerId: 'user-1', phase: 'play', slashUsed: false, requiredDiscardCount: 0 },
       pendingResponse: null,
       winner: null,
-      logs: [{ id: 1, type: 'turn', message: 'user-1 的回合开始' }],
+      logs: [
+        { id: 1, type: 'turn', message: 'user-1 的回合开始' },
+        { id: 2, type: 'card', message: 'user-2 可以发动ganglie。' },
+      ],
       prompt: {
         type: 'play',
         playerId: 'user-1',
@@ -124,6 +127,7 @@ describe('server payload adapters', () => {
       { id: 'rende', name: '仁德', description: '出牌阶段，你可以将任意张手牌交给一名其他角色。' },
     ]);
     expect(game.logs[0]?.text).toBe('玩家 1 的回合开始');
+    expect(game.logs[1]?.text).toBe('玩家 2 可以发动刚烈。');
   });
 
   it('caches raw game action tokens and sends a strict envelope', async () => {

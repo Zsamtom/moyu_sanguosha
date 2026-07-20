@@ -92,8 +92,7 @@ function GameCardTile({
   return (
     <Tooltip
       placement="top"
-      autoAdjustOverflow={false}
-      open={selected ? true : undefined}
+      mouseEnterDelay={0.15}
       overlayClassName="card-description-tooltip"
       title={(
         <span className="card-description-tooltip__content">
@@ -157,6 +156,16 @@ function PlayerPanel({
               <p key={`${item.slot}-${item.id}`}><span>{item.name}</span>{item.description ?? '暂无效果说明。'}</p>
             ))
           : <p>当前没有装备。</p>}
+      </section>
+      <section>
+        <b>判定区与状态</b>
+        {player.judgment?.length
+          ? player.judgment.map((item) => (
+              <p key={`${item.slot}-${item.id}`}><span>{item.name}</span>{item.description ?? '暂无效果说明。'}</p>
+            ))
+          : <p>当前没有判定牌。</p>}
+        {player.chained && <p><span>连环状态</span>属性伤害可能传导给其他连环角色。</p>}
+        {!player.faceUp && <p><span>翻面状态</span>下个回合将被跳过。</p>}
       </section>
     </div>
   );
@@ -532,6 +541,41 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
         <Alert className="other-player-notice" banner showIcon type="info" message="其他玩家正在操作，请稍候……" />
       )}
 
+      {game.publicCards && game.publicCards.length > 0 && (
+        <aside className="public-cards-popup" role="dialog" aria-modal="false" aria-label="桌面亮牌">
+          <div className="public-cards-popup__heading">
+            <div>
+              <span className="section-kicker">桌面亮牌</span>
+              <strong>{game.publicCards.length} 张</strong>
+            </div>
+            <p>{isAmazingGracePrompt ? '点击一张牌获得' : '结算完成后自动关闭'}</p>
+          </div>
+          <div className="public-cards-popup__grid">
+            {game.publicCards.map((card) => {
+              const canChoose = Boolean(
+                isAmazingGracePrompt
+                && connected
+                && !sending
+                && game.prompt?.cardChoices?.some((choice) => choice.id === card.id),
+              );
+              return (
+                <GameCardTile
+                  key={`public-${card.id}`}
+                  card={card}
+                  selected={false}
+                  disabled={!canChoose}
+                  onClick={() => void send({
+                    type: 'choose_amazing_grace_card',
+                    playerId: game.selfPlayerId,
+                    cardId: card.id,
+                  })}
+                />
+              );
+            })}
+          </div>
+        </aside>
+      )}
+
       <div className="game-layout">
         <section className="battlefield">
           {game.prompt && (
@@ -680,30 +724,18 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 </div>
               </section>
             )}
-            <div className="hand-table-layout">
-              <div className="hand-cards">
-                {game.hand.length === 0 ? (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有手牌" />
-                ) : game.hand.map((card) => (
-                  <GameCardTile
-                    key={card.id}
-                    card={card}
-                    selected={selectedCardIds.includes(card.id)}
-                    disabled={cardDisabled(card)}
-                    onClick={() => toggleCard(card)}
-                  />
-                ))}
-              </div>
-              <aside className="public-card-pool" aria-label="当前亮出的牌">
-                <span className="section-kicker">桌面亮牌</span>
-                <div className="hand-cards">
-                  {game.publicCards && game.publicCards.length > 0
-                    ? game.publicCards.map((card) => (
-                        <GameCardTile key={`public-${card.id}`} card={card} selected={false} disabled onClick={() => undefined} />
-                      ))
-                    : <span className="public-card-pool__empty">当前没有亮出的牌</span>}
-                </div>
-              </aside>
+            <div className="hand-cards">
+              {game.hand.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有手牌" />
+              ) : game.hand.map((card) => (
+                <GameCardTile
+                  key={card.id}
+                  card={card}
+                  selected={selectedCardIds.includes(card.id)}
+                  disabled={cardDisabled(card)}
+                  onClick={() => toggleCard(card)}
+                />
+              ))}
             </div>
             <Divider />
             <div className="game-actions">
