@@ -2973,3 +2973,258 @@ body {
   height: calc(100% - 52px);
   overflow-y: auto;
 }
+
+/* Stable game workspace: overlays never change the document height. */
+.game-layout {
+  display: block;
+}
+
+.players-stage {
+  position: relative;
+}
+
+.players-grid {
+  align-items: start;
+}
+
+.battle-player {
+  height: 232px;
+  min-height: 232px;
+  max-height: 232px;
+  box-sizing: border-box;
+}
+
+.battle-player__effects {
+  display: flex;
+  height: 54px;
+  align-content: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+  overflow: hidden;
+  flex-wrap: wrap;
+}
+
+.battle-player__effects > span {
+  display: inline-flex;
+  height: 22px;
+  max-width: 100%;
+  align-items: center;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background: #fafafa;
+  color: #555555;
+  font-size: 10px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.battle-player__effects:empty::after {
+  color: #aaaaaa;
+  content: "暂无装备或状态";
+  font-size: 10px;
+  line-height: 22px;
+}
+
+.general-mark {
+  width: 64px;
+  height: 42px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.battle-player__name > span:nth-child(2) {
+  justify-content: center;
+}
+
+.hand-table-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.hand-table-layout > .hand-cards,
+.public-card-pool .hand-cards {
+  min-width: 0;
+  min-height: 172px;
+  margin: 0;
+}
+
+.public-card-pool {
+  min-width: 0;
+  min-height: 172px;
+  margin: 0;
+  padding: 12px;
+}
+
+.public-card-pool .game-card--disabled {
+  filter: none;
+  opacity: 1;
+  cursor: default;
+}
+
+.public-card-pool__empty {
+  width: 100%;
+  color: #999999;
+  font-size: 11px;
+  text-align: center;
+}
+
+.activity-overlay {
+  position: absolute;
+  z-index: 12;
+  right: 12px;
+  bottom: 26px;
+  width: min(360px, calc(100% - 24px));
+  padding: 10px 12px;
+  border: 1px solid #bfbfbf;
+  border-left: 3px solid #333333;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+}
+
+.activity-overlay > span {
+  color: #777777;
+  font-size: 10px;
+}
+
+.activity-overlay p {
+  margin: 3px 0 0;
+  color: #222222;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.activity-overlay--damage,
+.activity-overlay--important {
+  border-left-color: #111111;
+}
+
+.player-state-flags {
+  position: absolute;
+  z-index: 6;
+  top: -10px;
+  left: 50%;
+  display: flex;
+  gap: 5px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.player-state-flags .turn-ribbon,
+.player-state-flags .player-action-bubble {
+  position: static;
+  display: inline-block;
+  padding: 3px 8px;
+  transform: none;
+  border: 1px solid #333333;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.player-state-flags .turn-ribbon {
+  background: #333333;
+  color: #ffffff;
+}
+
+.player-state-flags .player-action-bubble {
+  background: #ffffff;
+  color: #222222;
+}
+
+.game-card-anchor {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.card-description-tooltip {
+  max-width: min(340px, calc(100vw - 24px));
+}
+
+.card-description-tooltip .ant-tooltip-inner {
+  padding: 10px 12px;
+  border: 1px solid #333333;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  color: #222222;
+}
+
+.card-description-tooltip .ant-tooltip-arrow::before {
+  background: #ffffff;
+}
+
+.card-description-tooltip__content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.5;
+}
+
+.card-description-tooltip__content strong {
+  font-size: 12px;
+}
+
+.card-description-tooltip__content > span {
+  color: #666666;
+  font-size: 11px;
+}
+
+.battle-log {
+  position: static;
+  height: auto;
+  min-height: 0;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.battle-log__heading {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.battle-log__heading::-webkit-details-marker {
+  display: none;
+}
+
+.battle-log:not([open]) .battle-log__heading {
+  border-bottom: 0;
+}
+
+.battle-log__entries {
+  height: auto;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .activity-overlay {
+    right: 8px;
+    bottom: 22px;
+    width: calc(100% - 16px);
+  }
+
+  .battle-log__heading {
+    padding-inline: 12px;
+  }
+
+  .battle-player {
+    height: 232px;
+    min-height: 232px;
+  }
+
+  .hand-table-layout {
+    grid-template-columns: 1fr;
+  }
+}

@@ -90,24 +90,39 @@ function GameCardTile({
 }) {
   const red = isRedSuit(card.suit);
   return (
-    <button
-      type="button"
-      className={`game-card${selected ? ' game-card--selected' : ''}${disabled ? ' game-card--disabled' : ''}`}
-      onClick={() => {
-        if (!disabled) onClick();
-      }}
-      aria-disabled={disabled}
-      aria-pressed={selected}
-      aria-label={`${card.name}，${categoryName(card)}，${card.rank}${suitSymbols[card.suit]}。${card.description ?? ''}`}
-      data-card-kind={card.kind}
+    <Tooltip
+      placement="top"
+      autoAdjustOverflow={false}
+      open={selected ? true : undefined}
+      overlayClassName="card-description-tooltip"
+      title={(
+        <span className="card-description-tooltip__content">
+          <strong>{card.rank}{suitSymbols[card.suit]} · {card.name} · {categoryName(card)}</strong>
+          <span>{card.description ?? '暂无卡牌说明。'}</span>
+        </span>
+      )}
     >
-      <span className={red ? 'game-card__corner game-card__corner--red' : 'game-card__corner'}>
-        <b>{card.rank}</b>{suitSymbols[card.suit]}
+      <span className="game-card-anchor">
+        <button
+          type="button"
+          className={`game-card${selected ? ' game-card--selected' : ''}${disabled ? ' game-card--disabled' : ''}`}
+          onClick={() => {
+            if (!disabled) onClick();
+          }}
+          aria-disabled={disabled}
+          aria-pressed={selected}
+          aria-label={`${card.name}，${categoryName(card)}，${card.rank}${suitSymbols[card.suit]}。${card.description ?? ''}`}
+          data-card-kind={card.kind}
+        >
+          <span className={red ? 'game-card__corner game-card__corner--red' : 'game-card__corner'}>
+            <b>{card.rank}</b>{suitSymbols[card.suit]}
+          </span>
+          <strong>{card.name}</strong>
+          <small>{categoryName(card)}</small>
+          <span className="game-card__stamp">{cardStamp(card)}</span>
+        </button>
       </span>
-      <strong>{card.name}</strong>
-      <small>{categoryName(card)}</small>
-      <span className="game-card__stamp">{cardStamp(card)}</span>
-    </button>
+    </Tooltip>
   );
 }
 
@@ -163,10 +178,9 @@ function PlayerPanel({
         <span className={player.online ? 'online-dot' : 'online-dot online-dot--off'}>{player.online ? '在线' : '离线'}</span>
       </div>
       <div className="battle-player__name">
-        <span className="general-mark">{(player.general ?? player.displayName).slice(0, 1)}</span>
+        <span className="general-mark">{player.general ?? '未知武将'}</span>
         <span>
-          <strong>{player.general ?? '未知武将'}</strong>
-          <small>{player.displayName}</small>
+          <strong>{player.displayName}</strong>
         </span>
         {player.identity && <Tag color={player.identity === '主公' ? 'gold' : 'default'}>{player.identity}</Tag>}
       </div>
@@ -179,29 +193,42 @@ function PlayerPanel({
         <span>手牌 <b>{player.handCount}</b></span>
         <span>{player.faction ?? '未知势力'}</span>
       </div>
-      {player.equipment && player.equipment.length > 0 && (
-        <div className="equipment-row">
-          {player.equipment.map((item) => <span key={`${item.slot}-${item.name}`}>{item.name}</span>)}
-        </div>
+      <div className="battle-player__effects" aria-label="装备与状态">
+        {player.equipment?.map((item) => <span key={`${item.slot}-${item.name}`}>{item.name}</span>)}
+        {player.judgment?.map((item) => <span key={`${item.slot}-${item.name}`}>判定 · {item.name}</span>)}
+        {player.publicPiles?.buqu?.map((card) => <span key={card.id}>不屈 · {card.rank}{suitSymbols[card.suit]}</span>)}
+        {player.chained && <span>连环</span>}
+        {!player.faceUp && <span>翻面</span>}
+      </div>
+      {(player.isCurrent || acting) && (
+        <span className="player-state-flags">
+          {player.isCurrent && <span className="turn-ribbon">当前回合</span>}
+          {acting && <span className="player-action-bubble" role="status">操作中</span>}
+        </span>
       )}
-      {player.judgment && player.judgment.length > 0 && (
-        <div className="equipment-row equipment-row--judgment">
-          {player.judgment.map((item) => <span key={`${item.slot}-${item.name}`}>判 · {item.name}</span>)}
-        </div>
-      )}
-      {player.publicPiles?.buqu && player.publicPiles.buqu.length > 0 && (
-        <div className="equipment-row">
-          {player.publicPiles.buqu.map((card) => <span key={card.id}>不屈 · {card.rank}{suitSymbols[card.suit]}</span>)}
-        </div>
-      )}
-      {player.chained && <Tag color="volcano">连环</Tag>}
-      {!player.faceUp && <Tag color="purple">背面</Tag>}
-      {player.isCurrent && <span className="turn-ribbon">当前回合</span>}
-      {acting && <span className="player-action-bubble" role="status">操作中</span>}
       {!player.alive && <span className="dead-stamp">阵亡</span>}
     </button>
     </Tooltip>
   );
+}
+
+function ActivityOverlay({ logs }: { logs: GameLogEntry[] }) {
+  const latest = logs.at(-1);
+  const [visible, setVisible] = useState<GameLogEntry>();
+
+  useEffect(() => {
+    if (!latest) return;
+    setVisible(latest);
+    const timeout = window.setTimeout(() => setVisible(undefined), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [latest]);
+
+  return visible ? (
+    <div className={`activity-overlay activity-overlay--${visible.tone ?? 'normal'}`} role="status">
+      <span>最近操作</span>
+      <p>{visible.text}</p>
+    </div>
+  ) : null;
 }
 
 function BattleLog({ logs }: { logs: GameLogEntry[] }) {
@@ -212,11 +239,11 @@ function BattleLog({ logs }: { logs: GameLogEntry[] }) {
   }, [logs]);
 
   return (
-    <aside className="battle-log paper-card" aria-label="实时战报">
-      <div className="battle-log__heading">
+    <details className="battle-log paper-card" aria-label="实时战报">
+      <summary className="battle-log__heading">
         <div><span className="live-pulse" />实时战报</div>
-        <small>{logs.length} 条</small>
-      </div>
+        <small>{logs.length} 条 · 点击展开</small>
+      </summary>
       <div ref={entriesRef} className="battle-log__entries" aria-live="polite">
         {logs.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="战报将在这里出现" />
@@ -227,7 +254,7 @@ function BattleLog({ logs }: { logs: GameLogEntry[] }) {
           </div>
         ))}
       </div>
-    </aside>
+    </details>
   );
 }
 
@@ -515,21 +542,24 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
             </div>
           )}
 
-          <div
-            className="players-grid"
-            role="group"
-            aria-label={selectableTargetIds.size > 0 ? '请选择目标角色' : '场上角色'}
-          >
-            {game.players.map((player) => (
-              <PlayerPanel
-                key={player.id}
-                player={player}
-                acting={game.status === 'playing' && player.id === game.actingPlayerId}
-                selectable={connected && selectableTargetIds.has(player.id)}
-                selected={selectedTargetIds.includes(player.id)}
-                onSelect={() => toggleTarget(player)}
-              />
-            ))}
+          <div className="players-stage">
+            <ActivityOverlay logs={game.logs ?? []} />
+            <div
+              className="players-grid"
+              role="group"
+              aria-label={selectableTargetIds.size > 0 ? '请选择目标角色' : '场上角色'}
+            >
+              {game.players.map((player) => (
+                <PlayerPanel
+                  key={player.id}
+                  player={player}
+                  acting={game.status === 'playing' && player.id === game.actingPlayerId}
+                  selectable={connected && selectableTargetIds.has(player.id)}
+                  selected={selectedTargetIds.includes(player.id)}
+                  onSelect={() => toggleTarget(player)}
+                />
+              ))}
+            </div>
           </div>
 
           <section className="hand-zone paper-card" aria-label="你的手牌">
@@ -582,16 +612,13 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                         <span>可用装备</span>
                         <div className="hand-cards">
                           {self.equipment.filter((card) => selectedSkill.cardIds.includes(card.id)).map((card) => (
-                            <Tooltip key={`skill-cost-${card.id}`} title={`${card.slot} · ${skillDescription(selectedSkill.skillId)}`}>
-                              <span>
-                                <GameCardTile
-                                  card={card}
-                                  selected={selectedCardIds.includes(card.id)}
-                                  disabled={!connected}
-                                  onClick={() => toggleCard(card)}
-                                />
-                              </span>
-                            </Tooltip>
+                            <GameCardTile
+                              key={`skill-cost-${card.id}`}
+                              card={card}
+                              selected={selectedCardIds.includes(card.id)}
+                              disabled={!connected}
+                              onClick={() => toggleCard(card)}
+                            />
                           ))}
                         </div>
                       </div>
@@ -653,46 +680,31 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 </div>
               </section>
             )}
-            {game.publicCards && game.publicCards.length > 0 && (
-              <div className="public-card-pool" aria-label="当前亮出的牌">
-                <span className="section-kicker">当前亮出的牌</span>
+            <div className="hand-table-layout">
+              <div className="hand-cards">
+                {game.hand.length === 0 ? (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有手牌" />
+                ) : game.hand.map((card) => (
+                  <GameCardTile
+                    key={card.id}
+                    card={card}
+                    selected={selectedCardIds.includes(card.id)}
+                    disabled={cardDisabled(card)}
+                    onClick={() => toggleCard(card)}
+                  />
+                ))}
+              </div>
+              <aside className="public-card-pool" aria-label="当前亮出的牌">
+                <span className="section-kicker">桌面亮牌</span>
                 <div className="hand-cards">
-                  {game.publicCards.map((card) => (
-                    <GameCardTile key={`public-${card.id}`} card={card} selected={false} disabled onClick={() => undefined} />
-                  ))}
+                  {game.publicCards && game.publicCards.length > 0
+                    ? game.publicCards.map((card) => (
+                        <GameCardTile key={`public-${card.id}`} card={card} selected={false} disabled onClick={() => undefined} />
+                      ))
+                    : <span className="public-card-pool__empty">当前没有亮出的牌</span>}
                 </div>
-              </div>
-            )}
-            <div className="hand-cards">
-              {game.hand.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有手牌" />
-              ) : game.hand.map((card) => (
-                <Tooltip key={card.id} title={card.description} placement="top">
-                  <span>
-                    <GameCardTile
-                      card={card}
-                      selected={selectedCardIds.includes(card.id)}
-                      disabled={cardDisabled(card)}
-                      onClick={() => toggleCard(card)}
-                    />
-                  </span>
-                </Tooltip>
-              ))}
+              </aside>
             </div>
-            {selectedCard && !isDiscardPrompt && (
-              <div className="card-inspector" role="status" aria-label={`${selectedCard.name}卡牌说明`}>
-                <span className={isRedSuit(selectedCard.suit) ? 'card-inspector__face card-inspector__face--red' : 'card-inspector__face'}>
-                  {selectedCard.rank}{suitSymbols[selectedCard.suit]}
-                </span>
-                <div>
-                  <div className="card-inspector__title">
-                    <strong>{selectedCard.name}</strong>
-                    <Tag color={selectedCard.category === 'trick' ? 'purple' : 'default'}>{categoryName(selectedCard)}</Tag>
-                  </div>
-                  <p>{selectedCard.description ?? '暂无卡牌说明。'}</p>
-                </div>
-              </div>
-            )}
             <Divider />
             <div className="game-actions">
               {isFanjianSuitPrompt ? (
@@ -1141,8 +1153,9 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
           </section>
         </section>
 
-        <BattleLog logs={game.logs ?? []} />
       </div>
+
+      <BattleLog logs={game.logs ?? []} />
 
       <Modal
         className="game-result-modal"
@@ -1159,7 +1172,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
             <span className="game-result__seal">终</span>
             <span className="section-kicker">对局结束</span>
             <h2>{game.winner ? `${game.winner} 获胜` : '胜负已定'}</h2>
-            <p>完整过程已保留在右侧战报中。</p>
+            <p>完整过程已保留在页面底部战报中。</p>
             <Button className="primary-ink-button" type="primary" size="large" loading={exiting} onClick={() => void exitGame()}>
               返回房间大厅
             </Button>
