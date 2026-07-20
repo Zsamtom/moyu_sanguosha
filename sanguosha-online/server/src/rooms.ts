@@ -118,7 +118,7 @@ export class RoomService {
   private readonly connectedUsers = new Set<string>();
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly botRuns = new Set<string>();
-  private readonly botContinuations = new Map<string, NodeJS.Immediate>();
+  private readonly botContinuations = new Map<string, NodeJS.Timeout>();
   private readonly events = new EventEmitter();
   private snapshotPersistence?: (snapshot: RoomServiceSnapshot) => Promise<void>;
   private persistenceBarrier: Promise<void> = Promise.resolve();
@@ -126,9 +126,13 @@ export class RoomService {
   constructor(
     private readonly disconnectGraceMs = 90_000,
     private readonly botBatchSize = 200,
+    private readonly botActionDelayMs = 0,
   ) {
     if (!Number.isSafeInteger(botBatchSize) || botBatchSize < 1) {
       throw new Error("botBatchSize must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(botActionDelayMs) || botActionDelayMs < 0) {
+      throw new Error("botActionDelayMs must be a non-negative safe integer");
     }
   }
 
@@ -165,7 +169,7 @@ export class RoomService {
     if (snapshot.version !== 1) throw new Error(`Unsupported room snapshot version: ${snapshot.version}`);
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
     this.disconnectTimers.clear();
-    for (const immediate of this.botContinuations.values()) clearImmediate(immediate);
+    for (const timer of this.botContinuations.values()) clearTimeout(timer);
     this.botContinuations.clear();
     this.botRuns.clear();
     this.connectedUsers.clear();
@@ -238,6 +242,14 @@ export class RoomService {
     const roomId = this.roomByUser.get(userId);
     const room = roomId ? this.rooms.get(roomId) : undefined;
     return room ? this.toView(room, userId) : undefined;
+  }
+
+  setDisplayName(userId: string, displayName: string): void {
+    const roomId = this.roomByUser.get(userId);
+    const player = roomId ? this.rooms.get(roomId)?.players.find((candidate) => candidate.id === userId) : undefined;
+    if (!player) return;
+    player.displayName = displayName;
+    this.changed();
   }
 
   create(owner: PublicUser, input: CreateRoomInput): RoomView {
@@ -601,10 +613,14 @@ export class RoomService {
     };
   }
 
-  private runBots(room: Room, notify = false): void {
+  private runBots(room: Room, notify = false, delayElapsed = false): void {
     if (room.status !== "playing" || !room.game || this.rooms.get(room.id) !== room) return;
     if (this.botRuns.has(room.id)) return;
     this.cancelBotContinuation(room.id);
+    if (this.botActionDelayMs > 0 && !delayElapsed && this.actingBot(room)) {
+      this.scheduleBotContinuation(room.id);
+      return;
+    }
     this.botRuns.add(room.id);
 
     let steps = 0;
@@ -635,6 +651,7 @@ export class RoomService {
             break;
           }
         }
+        if (this.botActionDelayMs > 0) break;
       }
       if (!aborted && room.game.status === "finished") room.status = "finished";
     } finally {
@@ -645,7 +662,7 @@ export class RoomService {
       this.changed();
       return;
     }
-    if (steps >= this.botBatchSize && this.actingBot(room)) {
+    if ((steps >= this.botBatchSize || this.botActionDelayMs > 0) && this.actingBot(room)) {
       this.scheduleBotContinuation(room.id);
     }
     if (notify && mutations > 0) this.changed();
@@ -1028,12 +1045,15 @@ export class RoomService {
 
   private scheduleBotContinuation(roomId: string): void {
     if (this.botContinuations.has(roomId)) return;
-    const immediate = setImmediate(() => {
+    const delay = this.botActionDelayMs > 0
+      ? this.botActionDelayMs + Math.floor(Math.random() * this.botActionDelayMs)
+      : 0;
+    const timer = setTimeout(() => {
       this.botContinuations.delete(roomId);
       const room = this.rooms.get(roomId);
       if (!room) return;
       try {
-        this.runBots(room, true);
+        this.runBots(room, true, true);
       } catch (error) {
         // Keep all timer callbacks exception-safe even if a future change adds
         // a failure outside the per-action recovery boundary above.
@@ -1041,15 +1061,15 @@ export class RoomService {
         this.deleteRoom(room);
         this.changed();
       }
-    });
-    immediate.unref();
-    this.botContinuations.set(roomId, immediate);
+    }, delay);
+    timer.unref();
+    this.botContinuations.set(roomId, timer);
   }
 
   private cancelBotContinuation(roomId: string): void {
-    const immediate = this.botContinuations.get(roomId);
-    if (!immediate) return;
-    clearImmediate(immediate);
+    const timer = this.botContinuations.get(roomId);
+    if (!timer) return;
+    clearTimeout(timer);
     this.botContinuations.delete(roomId);
   }
 

@@ -3,7 +3,7 @@
 > 历史说明：本文保留迁移过程中的阶段性盘点，部分“尚未接入”状态已过时。当前发布状态、原版差异和验收边界请以 [原版规则差异核查](./RULE_AUDIT.md) 及 `shared/src/skills/live-coverage.ts` 为准。
 
 > 盘点日期：2026-07-11；覆盖状态更新：2026-07-15  
-> 原始实现：`../sanguosha-master`（上游：[wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)）  
+> 原始实现：上游 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)
 > 当前实现：本仓库 `shared`、`server`、`web`  
 > 本文只记录从实际 Java 文件、原仓库 `README.md` 与当前 TypeScript 文件中能够核对的事实；“建议批次”是迁移顺序，不代表原仓库对卡牌扩展包的官方划分。
 
@@ -22,12 +22,12 @@
 
 | 范围 | 权威文件 |
 | --- | --- |
-| 原规则总览、包与名单 | `../sanguosha-master/README.md` |
-| 原实体牌清单与张数 | `../sanguosha-master/sanguosha/cardsheap/CardsHeap.java` |
-| 原卡牌继承与效果 | `../sanguosha-master/sanguosha/cards/**/*.java` |
-| 原武将池与身份分配 | `../sanguosha-master/sanguosha/cardsheap/PeoplePool.java` |
-| 原武将技能 | `../sanguosha-master/sanguosha/people/{wei,shu,wu,qun,wind,fire,forest,mountain,god}/*.java` |
-| 原触发时机 | `../sanguosha-master/sanguosha/people/SkillLauncher.java`、`Person.java`、`Attributes.java` |
+| 原规则总览、包与名单 | 上游 [`README.md`](https://github.com/wzk1015/sanguosha/blob/master/README.md) |
+| 原实体牌清单与张数 | 上游 [`CardsHeap.java`](https://github.com/wzk1015/sanguosha/blob/master/sanguosha/cardsheap/CardsHeap.java) |
+| 原卡牌继承与效果 | 上游 [`sanguosha/cards`](https://github.com/wzk1015/sanguosha/tree/master/sanguosha/cards) |
+| 原武将池与身份分配 | 上游 [`PeoplePool.java`](https://github.com/wzk1015/sanguosha/blob/master/sanguosha/cardsheap/PeoplePool.java) |
+| 原武将技能 | 上游 [`sanguosha/people`](https://github.com/wzk1015/sanguosha/tree/master/sanguosha/people) |
+| 原触发时机 | 上游 [`SkillLauncher.java`](https://github.com/wzk1015/sanguosha/blob/master/sanguosha/people/SkillLauncher.java)、[`Person.java`](https://github.com/wzk1015/sanguosha/blob/master/sanguosha/people/Person.java)、[`Attributes.java`](https://github.com/wzk1015/sanguosha/blob/master/sanguosha/people/Attributes.java) |
 | 当前 TS 规则状态 | `shared/src/types.ts`、`shared/src/game.ts`、`shared/src/generals.ts`、`shared/README.md` |
 | 当前规则验收证据 | `shared/test/standard-cards.test.ts`、`shared/test/weapons.test.ts`、`shared/test/general-skills.test.ts`、`shared/test/{wind,fire,forest,mountain,god}-runtime.test.ts` |
 | 当前浏览器投影 | `web/src/types.ts`、`web/src/components/GameBoard.tsx` |

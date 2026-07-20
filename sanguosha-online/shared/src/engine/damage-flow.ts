@@ -16,7 +16,6 @@ import {
   resumeDamageAfterProtectedDying,
   type DamageApplicationResult,
   type DamageInstance,
-  type DamageTriggerWindowKind,
   type LifePlayerState,
 } from "./damage.js";
 import { assertDyingFrame, type DyingFrame } from "./dying.js";

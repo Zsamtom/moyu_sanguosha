@@ -25,9 +25,9 @@ const documentTheme = {
   token: {
     colorPrimary: '#111111',
     colorInfo: '#111111',
-    colorSuccess: '#237a45',
-    colorWarning: '#9a6700',
-    colorError: '#b42318',
+    colorSuccess: '#3f3f3f',
+    colorWarning: '#595959',
+    colorError: '#444444',
     colorText: '#1f1f1f',
     colorTextSecondary: '#666666',
     colorBgContainer: '#ffffff',
@@ -314,6 +314,29 @@ export default function App() {
     }
   };
 
+  const changeUserDisplayName = async (userId: string, displayName: string) => {
+    try {
+      const updated = await api.setUserDisplayName(userId, displayName);
+      setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      if (updated.id === user?.id) setUser(updated);
+      toast.success('玩家昵称已修改');
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const deleteUser = async (userId: string) => {
+    try {
+      await api.deleteUser(userId);
+      setUsers((current) => current.filter((item) => item.id !== userId));
+      toast.success('账号已删除');
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
   const resetPassword = async (userId: string, password: string) => {
     try {
       const updated = await api.resetPassword(userId, password);
@@ -405,8 +428,10 @@ export default function App() {
             loading={usersLoading}
             onRefresh={refreshUsers}
             onCreate={createUser}
+            onDisplayName={changeUserDisplayName}
             onStatus={changeUserStatus}
             onResetPassword={resetPassword}
+            onDelete={deleteUser}
           />
         ) : (
           <LobbyScreen rooms={rooms} loading={roomsLoading} onRefresh={refreshRooms} onCreate={createRoom} onJoin={joinRoom} />

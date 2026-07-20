@@ -10,7 +10,6 @@ import {
   chooseGodFactionPayloadSchema,
   createRoomSchema,
   gameActionPayloadSchema,
-  readySchema,
   roomIdSchema,
 } from "./room-schemas.js";
 import type { RoomService, RoomSummary, RoomView } from "./rooms.js";

@@ -74,6 +74,21 @@ class MemoryUserStore implements UserStore {
     return this.public(value);
   }
 
+  async setDisplayName(id: string, displayName: string): Promise<PublicUser | undefined> {
+    const value = this.records.get(id);
+    if (!value) return undefined;
+    value.displayName = displayName;
+    value.updatedAt = new Date().toISOString();
+    return this.public(value);
+  }
+
+  async delete(id: string): Promise<PublicUser | undefined> {
+    const value = this.records.get(id);
+    if (!value) return undefined;
+    this.records.delete(id);
+    return this.public(value);
+  }
+
   async resetPassword(
     id: string,
     password: string,
@@ -228,6 +243,23 @@ describe("account allocation and authorization", () => {
     expect(disabledResponse.body.error.code).toBe("ACCOUNT_DISABLED");
     expect(JSON.stringify(users.audits)).not.toContain("replacement-password");
     expect(JSON.stringify(users.audits)).not.toContain("passwordHash");
+  });
+
+  it("lets an admin rename and delete another account but not itself", async () => {
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+
+    const renamed = await adminAgent.patch(`/api/admin/users/${PLAYER_ID}/display-name`)
+      .send({ displayName: "新昵称" })
+      .expect(200);
+    expect(renamed.body.user.displayName).toBe("新昵称");
+
+    await adminAgent.delete(`/api/admin/users/${ADMIN_ID}`).expect(400);
+    await adminAgent.delete(`/api/admin/users/${PLAYER_ID}`).expect(204);
+    expect(await users.findById(PLAYER_ID)).toBeUndefined();
+    expect(users.audits.map((audit) => audit.action)).toEqual(expect.arrayContaining(["user.rename", "user.delete"]));
   });
 
   it("requires allocated users to replace their temporary password before entering the lobby", async () => {

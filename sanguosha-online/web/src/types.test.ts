@@ -111,7 +111,7 @@ describe('server payload adapters', () => {
     }, { userId: 'user-1', roomId: 'room-1' });
 
     expect(game).toMatchObject({
-      roomId: 'room-1', revision: 3, actionPromptId: 'game:3', round: 2, canAct: true, selfPlayerId: 'user-1',
+      roomId: 'room-1', revision: 3, actionPromptId: 'game:3', round: 2, canAct: true, selfPlayerId: 'user-1', actingPlayerId: 'user-1',
     });
     expect(game.hand[0]).toMatchObject({ id: 'card-1', name: '杀', playable: true, allowedTargetIds: ['user-2'] });
     expect(game.hand[1]).toMatchObject({ id: 'card-2', name: '桃', playable: true, targetMode: 'self' });

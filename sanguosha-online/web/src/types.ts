@@ -256,6 +256,7 @@ export interface GameView {
   round: number;
   phase: string;
   turnPlayerId?: string;
+  actingPlayerId?: string;
   selfPlayerId: string;
   canAct: boolean;
   players: GamePlayerView[];
@@ -501,6 +502,7 @@ interface EngineGameView {
   status: 'playing' | 'finished';
   players: EnginePlayer[];
   currentPlayerId: string;
+  pendingResponse?: { targetId?: string } | null;
   turn: { number: number; playerId: string; phase: 'prepare' | 'judgment' | 'draw' | 'play' | 'respond' | 'discard' | 'end' };
   winner: { side: 'lord' | 'rebel' | 'renegade'; playerIds: string[] } | null;
   logs: { id: number; type: 'system' | 'turn' | 'card' | 'damage' | 'death' | 'victory'; message: string }[];
@@ -954,6 +956,9 @@ export function normalizeGameView(
     round: raw.turn.number,
     phase: raw.turn.phase,
     turnPlayerId: raw.currentPlayerId,
+    actingPlayerId: prompt.type !== 'waiting' && 'playerId' in prompt
+      ? prompt.playerId
+      : raw.pendingResponse?.targetId ?? raw.currentPlayerId,
     selfPlayerId: selfId,
     canAct: prompt.type === 'play' && prompt.playerId === selfId,
     players: raw.players.map((player) => {

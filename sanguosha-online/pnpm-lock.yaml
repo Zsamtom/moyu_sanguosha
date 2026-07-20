@@ -89,15 +89,9 @@ importers:
 
   web:
     dependencies:
-      '@ant-design/icons':
-        specifier: ^5.6.1
-        version: 5.6.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       antd:
         specifier: ^5.26.7
         version: 5.29.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      dayjs:
-        specifier: ^1.11.13
-        version: 1.11.21
       react:
         specifier: ^18.3.1
         version: 18.3.1

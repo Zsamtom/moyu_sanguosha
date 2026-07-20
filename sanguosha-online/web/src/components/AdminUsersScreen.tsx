@@ -15,14 +15,20 @@ interface ResetPasswordValues {
   confirmPassword: string;
 }
 
+interface DisplayNameValues {
+  displayName: string;
+}
+
 interface AdminUsersScreenProps {
   currentUser: AuthUser;
   users: AuthUser[];
   loading: boolean;
   onRefresh: () => Promise<void>;
   onCreate: (values: Pick<CreateUserValues, 'username' | 'displayName' | 'password'>) => Promise<void>;
+  onDisplayName: (userId: string, displayName: string) => Promise<void>;
   onStatus: (userId: string, disabled: boolean) => Promise<void>;
   onResetPassword: (userId: string, password: string) => Promise<void>;
+  onDelete: (userId: string) => Promise<void>;
 }
 
 export function AdminUsersScreen({
@@ -31,15 +37,19 @@ export function AdminUsersScreen({
   loading,
   onRefresh,
   onCreate,
+  onDisplayName,
   onStatus,
   onResetPassword,
+  onDelete,
 }: AdminUsersScreenProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState<AuthUser>();
+  const [displayNameTarget, setDisplayNameTarget] = useState<AuthUser>();
   const [submitting, setSubmitting] = useState(false);
   const [statusUserId, setStatusUserId] = useState<string>();
   const [createForm] = Form.useForm<CreateUserValues>();
   const [resetForm] = Form.useForm<ResetPasswordValues>();
+  const [displayNameForm] = Form.useForm<DisplayNameValues>();
 
   const closeCreate = () => {
     createForm.resetFields();
@@ -49,6 +59,11 @@ export function AdminUsersScreen({
   const closeReset = () => {
     resetForm.resetFields();
     setResetTarget(undefined);
+  };
+
+  const closeDisplayName = () => {
+    displayNameForm.resetFields();
+    setDisplayNameTarget(undefined);
   };
 
   useEffect(() => {
@@ -76,6 +91,17 @@ export function AdminUsersScreen({
     try {
       await onResetPassword(resetTarget.id, values.password);
       closeReset();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const changeDisplayName = async (values: DisplayNameValues) => {
+    if (!displayNameTarget) return;
+    setSubmitting(true);
+    try {
+      await onDisplayName(displayNameTarget.id, values.displayName.trim());
+      closeDisplayName();
     } finally {
       setSubmitting(false);
     }
@@ -127,9 +153,13 @@ export function AdminUsersScreen({
     {
       title: '操作',
       key: 'actions',
-      width: 220,
+      width: 330,
       render: (_, user) => (
         <Space wrap>
+          <Button size="small" onClick={() => {
+            setDisplayNameTarget(user);
+            displayNameForm.setFieldsValue({ displayName: user.displayName });
+          }}>修改昵称</Button>
           <Button size="small" onClick={() => setResetTarget(user)}>重置密码</Button>
           <Popconfirm
             title={user.disabled ? '启用此账号？' : '停用此账号？'}
@@ -145,6 +175,17 @@ export function AdminUsersScreen({
             >
               {user.disabled ? '启用' : '停用'}
             </Button>
+          </Popconfirm>
+          <Popconfirm
+            title="永久删除此账号？"
+            description="账号将退出当前房间，且无法恢复。"
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => onDelete(user.id)}
+            disabled={user.id === currentUser.id}
+          >
+            <Button size="small" danger disabled={user.id === currentUser.id}>删除</Button>
           </Popconfirm>
         </Space>
       ),
@@ -187,7 +228,7 @@ export function AdminUsersScreen({
           dataSource={users}
           loading={loading}
           pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (total) => `共 ${total} 个账号` }}
-          scroll={{ x: 720 }}
+          scroll={{ x: 840 }}
         />
       </section>
 
@@ -232,6 +273,26 @@ export function AdminUsersScreen({
           </Form.Item>
           <p className="form-note">安全策略：玩家首次登录必须修改该临时密码。</p>
           <Button className="primary-ink-button" type="primary" htmlType="submit" block loading={submitting}>创建账号</Button>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`修改昵称${displayNameTarget ? ` · ${displayNameTarget.username}` : ''}`}
+        open={Boolean(displayNameTarget)}
+        onCancel={closeDisplayName}
+        footer={null}
+        destroyOnClose
+      >
+        <Form<DisplayNameValues>
+          form={displayNameForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={changeDisplayName}
+        >
+          <Form.Item label="玩家昵称" name="displayName" rules={[{ required: true, message: '请输入玩家昵称' }, { max: 40 }] }>
+            <Input maxLength={40} showCount autoFocus />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={submitting}>保存昵称</Button>
         </Form>
       </Modal>
 

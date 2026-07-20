@@ -110,10 +110,6 @@ function positive(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) throw new LifecycleError(`${label} must be positive`);
 }
 
-function nonnegative(value: number, label: string): void {
-  if (!Number.isSafeInteger(value) || value < 0) throw new LifecycleError(`${label} must be nonnegative`);
-}
-
 function validateExpiryAtom(expiry: ExpiryAtom): void {
   switch (expiry.type) {
     case "phase_end":

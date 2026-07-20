@@ -123,7 +123,6 @@ function member<T extends string>(values: readonly T[], value: unknown): value i
 
 const SUITS: readonly CardSuit[] = ["spade", "heart", "club", "diamond"];
 const PHASES: readonly TurnPhase[] = ["prepare", "judgment", "draw", "play", "respond", "discard", "end"];
-const METHODS: readonly CardUseMethod[] = ["use", "respond", "recast"];
 const FACTIONS: readonly Faction[] = ["wei", "shu", "wu", "qun", "god"];
 const GENDERS: readonly Gender[] = ["male", "female"];
 const ZONES: readonly ForestCardZone[] = [
@@ -148,8 +147,6 @@ const TRICK_KINDS = [
   "borrowed_sword", "iron_chain",
 ] as const satisfies readonly CardKind[];
 const KNOWN_KINDS: readonly CardKind[] = [...BASIC_KINDS, ...EQUIPMENT_KINDS, ...TRICK_KINDS];
-const SLASH_KINDS = ["slash", "fire_slash", "thunder_slash"] as const satisfies readonly CardKind[];
-
 function expectedCategory(kind: CardKind): CardCategory {
   if (member(BASIC_KINDS, kind)) return "basic";
   if (member(EQUIPMENT_KINDS, kind)) return "equipment";

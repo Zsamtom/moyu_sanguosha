@@ -28,7 +28,7 @@ export function AppShell({
   const lockedInRoom = view === 'room' || view === 'game';
   return (
     <Layout className="app-layout">
-      <header className="app-header">
+      {!lockedInRoom && <header className="app-header">
         <Brand compact />
         <nav className="app-nav" aria-label="主导航">
           <Button aria-current={view === 'lobby' ? 'page' : undefined} type={view === 'lobby' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onLobby}>
@@ -49,8 +49,8 @@ export function AppShell({
           <Button size="small" onClick={onChangePassword}>修改密码</Button>
           <Button size="small" onClick={onLogout}>退出</Button>
         </Space>
-      </header>
-      <div className={view === 'game' ? 'app-content app-content--game' : 'app-content'}>
+      </header>}
+      <div className={`${view === 'game' ? 'app-content app-content--game' : 'app-content'}${lockedInRoom ? ' app-content--immersive' : ''}`}>
         {children}
       </div>
     </Layout>

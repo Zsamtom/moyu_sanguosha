@@ -22,6 +22,7 @@ const createUserSchema = z.object({
 });
 
 const statusSchema = z.object({ disabled: z.boolean() });
+const displayNameSchema = z.object({ displayName: z.string().trim().min(1).max(40) });
 const passwordResetSchema = z.object({
   password: passwordSchema,
 });
@@ -61,6 +62,18 @@ export function createAdminRouter(users: UserStore, securityEvents: SecurityEven
     response.json({ user });
   }));
 
+  router.patch("/users/:id/display-name", asyncHandler(async (request, response) => {
+    const actor = currentUser(response);
+    const targetId = userIdSchema.parse(request.params.id);
+    const { displayName } = displayNameSchema.parse(request.body);
+    const user = await users.setDisplayName(targetId, displayName);
+    if (!user) throw new HttpError(404, "USER_NOT_FOUND", "账号不存在");
+    rooms.setDisplayName(user.id, user.displayName);
+    await rooms.waitForPersistence();
+    await users.recordAudit(actor.id, "user.rename", user.id, { displayName: user.displayName });
+    response.json({ user });
+  }));
+
   router.post("/users/:id/reset-password", asyncHandler(async (request, response) => {
     const actor = currentUser(response);
     const targetId = userIdSchema.parse(request.params.id);
@@ -71,6 +84,23 @@ export function createAdminRouter(users: UserStore, securityEvents: SecurityEven
     securityEvents.sessionRevoked(user.id);
     await rooms.waitForPersistence();
     response.json({ user });
+  }));
+
+  router.delete("/users/:id", asyncHandler(async (request, response) => {
+    const actor = currentUser(response);
+    const targetId = userIdSchema.parse(request.params.id);
+    if (targetId === actor.id) {
+      throw new HttpError(400, "CANNOT_DELETE_SELF", "不能删除当前管理员账号");
+    }
+    const target = await users.findById(targetId);
+    if (!target) throw new HttpError(404, "USER_NOT_FOUND", "账号不存在");
+    await users.recordAudit(actor.id, "user.delete", target.id, { username: target.username });
+    const room = rooms.getForUser(target.id);
+    if (room) rooms.leave(room.id, target.id);
+    securityEvents.sessionRevoked(target.id);
+    await rooms.waitForPersistence();
+    await users.delete(target.id);
+    response.status(204).end();
   }));
 
   return router;

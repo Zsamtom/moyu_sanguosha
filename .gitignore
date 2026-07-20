@@ -1,2 +1,7 @@
 node_modules/
 .sanguosha-online-git-backup/
+/local/
+/.pnpm-store/
+/*.zip
+/*.tar.gz
+/交付文件/

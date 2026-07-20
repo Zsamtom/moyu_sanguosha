@@ -684,6 +684,34 @@ describe("RoomService", () => {
     expect(changed).toHaveBeenCalled();
   });
 
+  it("waits before each bot action when a human-like delay is configured", () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const rooms = new RoomService(90_000, 200, 100);
+      const roomId = startHumanRoom(rooms, [owner, guest]);
+      const internals = roomInternals(rooms);
+      const room = internals.rooms.get(roomId);
+      const game = room?.game;
+      const bot = room?.players.find((player) => player.id === game?.currentPlayerId);
+      if (!room || !game || !bot) throw new Error("Missing delayed bot test state");
+      bot.isBot = true;
+      const revision = game.revision;
+
+      internals.runBots(room);
+
+      expect(game.revision).toBe(revision);
+      vi.advanceTimersByTime(99);
+      expect(room.game?.revision).toBe(revision);
+      vi.advanceTimersByTime(1);
+      expect(room.game?.revision).toBeGreaterThan(revision);
+    } finally {
+      random.mockRestore();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("contains a bot action exception and settles through authoritative elimination", () => {
     const rooms = new RoomService();
     const roomId = startHumanRoom(rooms, [owner, guest]);

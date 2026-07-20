@@ -114,7 +114,6 @@ import { commitMoveBatch, type AtomicZoneState, type MoveBatch, type MoveIntent,
 import {
   adjudicateGuhuoChallenge,
   analyzeBuquWounds,
-  evaluateGuhuoTruth,
   evaluateGuidaoCost,
   evaluateHuangtianGift,
   evaluateJushouDisposal,
@@ -216,7 +215,6 @@ import {
   assertExactPartition,
   cloneStandardDamageAftermath,
   cloneStandardJudgmentContext,
-  standardDamageSkillQueue,
   standardPromptId,
 } from "./skills/standard-runtime.js";
 import {
@@ -300,7 +298,6 @@ import type {
   PendingStandardJudgment,
   PendingStandardSkill,
   PendingTrickEffect,
-  PendingZoneSelection,
   GuhuoRespondablePending,
   PlayableCardHint,
   PlayableSkillHint,
@@ -1236,15 +1233,6 @@ function removeCard(session: GameSession, player: GamePlayer, cardId: CardId, mo
     enqueueAfterMoveSkill(session, player, "lianying");
   }
   return card;
-}
-
-function removeAllHandCards(session: GameSession, player: GamePlayer): Card[] {
-  if (player.hand.length === 0) return [];
-  const removed = player.hand;
-  player.hand = [];
-  enqueueTuntianLossBatch(session, player, removed.map((card) => ({ card, zone: "hand" as const })));
-  enqueueAfterMoveSkill(session, player, "lianying");
-  return removed;
 }
 
 function assertPlayTurn(session: GameSession, playerId: PlayerId): void {
@@ -3243,7 +3231,6 @@ function dealDamage(
   nature: DamageNature,
   reason: string,
   resume: DyingResume,
-  ignoreArmor = false,
   damageCardIds: readonly CardId[] = [],
 ): boolean {
   if (resume.type === "damage_flow") {
@@ -3293,7 +3280,6 @@ function continueChainDamage(
       resume.nature,
       "受到铁索连环传导",
       nextResume,
-      false,
       resume.damageCardIds ?? [],
     );
     if (enteredDying) return true;
@@ -3314,11 +3300,11 @@ function dealDamageWithChain(
   damageCardIds: readonly CardId[] = [],
 ): boolean {
   if (nature === "normal" || !target.chained) {
-    return dealDamage(session, target, attacker, amount, nature, reason, resume, ignoreArmor, damageCardIds);
+    return dealDamage(session, target, attacker, amount, nature, reason, resume, damageCardIds);
   }
   const propagatedAmount = previewDamageAfterWeatherAndArmor(session, target, amount, nature, ignoreArmor);
   if (propagatedAmount === 0) {
-    return dealDamage(session, target, attacker, amount, nature, reason, resume, ignoreArmor, damageCardIds);
+    return dealDamage(session, target, attacker, amount, nature, reason, resume, damageCardIds);
   }
   target.chained = false;
   const remainingTargetIds = livingOpponentsInSeatOrder(session, target.id)
@@ -3341,7 +3327,6 @@ function dealDamageWithChain(
     nature,
     reason,
     remainingTargetIds.length > 0 ? chainResume : resume,
-    ignoreArmor,
     damageCardIds,
   );
   if (enteredDying || remainingTargetIds.length === 0) return enteredDying;
@@ -10820,7 +10805,6 @@ interface LonghunOwnedComponent {
 }
 
 function longhunOwnedComponents(
-  session: GameSession,
   player: GamePlayer,
   cardIds: readonly CardId[],
 ): LonghunOwnedComponent[] {
@@ -10845,7 +10829,7 @@ function evaluateLiveLonghun(
   method: "use" | "respond",
   requestedCardTimingLegal: boolean,
 ) {
-  const components = longhunOwnedComponents(session, player, cardIds);
+  const components = longhunOwnedComponents(player, cardIds);
   const evaluated = evaluateLonghun({
     context: godSkillContext(session, player, "longhun"),
     ownerHp: player.hp,
@@ -12910,7 +12894,7 @@ function applyUseSkill(
       // single authoritative card in the live session.
       const probe = cloneSession(session);
       const probePlayer = getLivingPlayer(probe, player.id);
-      const probeComponents = longhunOwnedComponents(probe, probePlayer, cardIds);
+      const probeComponents = longhunOwnedComponents(probePlayer, cardIds);
       commitLonghunComponents(probe, probePlayer, probeComponents, allocateEventId(probe));
       longhunSlashTargetsAfterPayment(
         probe,
@@ -17506,7 +17490,6 @@ function applyDuelResponse(
     "normal",
     "在决斗中未出杀",
     { type: "finish_effect" },
-    false,
     [pending.cardId],
   );
   if (!enteredDying) finishResolvingCards(session);
@@ -17664,7 +17647,6 @@ function applyMassAttackResponse(
           remainingTargetIds: [...pending.remainingTargetIds],
         },
       },
-      false,
       pending.damageCardIds ?? [pending.cardId],
     );
     if (enteredDying) return;
@@ -19469,7 +19451,7 @@ function longhunSlashGroupTargets(
     const owner = getLivingPlayer(probe, player.id);
     const allFromHand = cardIds.every((cardId) => owner.hand.some((card) => card.id === cardId));
     const fangTianEligible = allFromHand && cardIds.length === owner.hand.length;
-    const components = longhunOwnedComponents(probe, owner, cardIds);
+    const components = longhunOwnedComponents(owner, cardIds);
     commitLonghunComponents(probe, owner, components, allocateEventId(probe));
     if (!canUseAnotherSlash(probe, owner)) return [];
     const maxTargets = activeSlashTargetLimit(

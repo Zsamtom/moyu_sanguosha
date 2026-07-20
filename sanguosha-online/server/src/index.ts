@@ -32,7 +32,7 @@ async function main(): Promise<void> {
     const users = new PostgresUserStore(pool);
     await ensureInitialAdmin(users, config.initialAdmin);
 
-    const rooms = new RoomService();
+    const rooms = new RoomService(90_000, 200, 700);
     const savedRooms = await loadRoomSnapshot(pool);
     if (savedRooms.kind === "valid") {
       try {

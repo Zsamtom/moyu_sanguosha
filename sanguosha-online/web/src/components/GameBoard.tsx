@@ -113,11 +113,13 @@ function GameCardTile({
 
 function PlayerPanel({
   player,
+  acting,
   selectable,
   selected,
   onSelect,
 }: {
   player: GamePlayerView;
+  acting: boolean;
   selectable: boolean;
   selected: boolean;
   onSelect: () => void;
@@ -195,6 +197,7 @@ function PlayerPanel({
       {player.chained && <Tag color="volcano">连环</Tag>}
       {!player.faceUp && <Tag color="purple">背面</Tag>}
       {player.isCurrent && <span className="turn-ribbon">当前回合</span>}
+      {acting && <span className="player-action-bubble" role="status">操作中</span>}
       {!player.alive && <span className="dead-stamp">阵亡</span>}
     </button>
     </Tooltip>
@@ -202,9 +205,10 @@ function PlayerPanel({
 }
 
 function BattleLog({ logs }: { logs: GameLogEntry[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const entriesRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const entries = entriesRef.current;
+    if (entries) entries.scrollTop = entries.scrollHeight;
   }, [logs]);
 
   return (
@@ -213,7 +217,7 @@ function BattleLog({ logs }: { logs: GameLogEntry[] }) {
         <div><span className="live-pulse" />实时战报</div>
         <small>{logs.length} 条</small>
       </div>
-      <div className="battle-log__entries" aria-live="polite">
+      <div ref={entriesRef} className="battle-log__entries" aria-live="polite">
         {logs.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="战报将在这里出现" />
         ) : logs.map((log) => (
@@ -222,7 +226,6 @@ function BattleLog({ logs }: { logs: GameLogEntry[] }) {
             <p>{log.text}</p>
           </div>
         ))}
-        <div ref={endRef} />
       </div>
     </aside>
   );
@@ -521,6 +524,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
               <PlayerPanel
                 key={player.id}
                 player={player}
+                acting={game.status === 'playing' && player.id === game.actingPlayerId}
                 selectable={connected && selectableTargetIds.has(player.id)}
                 selected={selectedTargetIds.includes(player.id)}
                 onSelect={() => toggleTarget(player)}

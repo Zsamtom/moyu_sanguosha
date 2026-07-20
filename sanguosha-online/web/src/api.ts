@@ -179,6 +179,18 @@ export const api = {
     return extractUser(result);
   },
 
+  async setUserDisplayName(userId: string, displayName: string): Promise<AuthUser> {
+    const result = await request<AuthUser | { user: AuthUser }>(
+      `/api/admin/users/${encodeURIComponent(userId)}/display-name`,
+      { method: 'PATCH', ...jsonBody({ displayName }) },
+    );
+    return extractUser(result);
+  },
+
+  async deleteUser(userId: string): Promise<void> {
+    await request(`/api/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  },
+
   async resetPassword(userId: string, password: string): Promise<AuthUser> {
     const result = await request<AuthUser | { user: AuthUser }>(
       `/api/admin/users/${encodeURIComponent(userId)}/reset-password`,

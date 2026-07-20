@@ -2,7 +2,7 @@
 
 核查日期：2026-07-20
 
-原版基准：`../sanguosha-master`（wzk1015/sanguosha）
+原版基准：[wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)
 发布规则版本：`original-66-v1`
 
 ## 核查结论

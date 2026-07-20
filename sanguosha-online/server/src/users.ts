@@ -40,7 +40,9 @@ export interface UserStore {
   findByUsernameWithPassword(username: string): Promise<UserWithPassword | undefined>;
   list(): Promise<PublicUser[]>;
   create(input: CreateUserInput): Promise<PublicUser>;
+  setDisplayName(id: string, displayName: string): Promise<PublicUser | undefined>;
   setDisabled(id: string, disabled: boolean): Promise<PublicUser | undefined>;
+  delete(id: string): Promise<PublicUser | undefined>;
   resetPassword(id: string, password: string): Promise<PublicUser | undefined>;
   changePassword(id: string, password: string): Promise<SessionUser | undefined>;
   recordAudit(actorId: string, action: string, targetUserId: string, details?: object): Promise<void>;
@@ -156,6 +158,22 @@ export class PostgresUserStore implements UserStore {
        WHERE id = $1 RETURNING *`,
       [id, disabled],
     );
+    const row = result.rows[0];
+    return row ? toPublicUser(row) : undefined;
+  }
+
+  async setDisplayName(id: string, displayName: string): Promise<PublicUser | undefined> {
+    const result = await this.pool.query<UserRow>(
+      `UPDATE users SET display_name = $2, updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id, displayName.trim()],
+    );
+    const row = result.rows[0];
+    return row ? toPublicUser(row) : undefined;
+  }
+
+  async delete(id: string): Promise<PublicUser | undefined> {
+    const result = await this.pool.query<UserRow>("DELETE FROM users WHERE id = $1 RETURNING *", [id]);
     const row = result.rows[0];
     return row ? toPublicUser(row) : undefined;
   }
