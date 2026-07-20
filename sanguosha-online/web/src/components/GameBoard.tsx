@@ -24,6 +24,7 @@ import type {
   PlayableSkillHint,
   SkillChoiceId,
 } from '../types';
+import { generalNames } from './RoomScreen';
 
 interface GameBoardProps {
   game: GameView;
@@ -75,6 +76,15 @@ function skillName(skillId: string): string {
 
 function skillDescription(skillId: string): string {
   return activeSkillDescriptions[skillId] ?? '按当前提示选择费用与目标，提交后由服务器校验并结算。';
+}
+
+export function huashenChoiceLabel(token: string): string {
+  const [, generalId, skillId] = token.split(':');
+  return `${generalNames[generalId as keyof typeof generalNames] ?? '未知武将'} · ${skillName(skillId ?? '')}`;
+}
+
+export function huashenChoiceAction(playerId: string, promptId: string, token: string): Extract<GameAction, { type: 'resolve_standard_skill' }> {
+  return { type: 'resolve_standard_skill', playerId, promptId, activate: true, tokens: [token] };
 }
 
 function GameCardTile({
@@ -486,8 +496,6 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
     new Set([...standardTopIds, ...standardBottomIds]).size === standardViewedIds.length;
   const standardAllocationComplete = standardViewedIds.length > 0 &&
     standardViewedIds.every((cardId) => Boolean(standardAllocations[cardId]));
-  const waitingForOtherPlayer = game.status === 'playing' && !game.prompt && !game.canAct;
-
   const assignStandardReorder = (cardId: string, destination: 'top' | 'bottom') => {
     setStandardTopIds((current) => destination === 'top'
       ? [...current.filter((id) => id !== cardId), cardId]
@@ -537,9 +545,6 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
       </section>
 
       {!connected && <Alert banner type="warning" message="连接中断：当前操作已锁定，状态会在重连后自动同步。" />}
-      {connected && waitingForOtherPlayer && (
-        <Alert className="other-player-notice" banner showIcon type="info" message="其他玩家正在操作，请稍候……" />
-      )}
 
       {game.publicCards && game.publicCards.length > 0 && (
         <aside className="public-cards-popup" role="dialog" aria-modal="false" aria-label="桌面亮牌">
@@ -760,7 +765,18 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                   ))}
                 </div>
               ) : isStandardPrompt && standardPrompt?.skillId ? (
-                standardPrompt.standardStage === 'buqu_recovery' ? (
+                standardPrompt.skillId === 'huashen' && standardPrompt.options?.length ? (
+                  <div className="zone-choice-actions">
+                    {standardPrompt.options.map((option) => (
+                      <Button key={option} type="primary" size="large" disabled={!connected} loading={sending} onClick={() => void send(huashenChoiceAction(game.selfPlayerId, standardPrompt.id, option))}>
+                        选择「{huashenChoiceLabel(option)}」
+                      </Button>
+                    ))}
+                    {standardPrompt.optional !== false && (
+                      <Button size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(false)}>不更换化身</Button>
+                    )}
+                  </div>
+                ) : standardPrompt.standardStage === 'buqu_recovery' ? (
                   <div className="zone-choice-actions">
                     {standardPrompt.cardChoices?.map((card) => (
                       <Button key={card.id} type="primary" size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(true, { cardId: card.id })}>

@@ -794,6 +794,20 @@ describe('server payload adapters', () => {
     expect(skillChoice.prompt).toMatchObject({ kind: 'skill-choice', skillId: 'luoyi', optional: true });
     expect(skillChoice.prompt?.message).toContain('少摸一张牌');
 
+    const huashen = normalizeGameView({
+      ...base,
+      prompt: {
+        type: 'standard_skill', playerId: 'user-2', skillId: 'huashen', stage: 'huashen_initial',
+        promptId: 'huashen-initial', canPass: false, cards: [], allowedCardIds: [], targetIds: [],
+        minCards: 0, maxCards: 0, minTargets: 0, maxTargets: 0,
+        options: ['huashen:zhang_liao:tuxi'],
+      },
+    }, { userId: 'user-2' });
+    expect(huashen.prompt).toMatchObject({
+      kind: 'standard-skill', skillId: 'huashen', options: ['huashen:zhang_liao:tuxi'], optional: false,
+    });
+    expect(huashen.prompt?.message).toContain('两张私有化身牌');
+
     const yingzi = normalizeGameView({
       ...base,
       prompt: { type: 'skill_choice', playerId: 'user-2', skillId: 'yingzi', canPass: true },

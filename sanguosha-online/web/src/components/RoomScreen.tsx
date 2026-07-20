@@ -16,7 +16,7 @@ interface RoomScreenProps {
   onChooseGodFaction: (faction: PlayableFaction) => Promise<void>;
 }
 
-const generalNames = {
+export const generalNames = {
   cao_cao: '曹操', guo_jia: '郭嘉', si_ma_yi: '司马懿', xia_hou_dun: '夏侯惇', xu_chu: '许褚', zhang_liao: '张辽', zhen_ji: '甄姬',
   guan_yu: '关羽', huang_yue_ying: '黄月英', liu_bei: '刘备', ma_chao: '马超', zhang_fei: '张飞', zhao_yun: '赵云', zhu_ge_liang: '诸葛亮',
   da_qiao: '大乔', gan_ning: '甘宁', huang_gai: '黄盖', lu_xun: '陆逊', lv_meng: '吕蒙', sun_quan: '孙权', sun_shang_xiang: '孙尚香', zhou_yu: '周瑜',

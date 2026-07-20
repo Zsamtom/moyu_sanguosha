@@ -739,10 +739,6 @@ export function normalizeGameView(
       skillId: prompt.skillId,
     };
   } else if (prompt.type === 'standard_skill' && prompt.playerId === selfId) {
-    const skillName: Partial<Record<StandardImplementedSkillId, string>> = {
-      jianxiong: '奸雄', tiandu: '天妒', yiji: '遗计', guicai: '鬼才', fankui: '反馈',
-      ganglie: '刚烈', tuxi: '突袭', guanxing: '观星', tieqi: '铁骑', liuli: '流离', buqu: '不屈', liegong: '烈弓', tianxiang: '天香',
-    };
     const stageMessages: Record<string, string> = {
       judgment_retrial: '是否发动「鬼才」？可选择一张手牌替换当前最终判定牌，原判定牌进入弃牌堆。',
       judgment_post: '是否发动「天妒」获得最终生效的判定牌？',
@@ -754,6 +750,9 @@ export function normalizeGameView(
       liuli_redirect: '可弃置一张手牌或装备牌发动「流离」，将此杀转移给你攻击范围内的合法新目标。',
       tianxiang_redirect: '可弃置一张服务器判定有效花色为红桃的手牌发动「天香」，将此伤害转移给一名合法的其他角色。',
       buqu_recovery: '请选择一张「不屈」伤牌移除。',
+      huashen_initial: '请从两张私有化身牌中选择一张，并获得其中一项技能。',
+      huashen_turn_start: '你可以在准备阶段更换展示的化身及获得的技能。',
+      huashen_turn_end: '你可以在回合结束后更换展示的化身及获得的技能。',
     };
     const invokeMessages: Partial<Record<StandardImplementedSkillId, string>> = {
       jianxiong: '是否发动「奸雄」，获得仍在处理区中的伤害实体牌？',
@@ -774,8 +773,8 @@ export function normalizeGameView(
       id: prompt.promptId,
       kind: 'standard-skill',
       message: prompt.stage === 'invoke'
-        ? invokeMessages[prompt.skillId] ?? `是否发动「${skillName[prompt.skillId] ?? prompt.skillId}」？`
-        : stageMessages[prompt.stage] ?? `请处理「${skillName[prompt.skillId] ?? prompt.skillId}」。`,
+        ? invokeMessages[prompt.skillId] ?? `是否发动「${generalSkillNames[prompt.skillId]}」？`
+        : stageMessages[prompt.stage] ?? `请处理「${generalSkillNames[prompt.skillId]}」。`,
       optional: prompt.canPass,
       min: prompt.minCards,
       max: prompt.maxCards,
