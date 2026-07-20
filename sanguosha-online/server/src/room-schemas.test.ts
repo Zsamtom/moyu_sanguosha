@@ -45,9 +45,12 @@ describe("room creation and draft schemas", () => {
     expect(createRoomSchema.parse({ name: " 风包选将 ", maxPlayers: 8, ruleConfig })).toEqual({
       name: "风包选将",
       maxPlayers: 8,
+      botIntelligence: 3,
       ruleConfig,
     });
-    expect(createRoomSchema.parse({ name: "默认房" })).toEqual({ name: "默认房" });
+    expect(createRoomSchema.parse({ name: "默认房" })).toEqual({ name: "默认房", botIntelligence: 3 });
+    expect(createRoomSchema.parse({ name: "军师房", botIntelligence: 7 })).toMatchObject({ botIntelligence: 7 });
+    expect(createRoomSchema.safeParse({ name: "越界房", botIntelligence: 8 }).success).toBe(false);
 
     expect(createRoomSchema.safeParse({ name: "房间", injected: true }).success).toBe(false);
     expect(createRoomSchema.safeParse({

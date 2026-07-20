@@ -1,4 +1,4 @@
-import type { AuthUser, FullGeneralId, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
+import type { AuthUser, BotIntelligence, FullGeneralId, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -93,10 +93,15 @@ export const api = {
     };
   },
 
-  async createRoom(name: string, maxPlayers: number, ruleConfig?: RoomRuleConfig): Promise<RoomDetail> {
+  async createRoom(
+    name: string,
+    maxPlayers: number,
+    ruleConfig?: RoomRuleConfig,
+    botIntelligence: BotIntelligence = 3,
+  ): Promise<RoomDetail> {
     const result = await request<RoomDetail | { room: RoomDetail }>('/api/rooms', {
       method: 'POST',
-      ...jsonBody({ name, maxPlayers, ...(ruleConfig ? { ruleConfig } : {}) }),
+      ...jsonBody({ name, maxPlayers, botIntelligence, ...(ruleConfig ? { ruleConfig } : {}) }),
     });
     return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
   },

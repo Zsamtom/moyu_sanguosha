@@ -1,10 +1,11 @@
 import { Button, Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Progress, Select, Skeleton, Tag } from 'antd';
 import { useMemo, useState } from 'react';
-import type { PackId, RoomDetail, RoomRuleConfig, RoomSummary } from '../types';
+import { BOT_INTELLIGENCE_NAMES, type BotIntelligence, type PackId, type RoomDetail, type RoomRuleConfig, type RoomSummary } from '../types';
 
 interface CreateRoomValues {
   name: string;
   maxPlayers: number;
+  botIntelligence: BotIntelligence;
   enabledGeneralPacks: PackId[];
   selectionMode: 'choice' | 'random';
   candidatesPerPlayer: number;
@@ -18,7 +19,12 @@ interface LobbyScreenProps {
   rooms: RoomSummary[];
   loading: boolean;
   onRefresh: () => Promise<void>;
-  onCreate: (name: string, maxPlayers: number, ruleConfig: RoomRuleConfig) => Promise<RoomDetail>;
+  onCreate: (
+    name: string,
+    maxPlayers: number,
+    ruleConfig: RoomRuleConfig,
+    botIntelligence: BotIntelligence,
+  ) => Promise<RoomDetail>;
   onJoin: (roomId: string) => Promise<void>;
 }
 
@@ -77,7 +83,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
         maximumReshuffles: values.maximumReshuffles,
         lordBonusMinimumPlayers: values.lordBonusMinimumPlayers,
         godFactionChoice: values.godFactionChoice ?? true,
-      });
+      }, values.botIntelligence);
       setCreateOpen(false);
       form.resetFields();
     } finally {
@@ -204,6 +210,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
           requiredMark={false}
           initialValues={{
             maxPlayers: 5,
+            botIntelligence: 3,
             enabledGeneralPacks: ['standard', 'sp'],
             selectionMode: 'random',
             candidatesPerPlayer: 3,
@@ -232,6 +239,12 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             rules={[{ required: true, message: '请选择人数' }]}
           >
             <InputNumber min={2} max={10} precision={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="机器人智略" name="botIntelligence" extra="仅影响机器人决策；默认虎贲校尉。">
+            <Select options={Object.entries(BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+              value: Number(value),
+              label: `${value} · ${label}`,
+            }))} />
           </Form.Item>
           <Form.Item
             label="武将扩展包"

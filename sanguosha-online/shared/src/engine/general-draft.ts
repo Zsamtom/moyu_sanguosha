@@ -2,6 +2,7 @@ import { FULL_GENERAL_CATALOG, getFullGeneralDefinition, type FullGeneralFaction
 import { isFullGeneralId, type FullGeneralId } from "../full-general-ids.js";
 import { randomInteger, type ChaCha20State } from "../prng.js";
 import { enabledGeneralPacks, roleDistributionForCompleteRules, type RoomRuleConfig } from "../rule-config.js";
+import { getGeneralSkillRuleTexts } from "../skills/rule-text.js";
 import type { Role } from "../types.js";
 import { validateRoomRuleConfig } from "./state.js";
 
@@ -28,6 +29,17 @@ export interface GeneralDraftView {
   readonly playerIds: readonly string[];
   /** Only the viewer's own private candidates are populated. */
   readonly candidates: readonly FullGeneralId[];
+  readonly candidateDetails: readonly {
+    readonly id: FullGeneralId;
+    readonly name: string;
+    readonly faction: FullGeneralFaction;
+    readonly maxHp: number;
+    readonly skills: readonly {
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+    }[];
+  }[];
   readonly players: readonly {
     readonly playerId: string;
     readonly role: Role | null;
@@ -284,11 +296,26 @@ export function autoChooseGeneral(state: GeneralDraftState, playerId: string): v
 export function getGeneralDraftView(state: GeneralDraftState, viewerId: string): GeneralDraftView {
   if (!state.playerIds.includes(viewerId)) throw new GeneralDraftError("viewer does not belong to this draft");
   const complete = state.stage === "complete";
+  const candidates = [...(state.candidates[viewerId] ?? [])];
   return {
     stage: state.stage,
     currentPlayerId: state.roles ? currentDraftPlayerId(state) : null,
     playerIds: [...state.playerIds],
-    candidates: [...(state.candidates[viewerId] ?? [])],
+    candidates,
+    candidateDetails: candidates.map((id) => {
+      const general = getFullGeneralDefinition(id);
+      return {
+        id,
+        name: general.name,
+        faction: general.faction,
+        maxHp: general.maxHp,
+        skills: getGeneralSkillRuleTexts(id).map((skill) => ({
+          id: skill.skillId,
+          name: skill.name,
+          description: skill.text,
+        })),
+      };
+    }),
     players: state.playerIds.map((playerId) => {
       const selection = state.selections[playerId] ?? null;
       const own = playerId === viewerId;

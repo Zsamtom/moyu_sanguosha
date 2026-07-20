@@ -75,6 +75,13 @@ describe("deterministic private general draft", () => {
     const all = Object.values(left.candidates).flat();
     expect(new Set(all).size).toBe(all.length);
     expect(getGeneralDraftView(left, "a").candidates).toEqual(left.candidates.a);
+    expect(getGeneralDraftView(left, "a").candidateDetails[0]).toMatchObject({
+      id: left.candidates.a?.[0],
+      name: expect.any(String),
+      skills: expect.arrayContaining([
+        expect.objectContaining({ name: expect.any(String), description: expect.any(String) }),
+      ]),
+    });
     expect(getGeneralDraftView(left, "a").players.find((player) => player.playerId === "b")?.generalId).toBeNull();
     assertGeneralDraft(left);
   });

@@ -24,6 +24,11 @@ import {
   type RoomRuleConfig,
 } from "@sanguosha/shared";
 import { HttpError } from "./errors.js";
+import {
+  DEFAULT_BOT_INTELLIGENCE,
+  chooseBotTarget,
+  type BotIntelligence,
+} from "./bot-intelligence.js";
 import type { PublicUser } from "./users.js";
 
 export type RoomStatus = "waiting" | "drafting" | "playing" | "finished";
@@ -62,6 +67,7 @@ export interface RoomSummary {
 export interface RoomView extends RoomSummary {
   players: RoomPlayerView[];
   ruleConfig: RoomRuleConfig;
+  botIntelligence: BotIntelligence;
   /** Present only in the requesting member's private room view. */
   draft?: GeneralDraftView;
 }
@@ -80,6 +86,7 @@ interface Room {
   createdAt: string;
   players: RoomPlayer[];
   ruleConfig: RoomRuleConfig;
+  botIntelligence: BotIntelligence;
   draft?: GeneralDraftState;
   game?: GameSession;
 }
@@ -95,6 +102,7 @@ export interface RoomServiceSnapshot {
     createdAt: string;
     players: Array<RoomPlayerView & { departed?: boolean }>;
     ruleConfig: RoomRuleConfig;
+    botIntelligence?: BotIntelligence;
     draft?: GeneralDraftState;
     game?: GameSession;
   }>;
@@ -104,6 +112,7 @@ export interface CreateRoomInput {
   name: string;
   maxPlayers?: number;
   ruleConfig?: RoomRuleConfig;
+  botIntelligence?: BotIntelligence;
 }
 
 function cloneRuleConfig(config: RoomRuleConfig): RoomRuleConfig {
@@ -192,6 +201,7 @@ export class RoomService {
         throw new Error(`Non-drafting room ${saved.id} retains a draft`);
       }
       const room = structuredClone(saved) as Room;
+      room.botIntelligence = saved.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE;
       room.ruleConfig = cloneRuleConfig(
         saved.ruleConfig ?? DEFAULT_SERVER_ROOM_RULE_CONFIG,
       );
@@ -274,6 +284,7 @@ export class RoomService {
       createdAt: new Date().toISOString(),
       players: [this.toPlayer(owner, 0)],
       ruleConfig,
+      botIntelligence: input.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE,
     };
     this.rooms.set(id, room);
     this.roomByUser.set(owner.id, id);
@@ -571,6 +582,7 @@ export class RoomService {
         .filter((player) => !player.departed)
         .map(({ departed: _departed, ...player }) => ({ ...player })),
       ruleConfig: structuredClone(room.ruleConfig),
+      botIntelligence: room.botIntelligence,
       ...(viewerId && room.draft ? { draft: getGeneralDraftView(room.draft, viewerId) } : {}),
     };
   }
@@ -632,7 +644,7 @@ export class RoomService {
         if (!bot) break;
         steps += 1;
         try {
-          room.game = applyAction(room.game, this.actionForBot(room.game, bot));
+          room.game = applyAction(room.game, this.actionForBot(room.game, bot, room.botIntelligence));
           mutations += 1;
         } catch (error) {
           // A bad heuristic or an unforeseen rule edge must not escape from an
@@ -678,9 +690,15 @@ export class RoomService {
     );
   }
 
-  private actionForBot(game: GameSession, bot: RoomPlayer): GameAction {
+  private actionForBot(
+    game: GameSession,
+    bot: RoomPlayer,
+    intelligence: BotIntelligence = DEFAULT_BOT_INTELLIGENCE,
+  ): GameAction {
     const prompt = getGameView(game, bot.id).prompt;
     const canRevealJudgment = game.deck.length > 0 || game.discardPile.length > 0;
+    const target = (targetIds: readonly string[], beneficial = false) =>
+      chooseBotTarget(game, bot.id, targetIds, intelligence, beneficial);
     if (prompt.type === "play") {
       const player = game.players.find((candidate) => candidate.id === bot.id);
       if (!player) throw new Error(`Bot ${bot.id} is absent from the game`);
@@ -702,7 +720,9 @@ export class RoomService {
       // recovery threshold, so repeated bot batches always converge.
       const qingnang = prompt.skills.find((hint) => hint.skillId === "qingnang");
       if (qingnang) {
-        const targetId = qingnang.targetIds.includes(bot.id) ? bot.id : qingnang.targetIds[0];
+        const targetId = intelligence <= 3 && qingnang.targetIds.includes(bot.id)
+          ? bot.id
+          : target(qingnang.targetIds, true);
         const cardIds = costCards(qingnang.cardIds, 1);
         if (targetId && cardIds.length === 1) {
           return { type: "use_skill", playerId: bot.id, skillId: "qingnang", cardIds, targetId };
@@ -711,7 +731,7 @@ export class RoomService {
       const jieyin = prompt.skills.find((hint) => hint.skillId === "jieyin");
       if (jieyin && player.hp < player.maxHp) {
         const cardIds = costCards(jieyin.cardIds, 2);
-        const targetId = jieyin.targetIds[0];
+        const targetId = target(jieyin.targetIds, true);
         if (targetId && cardIds.length === 2) {
           return { type: "use_skill", playerId: bot.id, skillId: "jieyin", cardIds, targetId };
         }
@@ -725,10 +745,12 @@ export class RoomService {
       ) {
         const needed = 2 - game.turn.rendeGivenCount;
         const cardIds = costCards(rende.cardIds, needed);
-        const targetId = rende.targetIds
-          .map((targetId) => game.players.find((candidate) => candidate.id === targetId))
-          .filter((candidate) => candidate !== undefined)
-          .sort((left, right) => left.hand.length - right.hand.length)[0]?.id;
+        const targetId = intelligence >= 4
+          ? target(rende.targetIds, true)
+          : rende.targetIds
+            .map((targetId) => game.players.find((candidate) => candidate.id === targetId))
+            .filter((candidate) => candidate !== undefined)
+            .sort((left, right) => left.hand.length - right.hand.length)[0]?.id;
         if (targetId && cardIds.length === needed) {
           return { type: "use_skill", playerId: bot.id, skillId: "rende", cardIds, targetId };
         }
@@ -736,7 +758,7 @@ export class RoomService {
 
       const fanjian = prompt.skills.find((hint) => hint.skillId === "fanjian");
       if (fanjian?.targetIds[0]) {
-        return { type: "use_skill", playerId: bot.id, skillId: "fanjian", targetId: fanjian.targetIds[0] };
+        return { type: "use_skill", playerId: bot.id, skillId: "fanjian", targetId: target(fanjian.targetIds)! };
       }
       const lijian = prompt.skills.find((hint) => hint.skillId === "lijian");
       const lijianPair = lijian?.targetPairs?.[0];
@@ -758,20 +780,27 @@ export class RoomService {
           playerId: bot.id,
           skillId: "huangtian",
           cardIds: [huangtianCard],
-          targetId: huangtian.targetIds[0],
+          targetId: target(huangtian.targetIds, true),
         };
       }
 
-      const preferred = prompt.cards.find((hint) => hint.kind === "peach")
-        ?? prompt.cards.find((hint) => hint.kind === "ex_nihilo")
-        ?? prompt.cards.find((hint) => hint.kind.includes("horse"))
-        ?? prompt.cards[0];
+      if (intelligence === 1 && Math.random() < 0.35) return { type: "end_play", playerId: bot.id };
+      const preferred = intelligence <= 2
+        ? prompt.cards[Math.floor(Math.random() * prompt.cards.length)]
+        : prompt.cards.find((hint) => hint.kind === "peach")
+          ?? prompt.cards.find((hint) => hint.kind === "ex_nihilo")
+          ?? prompt.cards.find((hint) => hint.kind.includes("horse"))
+          ?? prompt.cards[0];
       if (preferred) {
+        const primaryTarget = target(preferred.targetIds);
+        const rankedTargets = primaryTarget && preferred.targetIds.length > 1 && intelligence >= 4
+          ? [primaryTarget, ...preferred.targetIds.filter((targetId) => targetId !== primaryTarget)]
+          : preferred.targetIds;
         return preferred.targetMode === "ordered-two"
           ? { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetIds: preferred.targetPairs?.[0] ? [...preferred.targetPairs[0]] : [] }
           : preferred.targetMode === "up-to-two" || preferred.targetMode === "up-to-three"
-            ? { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetIds: preferred.targetIds.slice(0, preferred.targetMode === "up-to-three" ? 3 : 2) }
-            : { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetId: preferred.targetIds[0] };
+            ? { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetIds: rankedTargets.slice(0, preferred.targetMode === "up-to-three" ? 3 : 2) }
+            : { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetId: primaryTarget };
       }
       const lesserYeyan = prompt.skills.find((hint) => hint.skillId === "yeyan" && hint.minCards === 0);
       const yeyanTargetId = lesserYeyan?.targetIds.find((targetId) =>
@@ -798,7 +827,7 @@ export class RoomService {
           type: "use_zhang_ba_slash",
           playerId: bot.id,
           cardIds: prompt.zhangBaSlash.allowedCardIds.slice(0, 2),
-          targetId: prompt.zhangBaSlash.targetIds[0],
+          targetId: target(prompt.zhangBaSlash.targetIds)!,
         };
       }
       // Conversion skills are a fallback after ordinary legal cards. Kurou is
@@ -810,7 +839,7 @@ export class RoomService {
         if (skillId === "guose" && Object.keys(game.virtualCardOrigins).length > 0) continue;
         const skillCardId = costCards(activeSkill.cardIds, 1)[0];
         if (!skillCardId) continue;
-        const targetId = (activeSkill.cardTargetIds?.[skillCardId] ?? activeSkill.targetIds)[0];
+        const targetId = target(activeSkill.cardTargetIds?.[skillCardId] ?? activeSkill.targetIds);
         if (!targetId) continue;
         return { type: "use_skill", playerId: bot.id, skillId, cardIds: [skillCardId], targetId };
       }

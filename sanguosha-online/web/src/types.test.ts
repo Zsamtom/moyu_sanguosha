@@ -20,6 +20,7 @@ describe('server payload adapters', () => {
 
     expect(room.hostId).toBe('user-1');
     expect(room.hostName).toBe('玄德');
+    expect(room.botIntelligence).toBe(3);
     expect(room.members[0]).toMatchObject({ userId: 'user-1', isHost: true, online: true });
     expect(room.members[1]).toMatchObject({ userId: 'user-2', isHost: false, online: false });
   });
@@ -51,6 +52,10 @@ describe('server payload adapters', () => {
         currentPlayerId: 'user-1',
         playerIds: ['user-1', 'user-2'],
         candidates: ['cao_cao', 'liu_bei'],
+        candidateDetails: [{
+          id: 'cao_cao', name: '曹操', faction: 'wei', maxHp: 4,
+          skills: [{ id: 'cao_cao_jianxiong', name: '奸雄', description: '受到伤害后，可以获得造成伤害的牌。' }],
+        }],
         players: [
           {
             playerId: 'user-1', role: 'lord', selected: false, generalId: null, needsFaction: false, faction: null,
@@ -68,6 +73,7 @@ describe('server payload adapters', () => {
       generalSelection: { mode: 'choice', candidatesPerPlayer: 2, allowDuplicateGenerals: false },
     });
     expect(room.draft?.candidates).toEqual(['cao_cao', 'liu_bei']);
+    expect(room.draft?.candidateDetails?.[0]?.skills[0]).toMatchObject({ name: '奸雄', description: expect.any(String) });
     expect(room.draft?.currentPlayerId).toBe('user-1');
     expect(room.draft?.players).toEqual([
       { playerId: 'user-1', role: 'lord', selected: false, generalId: null, needsFaction: false, faction: null },

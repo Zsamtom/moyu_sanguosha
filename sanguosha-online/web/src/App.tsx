@@ -11,6 +11,7 @@ import { RoomScreen } from './components/RoomScreen';
 import { realtime } from './realtime';
 import type {
   AuthUser,
+  BotIntelligence,
   FullGeneralId,
   GameAction,
   GameLogEntry,
@@ -182,9 +183,14 @@ export default function App() {
     }
   };
 
-  const createRoom = async (name: string, maxPlayers: number, ruleConfig: RoomRuleConfig) => {
+  const createRoom = async (
+    name: string,
+    maxPlayers: number,
+    ruleConfig: RoomRuleConfig,
+    botIntelligence: BotIntelligence,
+  ) => {
     try {
-      const created = await api.createRoom(name, maxPlayers, ruleConfig);
+      const created = await api.createRoom(name, maxPlayers, ruleConfig, botIntelligence);
       setRoom(created);
       setAdminMode(false);
       toast.success('房间已创建');

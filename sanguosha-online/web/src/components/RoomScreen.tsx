@@ -1,7 +1,7 @@
 import { Alert, Button, Popconfirm, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { getRoomStartBlockReason } from '../interactionRules';
-import type { AuthUser, FullGeneralId, GameRole, PackId, PlayableFaction, RoomDetail } from '../types';
+import { BOT_INTELLIGENCE_NAMES, type AuthUser, type FullGeneralId, type GameRole, type PackId, type PlayableFaction, type RoomDetail } from '../types';
 
 interface RoomScreenProps {
   room: RoomDetail;
@@ -29,6 +29,7 @@ const generalNames = {
 } satisfies Record<FullGeneralId, string>;
 
 const factionNames: Record<PlayableFaction, string> = { wei: '魏', shu: '蜀', wu: '吴', qun: '群' };
+const draftFactionNames = { ...factionNames, selectable: '神' } as const;
 const roleNames: Record<GameRole, string> = { lord: '主公', loyalist: '忠臣', rebel: '反贼', renegade: '内奸' };
 const packNames: Record<PackId, string> = {
   standard: '标准', sp: 'SP', wind: '风', fire: '火', forest: '林', mountain: '山', god: '神',
@@ -53,6 +54,7 @@ export function RoomScreen({
   const allOnline = room.members.every((member) => member.online);
   const startBlockReason = getRoomStartBlockReason(room, connected);
   const canStart = Boolean(isHost && !startBlockReason);
+  const botIntelligence = room.botIntelligence ?? 3;
 
   const seats = useMemo(() => {
     const bySeat = new Map(room.members.map((member) => [member.seat, member]));
@@ -151,20 +153,32 @@ export function RoomScreen({
 
             {!ownDraft?.selected && isOwnTurn && room.draft.stage === 'selecting_generals' ? (
               <div className="general-option-grid">
-                {room.draft.candidates.map((generalId, index) => (
-                  <button
-                    className="general-option"
-                    type="button"
-                    key={generalId}
-                    disabled={!connected || busy === 'draft'}
-                    onClick={() => void chooseGeneral(generalId)}
-                  >
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    <strong>{generalNames[generalId]}</strong>
-                    <code>{generalId}</code>
-                    <small>{generalId.startsWith('shen_') ? '神武将 · 后续选择势力' : '候选武将'}</small>
-                  </button>
-                ))}
+                {room.draft.candidates.map((generalId, index) => {
+                  const details = room.draft?.candidateDetails?.find((candidate) => candidate.id === generalId);
+                  return (
+                    <article className="general-option" key={generalId}>
+                      <span>{String(index + 1).padStart(2, '0')}</span>
+                      <div className="general-option__content">
+                        <div className="general-option__heading">
+                          <strong>{details?.name ?? generalNames[generalId]}</strong>
+                          <small>{details ? `${draftFactionNames[details.faction]}势力 · ${details.maxHp} 点体力` : generalId.startsWith('shen_') ? '神武将 · 后续选择势力' : '候选武将'}</small>
+                        </div>
+                        <div className="general-option__skills">
+                          {details?.skills.map((skill) => (
+                            <p key={skill.id}><b>{skill.name}</b>{skill.description}</p>
+                          )) ?? <p>技能说明正在同步，请稍候。</p>}
+                        </div>
+                      </div>
+                      <Button
+                        disabled={!connected || busy === 'draft'}
+                        loading={busy === 'draft'}
+                        onClick={() => void chooseGeneral(generalId)}
+                      >
+                        选择
+                      </Button>
+                    </article>
+                  );
+                })}
               </div>
             ) : ownDraft?.needsFaction && isOwnTurn ? (
               <div className="faction-options" aria-label="神武将势力">
@@ -243,6 +257,7 @@ export function RoomScreen({
         <section className="room-rule-summary" aria-label="房间规则">
           <div><span>武将包</span><strong>{room.ruleConfig.enabledGeneralPacks.map((pack) => packNames[pack]).join(' / ')}</strong></div>
           <div><span>选将</span><strong>{room.ruleConfig.generalSelection.mode === 'random' ? '服务器随机' : `私有候选 ${room.ruleConfig.generalSelection.candidatesPerPlayer} 选 1`}</strong></div>
+          <div><span>机器人</span><strong>{botIntelligence} · {BOT_INTELLIGENCE_NAMES[botIntelligence]}</strong></div>
           <div><span>牌堆</span><strong>原版 160 张</strong></div>
           <div><span>重洗上限</span><strong>{room.ruleConfig.maximumReshuffles} 次</strong></div>
         </section>

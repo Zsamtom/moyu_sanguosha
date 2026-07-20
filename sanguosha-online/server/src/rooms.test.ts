@@ -23,6 +23,7 @@ import {
   RoomService,
   type RoomPlayerView,
 } from "./rooms.js";
+import type { BotIntelligence } from "./bot-intelligence.js";
 import type { PublicUser } from "./users.js";
 
 function user(id: string, username: string): PublicUser {
@@ -60,7 +61,11 @@ interface RoomInternals {
   rooms: Map<string, InternalRoom>;
   botContinuations: Map<string, NodeJS.Immediate>;
   runBots: (room: InternalRoom) => void;
-  actionForBot: (game: GameSession, bot: RoomPlayerView & { departed: boolean }) => GameAction;
+  actionForBot: (
+    game: GameSession,
+    bot: RoomPlayerView & { departed: boolean },
+    intelligence?: BotIntelligence,
+  ) => GameAction;
 }
 
 function roomInternals(rooms: RoomService): RoomInternals {
@@ -95,6 +100,7 @@ describe("RoomService", () => {
     const created = rooms.create(owner, { name: "单人机器人局", maxPlayers: 2 });
     rooms.setConnected(owner.id, true);
     const withBot = rooms.addBot(created.id, owner.id);
+    expect(withBot.botIntelligence).toBe(3);
     const bot = withBot.players.find((player) => player.isBot);
     if (!bot) throw new Error("Bot missing");
     expect(bot).toMatchObject({ ready: true, connected: true, isBot: true });
@@ -107,6 +113,34 @@ describe("RoomService", () => {
     expect(ownerView.players.find((player) => player.id === owner.id)?.hand).not.toBeNull();
     expect(ownerView.players.find((player) => player.id === bot.id)?.hand).toBeNull();
     expect(ownerView.prompt.type === "play" ? ownerView.prompt.playerId : ownerView.prompt.type).not.toBe(bot.id);
+  });
+
+  it("uses higher intelligence to attack a weaker legal target", () => {
+    const rooms = new RoomService();
+    const roomId = startHumanRoom(rooms, [owner, guest, third]);
+    const internals = roomInternals(rooms);
+    const room = internals.rooms.get(roomId);
+    const game = room?.game;
+    const bot = room?.players.find((player) => player.id === guest.id);
+    const botPlayer = game?.players.find((player) => player.id === guest.id);
+    const ownerPlayer = game?.players.find((player) => player.id === owner.id);
+    const thirdPlayer = game?.players.find((player) => player.id === third.id);
+    if (!game || !bot || !botPlayer || !ownerPlayer || !thirdPlayer) throw new Error("Missing intelligence fixture");
+
+    bot.isBot = true;
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [standardCard("smart-slash", "slash")];
+    botPlayer.role = "loyalist";
+    ownerPlayer.role = "loyalist";
+    thirdPlayer.role = "loyalist";
+    ownerPlayer.hp = ownerPlayer.maxHp;
+    thirdPlayer.hp = 1;
+    game.currentPlayerId = bot.id;
+    game.turn = { ...game.turn, playerId: bot.id, phase: "play", slashUsed: false, requiredDiscardCount: 0 };
+    game.pendingResponse = null;
+
+    expect(internals.actionForBot(game, bot, 3)).toMatchObject({ type: "play_card", targetId: owner.id });
+    expect(internals.actionForBot(game, bot, 7)).toMatchObject({ type: "play_card", targetId: third.id });
   });
 
   it("finishes bot games spanning all 66 generals without an illegal action", () => {

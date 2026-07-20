@@ -2482,46 +2482,65 @@ body {
 .general-option {
   display: grid;
   width: 100%;
-  min-height: 60px;
-  grid-template-columns: 38px minmax(120px, 0.55fr) minmax(140px, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: start;
   gap: 12px;
-  padding: 11px 13px;
+  padding: 14px;
   border: 1px solid var(--paper-line);
   border-radius: 4px;
   background: #ffffff;
   color: var(--ink);
   text-align: left;
-  cursor: pointer;
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.general-option:not(:disabled):hover {
+.general-option:hover {
   border-color: #888888;
   background: #f7f7f7;
 }
 
-.general-option:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.general-option > span,
-.general-option code {
+.general-option > span {
   color: #777777;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
 }
 
-.general-option strong {
+.general-option__content {
+  min-width: 0;
+}
+
+.general-option__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.general-option__heading strong {
   font-size: 14px;
   font-weight: 600;
 }
 
-.general-option small {
+.general-option__heading small {
   color: var(--ink-muted);
   font-size: 11px;
   text-align: right;
+}
+
+.general-option__skills {
+  margin-top: 8px;
+}
+
+.general-option__skills p {
+  margin: 4px 0 0;
+  color: #555555;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.general-option__skills b {
+  margin-right: 8px;
+  color: #222222;
 }
 
 .faction-options {
@@ -2656,8 +2675,11 @@ body {
 
 .action-prompt {
   align-items: center;
-  margin-bottom: 12px;
+  height: 84px;
+  box-sizing: border-box;
+  margin-bottom: 10px;
   padding: 12px 14px;
+  overflow: hidden;
   border: 1px solid #cbd8e8;
   border-left: 3px solid #2563eb;
   border-radius: 5px;
@@ -2671,6 +2693,15 @@ body {
   border-radius: 4px;
   background: #2563eb;
   color: #ffffff;
+}
+
+.action-prompt > div {
+  max-height: 58px;
+  overflow-y: auto;
+}
+
+.action-prompt--idle {
+  color: #777777;
 }
 
 .action-prompt .ant-tag {
@@ -3283,6 +3314,23 @@ body {
 }
 
 @media (max-width: 720px) {
+  .draft-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .draft-progress {
+    position: static;
+  }
+
+  .general-option {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .general-option > .ant-btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .activity-overlay {
     right: 8px;
     bottom: 22px;

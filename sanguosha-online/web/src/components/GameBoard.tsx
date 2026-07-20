@@ -578,14 +578,6 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
 
       <div className="game-layout">
         <section className="battlefield">
-          {game.prompt && (
-            <div className="action-prompt" role="status">
-              <span className="action-prompt__mark">令</span>
-              <div><strong>{isFanjianSuitPrompt ? '请声明反间花色' : isSkillChoicePrompt || isStandardPrompt ? '请处理武将技能' : isLordDispatchPrompt ? '主公技请求' : isDiscardPrompt ? '请完成弃牌' : isWeaponPrompt ? '是否发动武器' : isArmorPrompt ? '是否发动防具' : isZonePrompt ? '请选择目标区域牌' : isAmazingGracePrompt ? '请选择五谷丰登牌' : isFireAttackPrompt ? '请完成火攻结算' : '需要你的响应'}</strong><p>{game.prompt.message}</p></div>
-              {(isDiscardPrompt || isWeaponPrompt && discardMax > 0) && <Tag color="volcano">已选 {selectedCardIds.length} / {discardMin === discardMax ? discardMin : `${discardMin}-${discardMax}`}</Tag>}
-            </div>
-          )}
-
           <div className="players-stage">
             <ActivityOverlay logs={game.logs ?? []} />
             <div
@@ -613,6 +605,14 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 <h2>{game.hand.length} 张</h2>
               </div>
               <p>{selectedSkill ? skillDescription(selectedSkill.skillId) : selectedCard?.targetMode === 'ordered-two' ? '先选择持有武器者，再选择其攻击范围内的目标。' : selectedCard?.targetMode === 'up-to-two' ? '可选择一至两名角色；不选目标即重铸摸一张牌。' : selectedCard?.targetMode === 'up-to-three' ? '方天画戟：这张杀可指定一至三名角色。' : requiresTarget ? '请选择一名高亮目标，再确认出牌。' : isDiscardPrompt ? `请选择 ${discardMin === discardMax ? discardMin : `${discardMin}–${discardMax}`} 张牌弃置。` : '点击卡牌查看牌面说明和可用操作。'}</p>
+            </div>
+            <div className={`action-prompt${game.prompt ? '' : ' action-prompt--idle'}`} role="status">
+              <span className="action-prompt__mark">令</span>
+              <div>
+                <strong>{game.prompt ? isFanjianSuitPrompt ? '请声明反间花色' : isSkillChoicePrompt || isStandardPrompt ? '请处理武将技能' : isLordDispatchPrompt ? '主公技请求' : isDiscardPrompt ? '请完成弃牌' : isWeaponPrompt ? '是否发动武器' : isArmorPrompt ? '是否发动防具' : isZonePrompt ? '请选择目标区域牌' : isAmazingGracePrompt ? '请选择五谷丰登牌' : isFireAttackPrompt ? '请完成火攻结算' : '需要你的响应' : '操作提示'}</strong>
+                <p>{game.prompt?.message ?? '当前没有需要处理的响应。'}</p>
+              </div>
+              {(isDiscardPrompt || isWeaponPrompt && discardMax > 0) && <Tag>已选 {selectedCardIds.length} / {discardMin === discardMax ? discardMin : `${discardMin}-${discardMax}`}</Tag>}
             </div>
             {availableSkills.length > 0 && (
               <section className="general-skill-zone" aria-label="武将技能">

@@ -159,7 +159,7 @@ describe("room snapshot persistence", () => {
     const valid = await load(JSON.parse(JSON.stringify(snapshot)));
     expect(valid).toMatchObject({
       kind: "valid",
-      snapshot: { rooms: [{ status: "drafting", ruleConfig: config, draft: { playerIds, roles: draft.roles } }] },
+      snapshot: { rooms: [{ status: "drafting", botIntelligence: 3, ruleConfig: config, draft: { playerIds, roles: draft.roles } }] },
     });
 
     const wrongLord = structuredClone(snapshot);

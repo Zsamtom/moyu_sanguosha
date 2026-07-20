@@ -55,10 +55,10 @@ describe('room draft API', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await api.createRoom('默认规则', 5);
-    const configured = await api.createRoom('风火选将', 5, ruleConfig);
+    const configured = await api.createRoom('风火选将', 5, ruleConfig, 7);
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5 });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, ruleConfig });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5, botIntelligence: 3 });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, botIntelligence: 7, ruleConfig });
     expect(configured.ruleConfig).toEqual(ruleConfig);
   });
 

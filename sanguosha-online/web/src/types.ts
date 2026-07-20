@@ -35,6 +35,16 @@ export type FullGeneralId =
 export type PackId = 'standard' | 'sp' | 'wind' | 'fire' | 'forest' | 'mountain' | 'god';
 export type PlayableFaction = 'wei' | 'shu' | 'wu' | 'qun';
 export type GameRole = 'lord' | 'loyalist' | 'rebel' | 'renegade';
+export type BotIntelligence = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export const BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
+  1: '黄巾小卒',
+  2: '乡勇锐士',
+  3: '虎贲校尉',
+  4: '镇军将军',
+  5: '五虎上将',
+  6: '卧龙军师',
+  7: '武圣临凡',
+};
 export type GeneralDraftStage = 'selecting_generals' | 'selecting_factions' | 'complete';
 
 export interface RoomRuleConfig {
@@ -57,6 +67,13 @@ export interface GeneralDraftView {
   readonly playerIds: readonly string[];
   /** This list contains only the current caller's private candidates. */
   readonly candidates: readonly FullGeneralId[];
+  readonly candidateDetails?: readonly {
+    readonly id: FullGeneralId;
+    readonly name: string;
+    readonly faction: PlayableFaction | 'selectable';
+    readonly maxHp: number;
+    readonly skills: readonly { readonly id: string; readonly name: string; readonly description: string }[];
+  }[];
   readonly players: readonly {
     readonly playerId: string;
     readonly role: GameRole | null;
@@ -93,6 +110,7 @@ export interface RoomMember {
 
 export interface RoomDetail extends RoomSummary {
   members: RoomMember[];
+  botIntelligence?: BotIntelligence;
   ruleConfig?: RoomRuleConfig;
   /** Private projection for the caller; absent from public room summaries. */
   draft?: GeneralDraftView;
@@ -1052,6 +1070,10 @@ export function normalizeRoomSummary(room: Partial<RoomSummary> & Record<string,
 
 export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, unknown>): RoomDetail {
   const summary = normalizeRoomSummary(room);
+  const rawBotIntelligence = Number(room.botIntelligence ?? 3);
+  const botIntelligence = Number.isInteger(rawBotIntelligence) && rawBotIntelligence >= 1 && rawBotIntelligence <= 7
+    ? rawBotIntelligence as BotIntelligence
+    : 3;
   const rawMembers = Array.isArray(room.members)
     ? room.members
     : Array.isArray(room.players)
@@ -1084,6 +1106,10 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
     currentPlayerId: room.draft.currentPlayerId ?? null,
     playerIds: [...room.draft.playerIds],
     candidates: [...room.draft.candidates],
+    candidateDetails: room.draft.candidateDetails?.map((general) => ({
+      ...general,
+      skills: general.skills.map((skill) => ({ ...skill })),
+    })),
     players: room.draft.players.map((player) => ({
       playerId: player.playerId,
       role: player.role ?? null,
@@ -1097,6 +1123,7 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
     ...summary,
     members,
     playerCount: members.length,
+    botIntelligence,
     ...(ruleConfig ? { ruleConfig } : {}),
     ...(draft ? { draft } : {}),
   };

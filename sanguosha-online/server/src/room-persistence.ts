@@ -58,6 +58,9 @@ const generalIdSchema = z.enum(FULL_GENERAL_IDS);
 const generalPackSchema = z.enum(FULL_GENERAL_PACKS);
 const playableFactionSchema = z.enum(["wei", "shu", "wu", "qun"]);
 const roleSchema = z.enum(["lord", "loyalist", "rebel", "renegade"]);
+const botIntelligenceSchema = z.union([
+  z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7),
+]);
 const generalSkillIdSchema = z.enum(FULL_SKILL_RULE_IDS);
 const safeIntegerSchema = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
 const nonnegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -4568,6 +4571,7 @@ const roomSchema = z.object({
   ownerId: playerIdSchema,
   status: z.enum(["waiting", "drafting", "playing", "finished"]),
   maxPlayers: z.number().int().min(2).max(10),
+  botIntelligence: botIntelligenceSchema.default(3),
   createdAt: z.string().datetime(),
   players: z.array(playerSchema).min(1).max(10),
   ruleConfig: roomRuleConfigSchema,

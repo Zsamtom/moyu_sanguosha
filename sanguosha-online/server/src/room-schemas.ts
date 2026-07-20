@@ -6,8 +6,12 @@ import {
   type GameAction,
 } from "@sanguosha/shared";
 import { z } from "zod";
+import { DEFAULT_BOT_INTELLIGENCE } from "./bot-intelligence.js";
 
 export const roomIdSchema = z.string().uuid();
+const botIntelligenceSchema = z.union([
+  z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7),
+]);
 
 export const roomRuleConfigSchema = z.object({
   ruleSetVersion: z.literal("original-66-v1"),
@@ -35,6 +39,7 @@ export const roomRuleConfigSchema = z.object({
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(40),
   maxPlayers: z.number().int().min(2).max(10).optional(),
+  botIntelligence: botIntelligenceSchema.default(DEFAULT_BOT_INTELLIGENCE),
   ruleConfig: roomRuleConfigSchema.optional(),
 }).strict();
 
