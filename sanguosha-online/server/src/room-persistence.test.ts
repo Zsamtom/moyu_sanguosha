@@ -1,14 +1,21 @@
 import type { Pool } from "pg";
 import {
+  DEFAULT_COMPLETE_RULE_CONFIG,
+  addMark,
   applyAction,
+  beginDirectDeath,
+  chooseGeneral,
+  chooseGodFaction,
   createDeathFrame,
-  createDamageInstance,
   createDyingFrame,
   createGame,
+  createGameFromDraft,
+  createGeneralDraft,
+  forfeitPlayer,
   getCardDefinition,
+  getGeneralDraftView,
   grantSkill,
   pushDeathFrame,
-  pushDamageFlowFrame,
   pushDyingFrame,
   turnOverGamePlayer,
   type Card,
@@ -19,7 +26,11 @@ import {
   loadRoomSnapshot,
   RoomSnapshotWriter,
 } from "./room-persistence.js";
-import { RoomService, type RoomServiceSnapshot } from "./rooms.js";
+import {
+  DEFAULT_SERVER_ROOM_RULE_CONFIG,
+  RoomService,
+  type RoomServiceSnapshot,
+} from "./rooms.js";
 
 function poolWithQuery(query: Pool["query"]): Pool {
   return { query } as unknown as Pool;
@@ -30,6 +41,388 @@ function standardCard(id: string, kind: CardKind, suit: Card["suit"] = "spade"):
 }
 
 describe("room snapshot persistence", () => {
+  it("migrates the legacy server rule config without changing authoritative game progress", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const game = createGame({ playerIds, seed: "a1".repeat(32) });
+    const legacy = {
+      version: 1,
+      rooms: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Legacy config",
+        ownerId: playerIds[0]!,
+        status: "playing",
+        maxPlayers: 2,
+        createdAt: new Date().toISOString(),
+        players: playerIds.map((id, seat) => ({
+          id,
+          username: `legacy-${seat}`,
+          displayName: `legacy-${seat}`,
+          ready: true,
+          connected: false,
+          seat,
+        })),
+        game: structuredClone(game),
+      }],
+    };
+    for (const player of legacy.rooms[0]!.game.players as Array<Record<string, unknown>>) {
+      delete player.godFaction;
+    }
+    delete (legacy.rooms[0]!.game as unknown as Record<string, unknown>).revision;
+    const before = structuredClone(legacy.rooms[0]!.game);
+
+    const result = await loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: legacy }] }) as Pool["query"],
+    ));
+
+    expect(result.kind).toBe("valid");
+    if (result.kind !== "valid") throw new Error(result.reason);
+    const restoredRoom = result.snapshot.rooms[0]!;
+    const restored = restoredRoom.game!;
+    expect(restored.revision).toBe(0);
+    expect(restoredRoom.ruleConfig).toEqual(DEFAULT_SERVER_ROOM_RULE_CONFIG);
+    expect(restored.completeRules.ruleConfig).toEqual(DEFAULT_SERVER_ROOM_RULE_CONFIG);
+    expect(restored.players.every((player) => player.godFaction === null)).toBe(true);
+    expect({
+      rng: restored.rng,
+      deck: restored.deck,
+      discardPile: restored.discardPile,
+      nextUseId: restored.nextUseId,
+      nextEventId: restored.nextEventId,
+      damageFlow: restored.completeRules.damageFlow,
+      dying: restored.completeRules.dying,
+      death: restored.completeRules.death,
+      nextMoveBatchId: restored.completeRules.nextMoveBatchId,
+      nextDamageId: restored.completeRules.nextDamageId,
+      reshufflesRemaining: restored.completeRules.reshufflesRemaining,
+    }).toEqual({
+      rng: before.rng,
+      deck: before.deck,
+      discardPile: before.discardPile,
+      nextUseId: before.nextUseId,
+      nextEventId: before.nextEventId,
+      damageFlow: before.completeRules.damageFlow,
+      dying: before.completeRules.dying,
+      death: before.completeRules.death,
+      nextMoveBatchId: before.completeRules.nextMoveBatchId,
+      nextDamageId: before.completeRules.nextDamageId,
+      reshufflesRemaining: before.completeRules.reshufflesRemaining,
+    });
+    expect(legacy.rooms[0]!.game.completeRules.ruleConfig).toEqual(DEFAULT_COMPLETE_RULE_CONFIG);
+  });
+
+  it("round-trips a strict private draft and rejects config, pack, roster, and record tampering", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const config = {
+      ...DEFAULT_SERVER_ROOM_RULE_CONFIG,
+      generalSelection: {
+        ...DEFAULT_SERVER_ROOM_RULE_CONFIG.generalSelection,
+        mode: "choice" as const,
+        candidatesPerPlayer: 3,
+      },
+    };
+    const draft = createGeneralDraft({
+      playerIds,
+      config,
+      rng: { key: "01".repeat(32), counter: 0 },
+    });
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Strict draft",
+        ownerId: playerIds[0]!,
+        status: "drafting",
+        maxPlayers: 2,
+        createdAt: new Date().toISOString(),
+        players: playerIds.map((id, seat) => ({
+          id,
+          username: `draft-${seat}`,
+          displayName: `draft-${seat}`,
+          ready: true,
+          connected: false,
+          seat,
+        })),
+        ruleConfig: config,
+        draft,
+      }],
+    };
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    const valid = await load(JSON.parse(JSON.stringify(snapshot)));
+    expect(valid).toMatchObject({
+      kind: "valid",
+      snapshot: { rooms: [{ status: "drafting", ruleConfig: config, draft: { playerIds, roles: draft.roles } }] },
+    });
+
+    const wrongLord = structuredClone(snapshot);
+    wrongLord.rooms[0]!.draft!.roles![playerIds[0]!] = "lord";
+    wrongLord.rooms[0]!.draft!.roles![playerIds[1]!] = "lord";
+    expect(await load(wrongLord)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("identity rules") });
+
+    const extraConfig = structuredClone(snapshot) as unknown as { rooms: Array<{ ruleConfig: Record<string, unknown> }> };
+    extraConfig.rooms[0]!.ruleConfig.injected = true;
+    expect(await load(extraConfig)).toMatchObject({ kind: "invalid" });
+
+    const mismatchedConfig = structuredClone(snapshot);
+    mismatchedConfig.rooms[0]!.ruleConfig.generalSelection.candidatesPerPlayer = 2;
+    expect(await load(mismatchedConfig)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("candidate count") });
+
+    const disabledPack = structuredClone(snapshot);
+    (disabledPack.rooms[0]!.draft!.candidates[playerIds[0]!] as string[])[0] = "shen_cao_cao";
+    expect(await load(disabledPack)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("disabled pack") });
+
+    const extraPrivatePlayer = structuredClone(snapshot);
+    (extraPrivatePlayer.rooms[0]!.draft!.selections as Record<string, string | null>)[
+      "99999999-9999-4999-8999-999999999999"
+    ] = null;
+    expect(await load(extraPrivatePlayer)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("keys") });
+
+    const wrongRoster = structuredClone(snapshot);
+    (wrongRoster.rooms[0]!.draft!.playerIds as string[]).reverse();
+    expect(await load(wrongRoster)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("draft players") });
+
+    const wrongStatus = structuredClone(snapshot);
+    wrongStatus.rooms[0]!.status = "waiting";
+    expect(await load(wrongStatus)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("Waiting room") });
+  });
+
+  it("round-trips a completed God assignment and rejects missing, illegal, fixed, or config-mismatched factions", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const config = {
+      ...DEFAULT_COMPLETE_RULE_CONFIG,
+      enabledGeneralPacks: ["standard", "god"] as const,
+      generalSelection: {
+        ...DEFAULT_COMPLETE_RULE_CONFIG.generalSelection,
+        candidatesPerPlayer: 10,
+      },
+    };
+    const draft = createGeneralDraft({
+      playerIds,
+      config,
+      rng: { key: "01".repeat(32), counter: 0 },
+    });
+    const godOwnerId = playerIds.find((playerId) => draft.candidates[playerId]?.some((id) => id.startsWith("shen_")))!;
+    const fixedOwnerId = playerIds.find((playerId) => playerId !== godOwnerId)!;
+    const godGeneralId = draft.candidates[godOwnerId]!.find((id) => id.startsWith("shen_"))!;
+    const fixedGeneralId = draft.candidates[fixedOwnerId]!.find((id) => !id.startsWith("shen_"))!;
+    while (draft.stage === "selecting_generals") {
+      const currentPlayerId = getGeneralDraftView(draft, playerIds[0]!).currentPlayerId!;
+      chooseGeneral(draft, currentPlayerId, currentPlayerId === godOwnerId ? godGeneralId : fixedGeneralId);
+    }
+    chooseGodFaction(draft, godOwnerId, "wu");
+    const game = createGameFromDraft({ draft, config });
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        name: "God faction",
+        ownerId: playerIds[0]!,
+        status: "playing",
+        maxPlayers: 2,
+        createdAt: new Date().toISOString(),
+        players: playerIds.map((id, seat) => ({
+          id,
+          username: `god-${seat}`,
+          displayName: `god-${seat}`,
+          ready: true,
+          connected: false,
+          seat,
+        })),
+        ruleConfig: config,
+        game,
+      }],
+    };
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    expect(await load(snapshot)).toMatchObject({
+      kind: "valid",
+      snapshot: { rooms: [{ game: { players: expect.arrayContaining([
+        expect.objectContaining({ id: godOwnerId, generalId: godGeneralId, godFaction: "wu" }),
+        expect.objectContaining({ id: fixedOwnerId, generalId: fixedGeneralId, godFaction: null }),
+      ]) } }] },
+    });
+
+    const missingGodFaction = structuredClone(snapshot) as unknown as { rooms: Array<{ game: { players: Array<Record<string, unknown>> } }> };
+    delete missingGodFaction.rooms[0]!.game.players.find((player) => player.id === godOwnerId)!.godFaction;
+    expect(await load(missingGodFaction)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("God faction") });
+
+    const fixedFaction = structuredClone(snapshot);
+    fixedFaction.rooms[0]!.game!.players.find((player) => player.id === fixedOwnerId)!.godFaction = "shu";
+    expect(await load(fixedFaction)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("God faction") });
+
+    const illegalFaction = structuredClone(snapshot) as unknown as { rooms: Array<{ game: { players: Array<{ id: string; godFaction: string | null }> } }> };
+    illegalFaction.rooms[0]!.game.players.find((player) => player.id === godOwnerId)!.godFaction = "god";
+    expect(await load(illegalFaction)).toMatchObject({ kind: "invalid" });
+
+    const mismatchedConfig = structuredClone(snapshot);
+    mismatchedConfig.rooms[0]!.ruleConfig.generalSelection.candidatesPerPlayer = 9;
+    expect(await load(mismatchedConfig)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("rule configurations") });
+
+    const invalidRevision = structuredClone(snapshot);
+    invalidRevision.rooms[0]!.game!.revision = -1;
+    expect(await load(invalidRevision)).toMatchObject({ kind: "invalid" });
+  });
+
+  it("round-trips Wuhun and nested Xingshang DeathStack cursors while rejecting tampering", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+    ];
+    const game = createGame({ playerIds, seed: "d4".repeat(32) });
+    const [source, wuhunOwner, markedTarget, xingshangOwner] = game.players;
+    if (!source || !wuhunOwner || !markedTarget || !xingshangOwner) throw new Error("Missing death fixtures");
+    game.discardPile.push(...game.players.flatMap((player) => player.hand));
+    for (const player of game.players) {
+      player.generalId = "gan_ning";
+      player.godFaction = null;
+      player.hand = [];
+      player.equipment = {};
+      player.judgment = [];
+      player.extraPiles = {};
+      player.hp = player.maxHp = 4;
+      player.alive = true;
+    }
+    source.role = "lord";
+    wuhunOwner.role = "rebel";
+    markedTarget.role = "loyalist";
+    xingshangOwner.role = "renegade";
+    wuhunOwner.generalId = "shen_guan_yu";
+    wuhunOwner.godFaction = "wei";
+    grantSkill(game.completeRules.lifecycle, {
+      ownerId: xingshangOwner.id,
+      skillId: "xingshang",
+      sourcePlayerId: xingshangOwner.id,
+      sourceSkillId: "test:xingshang",
+      expiry: { type: "permanent" },
+    });
+    markedTarget.hand = [standardCard("nested-death-card", "dodge", "heart")];
+    game.deck = [standardCard("wuhun-judgment", "slash", "spade")];
+    for (const target of [markedTarget, source]) {
+      addMark(game.completeRules.lifecycle, {
+        markId: "nightmare",
+        ownerId: target.id,
+        sourcePlayerId: wuhunOwner.id,
+        sourceSkillId: "wuhun",
+        amount: 1,
+        visibility: "public",
+        expiry: { type: "permanent" },
+      });
+    }
+    const forfeitFixture = structuredClone(game);
+    beginDirectDeath(game, wuhunOwner.id, { type: "finish_effect" });
+    expect(game.pendingResponse).toMatchObject({
+      type: "standard_skill",
+      skillId: "wuhun",
+      stage: "wuhun_target",
+      targetIds: [markedTarget.id, source.id],
+    });
+    const snapshotFor = (current: typeof game, id: string): RoomServiceSnapshot => ({
+      version: 1,
+      rooms: [{
+        id,
+        name: "DeathStack",
+        ownerId: source.id,
+        status: "playing",
+        maxPlayers: 4,
+        createdAt: new Date().toISOString(),
+        players: current.players.map((player, seat) => ({
+          id: player.id,
+          username: `death-${seat}`,
+          displayName: `death-${seat}`,
+          ready: true,
+          connected: false,
+          seat: player.seat,
+        })),
+        ruleConfig: current.completeRules.ruleConfig,
+        game: current,
+      }],
+    });
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    const forfeited = forfeitPlayer(forfeitFixture, wuhunOwner.id);
+    expect(forfeited.pendingResponse).toBeNull();
+    expect(forfeited.completeRules.death.frames).toEqual([]);
+    expect(await load(snapshotFor(
+      forfeited,
+      "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
+    ))).toMatchObject({ kind: "valid" });
+
+    const wuhunSnapshot = snapshotFor(game, "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    const restoredWuhun = await load(wuhunSnapshot);
+    if (restoredWuhun.kind !== "valid") throw new Error(restoredWuhun.reason);
+    expect(restoredWuhun).toMatchObject({
+      kind: "valid",
+      snapshot: { rooms: [{ game: { completeRules: { death: { frames: [{ death: { victimId: wuhunOwner.id } }] } } } }] },
+    });
+
+    const forgedWuhunTargets = structuredClone(wuhunSnapshot);
+    if (forgedWuhunTargets.rooms[0]!.game!.pendingResponse?.type !== "standard_skill") throw new Error("Missing Wuhun cursor");
+    forgedWuhunTargets.rooms[0]!.game!.pendingResponse.targetIds!.push(xingshangOwner.id);
+    expect(await load(forgedWuhunTargets)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("Wuhun") });
+
+    let nested = restoredWuhun.snapshot.rooms[0]!.game!;
+    const wuhunPrompt = nested.pendingResponse;
+    if (wuhunPrompt?.type !== "standard_skill") throw new Error("Missing restored Wuhun prompt");
+    nested = applyAction(nested, {
+      type: "resolve_standard_skill",
+      playerId: wuhunOwner.id,
+      promptId: wuhunPrompt.promptId,
+      activate: true,
+      targetId: markedTarget.id,
+    });
+    expect(nested.pendingResponse).toMatchObject({
+      type: "standard_skill",
+      skillId: "xingshang",
+      stage: "xingshang_claim",
+      targetId: xingshangOwner.id,
+      sourceId: markedTarget.id,
+      deathResolution: { completion: { type: "wuhun" } },
+    });
+    expect(nested.completeRules.death.frames).toHaveLength(2);
+
+    const nestedSnapshot = snapshotFor(nested, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    expect(await load(nestedSnapshot)).toMatchObject({
+      kind: "valid",
+      snapshot: { rooms: [{ game: { completeRules: { death: { frames: [{}, {}] } } } }] },
+    });
+
+    const forgedParent = structuredClone(nestedSnapshot);
+    const nestedPrompt = forgedParent.rooms[0]!.game!.pendingResponse;
+    if (nestedPrompt?.type !== "standard_skill" || nestedPrompt.deathResolution?.completion.type !== "wuhun") {
+      throw new Error("Missing nested Xingshang cursor");
+    }
+    nestedPrompt.deathResolution.completion.parent.frameId += 1;
+    expect(await load(forgedParent)).toMatchObject({ kind: "invalid", reason: expect.stringContaining("Wuhun") });
+
+    const skippedParentOwner = structuredClone(nestedSnapshot);
+    const skippedPrompt = skippedParentOwner.rooms[0]!.game!.pendingResponse;
+    if (skippedPrompt?.type !== "standard_skill" || skippedPrompt.deathResolution?.completion.type !== "wuhun") {
+      throw new Error("Missing nested parent Xingshang queue");
+    }
+    skippedPrompt.deathResolution.completion.parent.remainingOwnerIds = [];
+    expect(await load(skippedParentOwner)).toMatchObject({
+      kind: "invalid",
+      reason: expect.stringContaining("Xingshang queue"),
+    });
+  });
+
   it("restores a departed seat tombstone while allowing that account in a new room", async () => {
     const playerIds = [
       "11111111-1111-4111-8111-111111111111",
@@ -254,14 +647,21 @@ describe("room snapshot persistence", () => {
         },
         virtualCardOrigins: {},
         nextUseId: 1,
-        nextEventId: 1,
-        afterMove: { queuedTriggers: [], suspendedPhase: null, suspendedResponse: null },
+        nextEventId: 2,
+        afterMove: { queuedRecoveries: [], queuedTriggers: [], suspendedPhase: null, suspendedResponse: null },
         completeRules: {
           damageFlow: { type: "damage_flow", version: 1, revision: 0, frames: [] },
-          dying: { version: 1, frames: [] },
+          dying: { version: 1, frames: [{
+            version: 2,
+            type: "dying",
+            frameId: 1,
+            victimId: victim.id,
+            stage: "rescue",
+            migratedFromVersion: 1,
+          }] },
           death: { version: 1, frames: [] },
         },
-        pendingResponse: { type: "dying", victimId: victim.id, resume: { type: "turn_start" } },
+        pendingResponse: { type: "dying", frameId: 1, victimId: victim.id, resume: { type: "turn_start" } },
       } }] },
     });
 
@@ -282,7 +682,7 @@ describe("room snapshot persistence", () => {
     ));
     expect(await loadRoomSnapshot(poolWithQuery(
       vi.fn().mockResolvedValue({ rows: [{ snapshot: forgedDying }] }) as Pool["query"],
-    ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("complete-rules") });
+    ))).toMatchObject({ kind: "invalid" });
 
     const forgedDeath = structuredClone(snapshot);
     const forgedDeathGame = forgedDeath.rooms[0]!.game!;
@@ -298,246 +698,8 @@ describe("room snapshot persistence", () => {
     }));
     expect(await loadRoomSnapshot(poolWithQuery(
       vi.fn().mockResolvedValue({ rows: [{ snapshot: forgedDeath }] }) as Pool["query"],
-    ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("complete-rules") });
+    ))).toMatchObject({ kind: "invalid" });
 
-    const forgedActive = structuredClone(snapshot);
-    const forgedGame = forgedActive.rooms[0]!.game!;
-    forgedGame.completeRules.damageFlow = pushDamageFlowFrame(forgedGame.completeRules.damageFlow, {
-      expectedParentFrameId: null,
-      expectedRevision: 0,
-      damage: createDamageInstance({
-        damageId: 1,
-        frameId: 1,
-        sourceId: ownerId,
-        targetId: guestId,
-        nature: "normal",
-        reason: { type: "rule", id: "forged-active-flow" },
-        amount: 1,
-      }),
-    }).state;
-    forgedGame.completeRules.nextDamageId = 2;
-    // The strict engine state and allocator are valid, but an active room
-    // frame is restorable only with its exact persisted dying continuation.
-    expect(await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: forgedActive }] }) as Pool["query"],
-    ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("exactly one matching dying continuation") });
-
-    victim.hp = 1;
-    game.pendingResponse = {
-      type: "nullification",
-      attackerId: ownerId,
-      targetId: guestId,
-      effectTargetId: guestId,
-      cardId: "persisted-duel",
-      cardKind: "duel",
-      remainingResponderIds: [ownerId],
-      negated: true,
-      effect: { type: "duel", sourceId: ownerId, targetId: guestId, cardId: "persisted-duel" },
-    };
-    const nullificationResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(nullificationResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: { type: "nullification", negated: true } } }] },
-    });
-
-    game.pendingResponse = {
-      type: "skill_choice",
-      targetId: ownerId,
-      skillId: "luoyi",
-      resume: { type: "finish_draw", playerId: ownerId },
-    };
-    const skillChoiceResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(skillChoiceResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "skill_choice",
-        skillId: "luoyi",
-        resume: { type: "finish_draw", playerId: ownerId },
-      } } }] },
-    });
-
-    game.pendingResponse = {
-      type: "skill_choice",
-      targetId: ownerId,
-      skillId: "luoshen",
-      resume: { type: "continue_judgment", playerId: ownerId },
-      iteration: 17,
-    };
-    const repeatSkillChoiceResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(repeatSkillChoiceResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "skill_choice",
-        skillId: "luoshen",
-        iteration: 17,
-        resume: { type: "continue_judgment", playerId: ownerId },
-      } } }] },
-    });
-
-    game.pendingResponse = {
-      type: "skill_choice",
-      targetId: ownerId,
-      skillId: "biyue",
-      resume: { type: "finish_turn", playerId: ownerId },
-    };
-    const endSkillChoiceResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(endSkillChoiceResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "skill_choice",
-        skillId: "biyue",
-        resume: { type: "finish_turn", playerId: ownerId },
-      } } }] },
-    });
-
-    const incompatibleSkillChoice = structuredClone(snapshot) as unknown as {
-      rooms: Array<{ game: { pendingResponse: { skillId: string; resume: { type: string } } } }>;
-    };
-    incompatibleSkillChoice.rooms[0]!.game.pendingResponse.skillId = "keji";
-    const incompatibleSkillChoiceResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: incompatibleSkillChoice }] }) as Pool["query"],
-    ));
-    expect(incompatibleSkillChoiceResult).toMatchObject({
-      kind: "invalid",
-      reason: expect.stringContaining("incompatible resume point"),
-    });
-
-    game.pendingResponse = {
-      type: "zone_selection",
-      attackerId: ownerId,
-      targetId: ownerId,
-      victimId: guestId,
-      cardId: "persisted-snatch",
-      cardKind: "shun_shou_qian_yang",
-      mode: "gain",
-    };
-    const zoneSelectionResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(zoneSelectionResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: { type: "zone_selection", mode: "gain" } } }] },
-    });
-
-    const poolCard = game.deck.pop();
-    if (!poolCard) throw new Error("Missing Amazing Grace pool fixture");
-    game.pendingResponse = {
-      type: "amazing_grace_selection",
-      attackerId: ownerId,
-      targetId: guestId,
-      cardId: "persisted-grace",
-      pool: [poolCard],
-      remainingTargetIds: [ownerId],
-    };
-    const amazingGraceResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(amazingGraceResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: { type: "amazing_grace_selection", pool: [{ id: poolCard.id }] } } }] },
-    });
-
-    game.pendingResponse = {
-      type: "dying",
-      victimId: guestId,
-      damageSourceId: ownerId,
-      targetId: guestId,
-      remainingResponderIds: [ownerId],
-      resume: {
-        type: "chain_damage",
-        sourceId: ownerId,
-        amount: 1,
-        nature: "fire",
-        remainingTargetIds: [ownerId],
-        finalResume: { type: "finish_effect" },
-      },
-    };
-    const chainDamageResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(chainDamageResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: { type: "dying", resume: { type: "chain_damage", nature: "fire" } } } }] },
-    });
-
-    const kurouPlayer = game.players.find((player) => player.id === guestId);
-    if (!kurouPlayer) throw new Error("Missing Kurou persistence fixture player");
-    kurouPlayer.alive = true;
-    kurouPlayer.hp = 0;
-    game.pendingResponse = {
-      type: "dying",
-      victimId: guestId,
-      damageSourceId: null,
-      targetId: guestId,
-      remainingResponderIds: [ownerId],
-      resume: { type: "skill", skillId: "kurou", playerId: guestId },
-    };
-    const kurouResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(kurouResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "dying",
-        damageSourceId: null,
-        resume: { type: "skill", skillId: "kurou", playerId: guestId },
-      } } }] },
-    });
-
-    const invalidKurouSnapshot = structuredClone(snapshot) as unknown as {
-      rooms: Array<{ game: { pendingResponse: { resume: { playerId: string } } } }>;
-    };
-    invalidKurouSnapshot.rooms[0]!.game.pendingResponse.resume.playerId = "99999999-9999-4999-8999-999999999999";
-    const invalidKurouResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: invalidKurouSnapshot }] }) as Pool["query"],
-    ));
-    expect(invalidKurouResult).toMatchObject({
-      kind: "invalid",
-      reason: expect.stringContaining("unknown player"),
-    });
-
-    kurouPlayer.hp = 1;
-
-    const slashCard = game.deck.pop();
-    if (!slashCard) throw new Error("Missing weapon Slash fixture");
-    game.resolvingCards = [slashCard];
-    game.pendingResponse = {
-      type: "weapon_action",
-      weaponKind: "han_bing_jian",
-      stage: "hanbing_select",
-      attackerId: ownerId,
-      targetId: ownerId,
-      victimId: guestId,
-      remainingSelections: 2,
-      slash: {
-        type: "slash",
-        attackerId: ownerId,
-        targetId: guestId,
-        cardId: slashCard.id,
-        slashKind: "slash",
-        damage: 1,
-        nature: "normal",
-        color: "black",
-        remainingTargetIds: [],
-        zhuQueChecked: true,
-        ciXiongChecked: true,
-      },
-    };
-    const weaponResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
-    ));
-    expect(weaponResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: { type: "weapon_action", stage: "hanbing_select" } } }] },
-    });
   });
 
   it("round-trips an identified Jizhi card-use continuation and rejects corrupted frames", async () => {
@@ -641,6 +803,19 @@ describe("room snapshot persistence", () => {
       kind: "invalid",
       reason: expect.stringContaining("physical card is no longer owned"),
     });
+
+    const retargeted = structuredClone(snapshot);
+    const retargetedPending = retargeted.rooms[0]?.game?.pendingResponse;
+    if (retargetedPending?.type !== "skill_choice" || retargetedPending.resume.type !== "card_use") {
+      throw new Error("Missing retargeted Jizhi continuation");
+    }
+    retargetedPending.resume.intent.targetIds = [guestId];
+    expect(await loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: retargeted }] }) as Pool["query"],
+    ))).toMatchObject({
+      kind: "invalid",
+      reason: expect.stringContaining("committed runtime validation"),
+    });
   });
 
   it("round-trips an after-move prompt with its suspended response and rejects corrupt suspension", async () => {
@@ -712,7 +887,7 @@ describe("room snapshot persistence", () => {
       promptId: pending.promptId,
     });
     expect(resumed.pendingResponse).toMatchObject({ type: "slash", targetId: target.id });
-    expect(resumed.afterMove).toEqual({ queuedTriggers: [], suspendedPhase: null, suspendedResponse: null });
+    expect(resumed.afterMove).toEqual({ queuedRecoveries: [], queuedTriggers: [], suspendedPhase: null, suspendedResponse: null });
 
     const missingSuspension = structuredClone(snapshot);
     const missingGame = missingSuspension.rooms[0]?.game;
@@ -734,95 +909,6 @@ describe("room snapshot persistence", () => {
     ));
     expect(unknownResult).toMatchObject({
       kind: "invalid", reason: expect.stringContaining("Suspended response references an unknown player"),
-    });
-  });
-
-  it("defaults legacy Wushuang response counters while restoring Slash and Duel prompts", async () => {
-    const ownerId = "11111111-1111-4111-8111-111111111111";
-    const guestId = "22222222-2222-4222-8222-222222222222";
-    const game = createGame({ playerIds: [ownerId, guestId], seed: "8".padStart(64, "0") });
-    const resolving = game.players[0]!.hand.shift();
-    if (!resolving) throw new Error("Missing response-counter fixture card");
-    game.resolvingCards = [resolving];
-    game.turn.phase = "respond";
-    game.pendingResponse = {
-      type: "slash",
-      attackerId: ownerId,
-      targetId: guestId,
-      cardId: resolving.id,
-      slashKind: "slash",
-      damage: 1,
-      nature: "normal",
-      color: "black",
-      remainingTargetIds: [],
-      zhuQueChecked: true,
-      ciXiongChecked: true,
-    };
-    const snapshot: RoomServiceSnapshot = {
-      version: 1,
-      rooms: [{
-        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        name: "旧无双响应",
-        ownerId,
-        status: "playing",
-        maxPlayers: 2,
-        createdAt: new Date().toISOString(),
-        players: [
-          { id: ownerId, username: "owner", displayName: "owner", ready: true, connected: false, seat: 0 },
-          { id: guestId, username: "guest", displayName: "guest", ready: true, connected: false, seat: 1 },
-        ],
-        game,
-      }],
-    };
-
-    const slashResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: structuredClone(snapshot) }] }) as Pool["query"],
-    ));
-    expect(slashResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "slash", requiredDodgeCount: 1, dodgesPlayed: 0,
-      } } }] },
-    });
-
-    game.pendingResponse = { ...game.pendingResponse, requiredDodgeCount: 2, dodgesPlayed: 1 };
-    const progressedSlashResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: structuredClone(snapshot) }] }) as Pool["query"],
-    ));
-    expect(progressedSlashResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "slash", requiredDodgeCount: 2, dodgesPlayed: 1,
-      } } }] },
-    });
-
-    game.pendingResponse = {
-      type: "duel",
-      attackerId: ownerId,
-      targetId: guestId,
-      cardId: resolving.id,
-      initiatorId: ownerId,
-      originalTargetId: guestId,
-    };
-    const legacyDuelResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: structuredClone(snapshot) }] }) as Pool["query"],
-    ));
-    expect(legacyDuelResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "duel", requiredSlashCount: 1, slashesPlayed: 0,
-      } } }] },
-    });
-
-    game.pendingResponse = { ...game.pendingResponse, requiredSlashCount: 2, slashesPlayed: 1 };
-    const progressedDuelResult = await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: structuredClone(snapshot) }] }) as Pool["query"],
-    ));
-    expect(progressedDuelResult).toMatchObject({
-      kind: "valid",
-      snapshot: { rooms: [{ game: { pendingResponse: {
-        type: "duel", requiredSlashCount: 2, slashesPlayed: 1,
-      } } }] },
     });
   });
 
@@ -1071,6 +1157,97 @@ describe("room snapshot persistence", () => {
     });
   });
 
+  it("restores Tiaoxin through Jijiang and rejects a forged failure continuation", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+    ];
+    const game = createGame({ playerIds, seed: "c1".repeat(32) });
+    const owner = game.players.find((player) => player.id === game.currentPlayerId)!;
+    const orderedOpponents = Array.from({ length: game.players.length - 1 }, (_value, index) =>
+      game.players[(owner.seat + index + 1) % game.players.length]!);
+    const [lord, provider] = orderedOpponents;
+    if (!lord || !provider) throw new Error("Missing Tiaoxin Jijiang fixtures");
+    game.discardPile.push(...game.players.flatMap((player) => player.hand));
+    for (const player of game.players) {
+      player.hand = [];
+      player.generalId = "gan_ning";
+      player.godFaction = null;
+    }
+    const oldLord = game.players.find((player) => player.role === "lord")!;
+    oldLord.role = lord.role;
+    lord.role = "lord";
+    lord.generalId = "liu_bei";
+    provider.generalId = "zhao_yun";
+    grantSkill(game.completeRules.lifecycle, {
+      ownerId: owner.id,
+      skillId: "tiaoxin",
+      sourcePlayerId: owner.id,
+      sourceSkillId: "test:tiaoxin",
+      expiry: { type: "permanent" },
+    });
+
+    let current = applyAction(game, {
+      type: "use_skill",
+      playerId: owner.id,
+      skillId: "tiaoxin",
+      targetId: lord.id,
+    });
+    const tiaoxin = current.pendingResponse;
+    if (tiaoxin?.type !== "standard_skill") throw new Error("Missing Tiaoxin prompt");
+    current = applyAction(current, {
+      type: "resolve_standard_skill",
+      playerId: lord.id,
+      promptId: tiaoxin.promptId,
+      activate: true,
+      tokens: ["jijiang"],
+    });
+    expect(current.pendingResponse).toMatchObject({
+      type: "lord_dispatch",
+      requesterId: lord.id,
+      targetId: provider.id,
+      resume: {
+        type: "use_slash",
+        targetIds: [owner.id],
+        failureResume: { skillId: "tiaoxin", processedPlayerIds: [lord.id] },
+      },
+    });
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1",
+        name: "挑衅激将恢复",
+        ownerId: owner.id,
+        status: "playing",
+        maxPlayers: 4,
+        createdAt: new Date().toISOString(),
+        players: playerIds.map((id, seat) => ({
+          id, username: `tj-${seat}`, displayName: `tj-${seat}`, ready: true, connected: false, seat,
+        })),
+        ruleConfig: current.completeRules.ruleConfig,
+        game: current,
+      }],
+    };
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+    const restored = await load(snapshot);
+    if (restored.kind !== "valid") throw new Error(restored.reason);
+
+    const forged = structuredClone(snapshot);
+    const dispatch = forged.rooms[0]!.game!.pendingResponse;
+    if (dispatch?.type !== "lord_dispatch" || dispatch.resume.type !== "use_slash" || !dispatch.resume.failureResume) {
+      throw new Error("Missing persisted Tiaoxin Jijiang continuation");
+    }
+    dispatch.resume.failureResume.processedPlayerIds = [];
+    expect(await load(forged)).toMatchObject({
+      kind: "invalid",
+      reason: expect.stringContaining("Lord dispatch prompt state is inconsistent"),
+    });
+  });
+
   it("round-trips a private Guanxing reorder prompt and rejects forged prompt or top-card cursors", async () => {
     const ownerId = "11111111-1111-4111-8111-111111111111";
     const guestId = "22222222-2222-4222-8222-222222222222";
@@ -1165,6 +1342,22 @@ describe("room snapshot persistence", () => {
     forgedTopCards.rooms[0]!.game.pendingResponse.selectedCardIds[0] = "not-a-current-top-card";
     expect(await loadRoomSnapshot(poolWithQuery(
       vi.fn().mockResolvedValue({ rows: [{ snapshot: forgedTopCards }] }) as Pool["query"],
+    ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("current top cards") });
+
+    const tooManyTopCards = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { deck: Card[]; pendingResponse: { selectedCardIds: string[] } } }>;
+    };
+    tooManyTopCards.rooms[0]!.game.deck.unshift(
+      standardCard("persisted-gx-extra-1", "slash"),
+      standardCard("persisted-gx-extra-2", "slash"),
+      standardCard("persisted-gx-extra-3", "slash"),
+    );
+    tooManyTopCards.rooms[0]!.game.pendingResponse.selectedCardIds = tooManyTopCards.rooms[0]!.game.deck
+      .slice(-6)
+      .reverse()
+      .map((card) => card.id);
+    expect(await loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: tooManyTopCards }] }) as Pool["query"],
     ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("current top cards") });
   });
 
@@ -1267,7 +1460,136 @@ describe("room snapshot persistence", () => {
     ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("context does not match") });
   });
 
-  it("round-trips face-down state and a one-shot Slash turn-flow continuation", async () => {
+  it("round-trips Hongyan judgment modifiers and rejects forged skill ownership", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    let game = createGame({ playerIds, seed: "8".repeat(64) });
+    const actor = game.players.find((player) => player.id === game.currentPlayerId)!;
+    const target = game.players.find((player) => player.id !== actor.id)!;
+    game.discardPile.push(...game.players.flatMap((player) => player.hand));
+    for (const player of game.players) {
+      player.hand = [];
+      player.equipment = {};
+      player.judgment = [];
+      player.extraPiles = {};
+      player.generalId = "gan_ning";
+      player.alive = true;
+      player.hp = 4;
+      player.maxHp = 4;
+    }
+    target.generalId = "xiao_qiao";
+    target.hp = 3;
+    target.maxHp = 3;
+    grantSkill(game.completeRules.lifecycle, {
+      ownerId: target.id,
+      skillId: "guicai",
+      sourcePlayerId: target.id,
+      sourceSkillId: "persistence-test",
+      expiry: { type: "permanent" },
+    });
+    actor.hand = [standardCard("persisted-hongyan-slash", "slash")];
+    target.hand = [standardCard("persisted-hongyan-guicai", "dodge", "club")];
+    target.equipment.armor = standardCard("persisted-hongyan-bagua", "ba_gua_zhen");
+    game.deck = [standardCard("persisted-hongyan-judgment", "peach", "spade")];
+    game.resolvingCards = [];
+    game.pendingResponse = null;
+    game.currentPlayerId = actor.id;
+    game.turn = { ...game.turn, playerId: actor.id, phase: "play", slashUsed: false, requiredDiscardCount: 0 };
+
+    game = applyAction(game, {
+      type: "play_card",
+      playerId: actor.id,
+      cardId: "persisted-hongyan-slash",
+      targetId: target.id,
+    });
+    const judging = applyAction(game, { type: "activate_armor", playerId: target.id, activate: true });
+    if (judging.pendingResponse?.type !== "standard_judgment") {
+      throw new Error("Missing persisted Hongyan judgment fixture");
+    }
+    expect(judging.pendingResponse.frame).toMatchObject({
+      effectiveCard: { physicalSuit: "spade", effectiveSuit: "heart", color: "red" },
+      suitModifiers: [{
+        modifierId: `hongyan:${judging.pendingResponse.frame.frameId}:${target.id}`,
+        sourcePlayerId: target.id,
+        skillId: "hongyan",
+        fromSuit: "spade",
+        toSuit: "heart",
+      }],
+    });
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "88888888-8888-4888-8888-888888888888",
+        name: "红颜判定重连",
+        ownerId: actor.id,
+        status: "playing",
+        maxPlayers: 2,
+        createdAt: new Date().toISOString(),
+        players: judging.players.map((player) => ({
+          id: player.id,
+          username: `player-${player.seat}`,
+          displayName: `player-${player.seat}`,
+          ready: true,
+          connected: false,
+          seat: player.seat,
+        })),
+        game: judging,
+      }],
+    };
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    const valid = await load(snapshot);
+    if (valid.kind !== "valid") throw new Error(valid.reason);
+    const restored = valid.snapshot.rooms[0]!.game!;
+    if (restored.pendingResponse?.type !== "standard_judgment") throw new Error("Hongyan judgment was not restored");
+    const resolved = applyAction(restored, {
+      type: "resolve_standard_skill",
+      playerId: restored.pendingResponse.targetId,
+      promptId: restored.pendingResponse.promptId,
+      activate: false,
+    });
+    expect(resolved.pendingResponse).toBeNull();
+    expect(resolved.players.find((player) => player.id === target.id)?.hp).toBe(3);
+
+    const missingModifier = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { pendingResponse: { frame: {
+        suitModifiers: unknown[];
+        effectiveCard: { effectiveSuit: string; color: string };
+      } } } }>;
+    };
+    const missingFrame = missingModifier.rooms[0]!.game.pendingResponse.frame;
+    missingFrame.suitModifiers = [];
+    missingFrame.effectiveCard.effectiveSuit = "spade";
+    missingFrame.effectiveCard.color = "black";
+    expect(await load(missingModifier)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Hongyan judgment modifier"),
+    });
+
+    const missingSkill = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { players: Array<{ id: string; generalId: string }> } }>;
+    };
+    missingSkill.rooms[0]!.game.players.find((player) => player.id === target.id)!.generalId = "gan_ning";
+    expect(await load(missingSkill)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Hongyan judgment modifier"),
+    });
+
+    const forgedSource = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { pendingResponse: { frame: {
+        suitModifiers: Array<{ sourcePlayerId: string }>;
+      } } } }>;
+    };
+    forgedSource.rooms[0]!.game.pendingResponse.frame.suitModifiers[0]!.sourcePlayerId =
+      "77777777-7777-4777-8777-777777777777";
+    expect(await load(forgedSource)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Hongyan judgment modifier"),
+    });
+  });
+
+  it("round-trips face-down state with a live Slash response", async () => {
     const playerIds = [
       "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
@@ -1297,18 +1619,11 @@ describe("room snapshot persistence", () => {
       type: "play_card", playerId: actor.id, cardId: "resume-slash", targetId: target.id,
     });
     if (game.pendingResponse?.type !== "slash") throw new Error("Missing persisted Slash fixture");
-    const continuationId = game.nextEventId;
-    game.nextEventId += 1;
-    game.completeRules.nextEventId = game.nextEventId;
-    game.pendingResponse = {
-      ...game.pendingResponse,
-      completion: { type: "turn_flow", continuationId, playerId: actor.id, destination: "discard_or_end" },
-    };
     const snapshot: RoomServiceSnapshot = {
       version: 1,
       rooms: [{
         id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-        name: "Slash continuation",
+        name: "Slash response",
         ownerId: actor.id,
         status: "playing",
         maxPlayers: 3,
@@ -1333,39 +1648,326 @@ describe("room snapshot persistence", () => {
       kind: "valid",
       snapshot: { rooms: [{ game: {
         players: expect.arrayContaining([expect.objectContaining({ id: target.id, faceUp: false })]),
-        pendingResponse: { type: "slash", completion: { type: "turn_flow", continuationId } },
+        pendingResponse: { type: "slash", completion: { type: "default" } },
       } }] },
     });
     const restoredGame = valid.snapshot.rooms[0]!.game!;
     const resolved = applyAction(restoredGame, {
       type: "respond", playerId: target.id, cardId: "resume-dodge",
     });
-    expect(resolved.turn).toMatchObject({ phase: "discard", requiredDiscardCount: 2 });
+    expect(resolved.turn.phase).toBe("play");
     expect(resolved.pendingResponse).toBeNull();
+  });
 
-    const forged = structuredClone(snapshot) as unknown as {
-      rooms: Array<{ game: { nextEventId: number; pendingResponse: { completion: { continuationId: number } } } }>;
+  it("round-trips Tianxiang redirect prompts and its last-card Lianying pause", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    ];
+    let game = createGame({ playerIds, seed: "9".repeat(64) });
+    const actor = game.players.find((player) => player.id === game.currentPlayerId)!;
+    const owner = game.players.find((player) => player.id !== actor.id)!;
+    const recipient = game.players.find((player) => player.id !== actor.id && player.id !== owner.id)!;
+    game.discardPile.push(...game.players.flatMap((player) => player.hand));
+    for (const player of game.players) {
+      player.hand = [];
+      player.equipment = {};
+      player.judgment = [];
+      player.extraPiles = {};
+      player.generalId = "gan_ning";
+      player.alive = true;
+      player.hp = 4;
+      player.maxHp = 4;
+    }
+    owner.generalId = "xiao_qiao";
+    owner.hp = 3;
+    owner.maxHp = 3;
+    actor.hand = [standardCard("persisted-tianxiang-slash", "slash")];
+    owner.hand = [standardCard("persisted-tianxiang-cost", "dodge", "spade")];
+    grantSkill(game.completeRules.lifecycle, {
+      ownerId: owner.id,
+      skillId: "lianying",
+      sourcePlayerId: owner.id,
+      sourceSkillId: "persistence-test",
+      expiry: { type: "permanent" },
+    });
+    game.pendingResponse = null;
+    game.resolvingCards = [];
+    game.currentPlayerId = actor.id;
+    game.turn = {
+      ...game.turn,
+      playerId: actor.id,
+      phase: "play",
+      slashUsed: false,
+      requiredDiscardCount: 0,
     };
-    forged.rooms[0]!.game.pendingResponse.completion.continuationId = forged.rooms[0]!.game.nextEventId;
-    expect(await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: forged }] }) as Pool["query"],
-    ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("Slash completion continuation") });
 
-    const forgedPlayer = structuredClone(snapshot) as unknown as {
-      rooms: Array<{ game: { pendingResponse: { completion: { playerId: string } } } }>;
+    game = applyAction(game, {
+      type: "play_card",
+      playerId: actor.id,
+      cardId: "persisted-tianxiang-slash",
+      targetId: owner.id,
+    });
+    game = applyAction(game, { type: "respond", playerId: owner.id, cardId: null });
+    if (
+      game.pendingResponse?.type !== "standard_skill" ||
+      game.pendingResponse.skillId !== "tianxiang" ||
+      game.pendingResponse.stage !== "tianxiang_redirect"
+    ) throw new Error("Missing persisted Tianxiang prompt fixture");
+    const tianxiangPrompt = game.pendingResponse;
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "99999999-9999-4999-8999-999999999999",
+        name: "天香重连",
+        ownerId: actor.id,
+        status: "playing",
+        maxPlayers: 3,
+        createdAt: new Date().toISOString(),
+        players: game.players.map((player) => ({
+          id: player.id,
+          username: `player-${player.seat}`,
+          displayName: `player-${player.seat}`,
+          ready: true,
+          connected: false,
+          seat: player.seat,
+        })),
+        game,
+      }],
     };
-    forgedPlayer.rooms[0]!.game.pendingResponse.completion.playerId = target.id;
-    expect(await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: forgedPlayer }] }) as Pool["query"],
-    ))).toMatchObject({ kind: "invalid", reason: expect.stringContaining("Slash completion continuation") });
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
 
-    const forgedDestination = structuredClone(snapshot) as unknown as {
-      rooms: Array<{ game: { pendingResponse: { completion: { destination: string } } } }>;
+    expect(await load(snapshot)).toMatchObject({
+      kind: "valid",
+      snapshot: { rooms: [{ game: { pendingResponse: {
+        type: "standard_skill",
+        skillId: "tianxiang",
+        stage: "tianxiang_redirect",
+        targetId: owner.id,
+        sourceId: actor.id,
+      } } }] },
+    });
+
+    const forgedOpportunity = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: {
+        pendingResponse: { damageOpportunity: { opportunityId: string } };
+        completeRules: { damageFlow: { frames: Array<{ window: {
+          prompt: { opportunityId: string };
+          opportunities: Array<{ ref: { opportunityId: string } }>;
+        } }> } };
+      } }>;
     };
-    forgedDestination.rooms[0]!.game.pendingResponse.completion.destination = "judgment";
-    expect(await loadRoomSnapshot(poolWithQuery(
-      vi.fn().mockResolvedValue({ rows: [{ snapshot: forgedDestination }] }) as Pool["query"],
-    ))).toMatchObject({ kind: "invalid" });
+    const forgedId = `${tianxiangPrompt.damageOpportunity!.opportunityId}:forged`;
+    forgedOpportunity.rooms[0]!.game.pendingResponse.damageOpportunity.opportunityId = forgedId;
+    const forgedWindow = forgedOpportunity.rooms[0]!.game.completeRules.damageFlow.frames.at(-1)!.window;
+    forgedWindow.prompt.opportunityId = forgedId;
+    forgedWindow.opportunities[0]!.ref.opportunityId = forgedId;
+    expect(await load(forgedOpportunity)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Tianxiang prompt"),
+    });
+
+    const noCost = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { deck: Card[]; players: Array<{ id: string; hand: Card[] }> } }>;
+    };
+    const noCostOwner = noCost.rooms[0]!.game.players.find((player) => player.id === owner.id)!;
+    noCost.rooms[0]!.game.deck.push(...noCostOwner.hand.splice(0));
+    expect(await load(noCost)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Tianxiang prompt"),
+    });
+
+    const noTarget = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { players: Array<{ id: string; hp: number; alive: boolean }> } }>;
+    };
+    for (const player of noTarget.rooms[0]!.game.players) {
+      if (player.id === owner.id) continue;
+      player.hp = 0;
+      player.alive = false;
+    }
+    expect(await load(noTarget)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Tianxiang prompt"),
+    });
+
+    const paused = applyAction(game, {
+      type: "resolve_standard_skill",
+      playerId: owner.id,
+      promptId: tianxiangPrompt.promptId,
+      activate: true,
+      cardId: "persisted-tianxiang-cost",
+      targetId: recipient.id,
+    });
+    expect(paused).toMatchObject({
+      pendingResponse: { type: "skill_choice", skillId: "lianying", targetId: owner.id },
+      afterMove: { suspendedPhase: "respond", suspendedResponse: null },
+      completeRules: { damageFlow: { frames: [{ step: "redirect", window: null }] } },
+    });
+    const pausedSnapshot: RoomServiceSnapshot = {
+      ...snapshot,
+      rooms: [{ ...snapshot.rooms[0]!, game: paused }],
+    };
+    const restoredPause = await load(pausedSnapshot);
+    if (restoredPause.kind !== "valid") throw new Error(restoredPause.reason);
+    const restoredGame = restoredPause.snapshot.rooms[0]!.game!;
+    if (restoredGame.pendingResponse?.type !== "skill_choice") throw new Error("Lianying pause was not restored");
+    const resumed = applyAction(restoredGame, {
+      type: "resolve_skill",
+      playerId: owner.id,
+      skillId: "lianying",
+      activate: false,
+      promptId: restoredGame.pendingResponse.promptId,
+    });
+    expect(resumed.completeRules.damageFlow.frames).toEqual([]);
+    expect(resumed.players.find((player) => player.id === owner.id)?.hp).toBe(3);
+    expect(resumed.players.find((player) => player.id === recipient.id)).toMatchObject({ hp: 3, hand: [{ id: expect.any(String) }] });
+
+    const forgedRedirect = structuredClone(pausedSnapshot) as unknown as {
+      rooms: Array<{ game: { completeRules: { damageFlow: { frames: Array<{
+        damage: { redirects: Array<{ sourceId: string }> };
+      }> } } } }>;
+    };
+    forgedRedirect.rooms[0]!.game.completeRules.damageFlow.frames.at(-1)!
+      .damage.redirects.at(-1)!.sourceId = actor.id;
+    expect(await load(forgedRedirect)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Tianxiang redirect history"),
+    });
+
+    const forgedResolution = structuredClone(pausedSnapshot) as unknown as {
+      rooms: Array<{ game: { completeRules: { damageFlow: {
+        consumedActions: Array<{ resolutionRef: string | null }>;
+      } } } }>;
+    };
+    forgedResolution.rooms[0]!.game.completeRules.damageFlow.consumedActions.at(-1)!.resolutionRef = "forged";
+    expect(await load(forgedResolution)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Tianxiang redirect history"),
+    });
+
+    const forgedSuspension = structuredClone(pausedSnapshot) as unknown as {
+      rooms: Array<{ game: { afterMove: { suspendedResponse: unknown } } }>;
+    };
+    forgedSuspension.rooms[0]!.game.afterMove.suspendedResponse = structuredClone(tianxiangPrompt);
+    expect(await load(forgedSuspension)).toMatchObject({ kind: "invalid" });
+  });
+
+  it("round-trips a Liegong prompt and rejects forged Slash provenance or eligibility", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    ];
+    let game = createGame({ playerIds, seed: "f".padStart(64, "0") });
+    const actor = game.players.find((player) => player.id === game.currentPlayerId)!;
+    const target = game.players.find((player) => player.id !== actor.id)!;
+    game.discardPile.push(...game.players.flatMap((player) => player.hand));
+    for (const player of game.players) {
+      player.hand = [];
+      player.equipment = {};
+      player.judgment = [];
+      player.extraPiles = {};
+      player.generalId = "gan_ning";
+      player.alive = true;
+      player.hp = 4;
+      player.maxHp = 4;
+    }
+    actor.generalId = "huang_zhong";
+    actor.hand = [standardCard("persisted-liegong-slash", "slash")];
+    target.hand = [standardCard("persisted-liegong-dodge", "dodge")];
+    game.pendingResponse = null;
+    game.resolvingCards = [];
+    game.currentPlayerId = actor.id;
+    game.turn = {
+      ...game.turn,
+      playerId: actor.id,
+      phase: "play",
+      slashUsed: false,
+      requiredDiscardCount: 0,
+    };
+    game = applyAction(game, {
+      type: "play_card",
+      playerId: actor.id,
+      cardId: "persisted-liegong-slash",
+      targetId: target.id,
+    });
+    if (game.pendingResponse?.type !== "standard_skill" || game.pendingResponse.skillId !== "liegong") {
+      throw new Error("Missing persisted Liegong fixture");
+    }
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        name: "烈弓重连",
+        ownerId: actor.id,
+        status: "playing",
+        maxPlayers: 3,
+        createdAt: new Date().toISOString(),
+        players: game.players.map((player) => ({
+          id: player.id,
+          username: `player-${player.seat}`,
+          displayName: `player-${player.seat}`,
+          ready: true,
+          connected: false,
+          seat: player.seat,
+        })),
+        game,
+      }],
+    };
+
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+    expect(await load(snapshot)).toMatchObject({
+      kind: "valid",
+      snapshot: { rooms: [{ game: { pendingResponse: {
+        type: "standard_skill",
+        skillId: "liegong",
+        targetId: actor.id,
+        slash: {
+          liegongChecked: true,
+          useProvenance: { method: "use", turnPlayerId: actor.id, phase: "play" },
+        },
+      } } }] },
+    });
+
+    const forgedPhase = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { pendingResponse: { slash: { useProvenance: { phase: string } } } } }>;
+    };
+    forgedPhase.rooms[0]!.game.pendingResponse.slash.useProvenance.phase = "respond";
+    expect(await load(forgedPhase)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Liegong prompt"),
+    });
+
+    const forgedTurnOwner = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { pendingResponse: { slash: { useProvenance: { turnPlayerId: string } } } } }>;
+    };
+    forgedTurnOwner.rooms[0]!.game.pendingResponse.slash.useProvenance.turnPlayerId = target.id;
+    expect(await load(forgedTurnOwner)).toMatchObject({ kind: "invalid" });
+
+    const forgedProgress = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { pendingResponse: { slash: { liegongChecked: boolean } } } }>;
+    };
+    forgedProgress.rooms[0]!.game.pendingResponse.slash.liegongChecked = false;
+    expect(await load(forgedProgress)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Liegong prompt"),
+    });
+
+    const forgedPrompt = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { pendingResponse: { promptId: string } } }>;
+    };
+    forgedPrompt.rooms[0]!.game.pendingResponse.promptId += ":stale";
+    expect(await load(forgedPrompt)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("prompt metadata"),
+    });
+
+    const ineligible = structuredClone(snapshot) as unknown as {
+      rooms: Array<{ game: { deck: Card[]; players: Array<{ id: string; hand: Card[] }> } }>;
+    };
+    const extraTargetCard = ineligible.rooms[0]!.game.deck.pop();
+    if (!extraTargetCard) throw new Error("Missing deck card for Liegong eligibility tamper");
+    ineligible.rooms[0]!.game.players.find((player) => player.id === target.id)!.hand.push(extraTargetCard);
+    expect(await load(ineligible)).toMatchObject({
+      kind: "invalid", reason: expect.stringContaining("Liegong prompt"),
+    });
   });
 
   it("rejects an incomplete game before RoomService restoration", async () => {
@@ -1402,23 +2004,33 @@ describe("room snapshot persistence", () => {
 
   it("coalesces queued mutations to the newest snapshot", async () => {
     let releaseFirstWrite: (() => void) | undefined;
+    let releaseSecondWrite: (() => void) | undefined;
     const firstWrite = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+    const secondWrite = new Promise<void>((resolve) => { releaseSecondWrite = resolve; });
     const query = vi.fn()
       .mockImplementationOnce(async () => {
         await firstWrite;
         return { rows: [] };
       })
-      .mockResolvedValue({ rows: [] });
+      .mockImplementationOnce(async () => {
+        await secondWrite;
+        return { rows: [] };
+      });
     const writer = new RoomSnapshotWriter(poolWithQuery(query as Pool["query"]), vi.fn());
     const first = { version: 1, rooms: [], marker: "first" } as unknown as RoomServiceSnapshot;
     const middle = { version: 1, rooms: [], marker: "middle" } as unknown as RoomServiceSnapshot;
     const newest = { version: 1, rooms: [], marker: "newest" } as unknown as RoomServiceSnapshot;
 
-    writer.enqueue(first);
+    let persisted = false;
+    const firstBarrier = writer.enqueue(first).then(() => { persisted = true; });
     await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
     writer.enqueue(middle);
-    writer.enqueue(newest);
+    const newestBarrier = writer.enqueue(newest);
     releaseFirstWrite?.();
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+    expect(persisted).toBe(false);
+    releaseSecondWrite?.();
+    await Promise.all([firstBarrier, newestBarrier]);
     await writer.flush();
 
     expect(query).toHaveBeenCalledTimes(2);

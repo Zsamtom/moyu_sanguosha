@@ -513,13 +513,14 @@ function assertBuquProtectedResumeProof(
   ) flowError("INVALID_DYING_RESULT", "Buqu dying proof does not match the pending damage frame");
 
   const resolutions = (proof.skillResolutions as readonly unknown[])
-    .filter((resolution): resolution is Record<string, unknown> => isRecord(resolution) && resolution.skillId === "buqu");
+    .filter((resolution): resolution is Record<string, unknown> =>
+      isRecord(resolution) && resolution.skillId === "buqu" && resolution.succeeded === true);
   if (resolutions.length !== 1) {
-    flowError("INVALID_DYING_RESULT", "Buqu dying proof must contain exactly one Buqu resolution");
+    flowError("INVALID_DYING_RESULT", "Buqu dying proof must contain exactly one successful Buqu resolution");
   }
   const resolution = resolutions[0]!;
   if (!hasExactKeys(resolution, ["skillId", "timing", "succeeded", "hpAfter"])
-    || resolution.timing !== "life_deduction"
+    || (resolution.timing !== "life_deduction" && resolution.timing !== "recovery")
     || resolution.succeeded !== true
     || !Number.isSafeInteger(resolution.hpAfter)
     || resolution.hpAfter !== target.hp

@@ -179,7 +179,15 @@ describe("remaining standard weapons", () => {
     let game = applyAction(session, { type: "play_card", playerId: actor.id, cardId: "slash", targetId: target!.id });
     game = applyAction(game, { type: "respond", playerId: target!.id, cardId: null });
     expect(game.pendingResponse).toMatchObject({ type: "weapon_action", stage: "qilin_discard_horse" });
-    game = applyAction(game, { type: "resolve_weapon", playerId: actor.id, activate: true, tokens: ["equipment:defensive_horse"] });
+    const prompt = getGameView(game, actor.id).prompt;
+    if (prompt.type !== "weapon_action" || !prompt.promptId) throw new Error("Expected identified Qilin prompt");
+    game = applyAction(game, {
+      type: "resolve_weapon",
+      playerId: actor.id,
+      promptId: prompt.promptId,
+      activate: true,
+      tokens: ["equipment:defensive_horse"],
+    });
     expect(game.players.find((player) => player.id === target!.id)?.equipment.defensive_horse).toBeUndefined();
   });
 

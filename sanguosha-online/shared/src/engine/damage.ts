@@ -57,6 +57,8 @@ export interface DamageReason {
   readonly id: string;
 }
 
+const DAMAGE_REASON_TYPES = new Set<DamageReason["type"]>(["card", "skill", "chain", "rule"]);
+
 export interface DamageModifierRecord {
   readonly sourceId: PlayerId | null;
   readonly skillId: string | null;
@@ -672,7 +674,10 @@ export function assertDamageInstance(damage: DamageInstance): void {
   positiveSafeInteger(damage.frameId, "frameId");
   positiveSafeInteger(damage.originalAmount, "original damage amount");
   if (!Number.isSafeInteger(damage.amount) || damage.amount < 0) throw new DamageError("damage amount is invalid");
-  if (!damage.targetId || !damage.originalTargetId || !damage.reason.id) throw new DamageError("damage metadata is incomplete");
+  if (!damage.targetId || !damage.originalTargetId || !damage.reason.id ||
+      !DAMAGE_REASON_TYPES.has(damage.reason.type)) {
+    throw new DamageError("damage metadata is incomplete");
+  }
   if (new Set(damage.physicalCardIds).size !== damage.physicalCardIds.length) throw new DamageError("damage card ids are duplicated");
   const progress = damage.triggerProgress;
   if (!progress ||

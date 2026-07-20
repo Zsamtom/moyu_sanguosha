@@ -1,7 +1,7 @@
 import { Alert, Button, Popconfirm, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { getRoomStartBlockReason } from '../interactionRules';
-import type { AuthUser, RoomDetail } from '../types';
+import type { AuthUser, FullGeneralId, GameRole, PackId, PlayableFaction, RoomDetail } from '../types';
 
 interface RoomScreenProps {
   room: RoomDetail;
@@ -12,10 +12,41 @@ interface RoomScreenProps {
   onLeave: () => Promise<void>;
   onAddBot: () => Promise<void>;
   onRemoveBot: (botId: string) => Promise<void>;
+  onChooseGeneral: (generalId: FullGeneralId) => Promise<void>;
+  onChooseGodFaction: (faction: PlayableFaction) => Promise<void>;
 }
 
-export function RoomScreen({ room, user, connected, onReady, onStart, onLeave, onAddBot, onRemoveBot }: RoomScreenProps) {
-  const [busy, setBusy] = useState<'ready' | 'start' | 'leave'>();
+const generalNames = {
+  cao_cao: '曹操', guo_jia: '郭嘉', si_ma_yi: '司马懿', xia_hou_dun: '夏侯惇', xu_chu: '许褚', zhang_liao: '张辽', zhen_ji: '甄姬',
+  guan_yu: '关羽', huang_yue_ying: '黄月英', liu_bei: '刘备', ma_chao: '马超', zhang_fei: '张飞', zhao_yun: '赵云', zhu_ge_liang: '诸葛亮',
+  da_qiao: '大乔', gan_ning: '甘宁', huang_gai: '黄盖', lu_xun: '陆逊', lv_meng: '吕蒙', sun_quan: '孙权', sun_shang_xiang: '孙尚香', zhou_yu: '周瑜',
+  diao_chan: '貂蝉', hua_tuo: '华佗', lv_bu: '吕布', yuan_shu: '袁术',
+  cao_ren: '曹仁', huang_zhong: '黄忠', wei_yan: '魏延', xia_hou_yuan: '夏侯渊', xiao_qiao: '小乔', yu_ji: '于吉', zhang_jiao: '张角', zhou_tai: '周泰',
+  dian_wei: '典韦', pang_de: '庞德', pang_tong: '庞统', tai_shi_ci: '太史慈', wo_long: '卧龙诸葛亮', xun_yu: '荀彧', yan_liang_wen_chou: '颜良文丑', yuan_shao: '袁绍',
+  cao_pi: '曹丕', dong_zhuo: '董卓', jia_xu: '贾诩', lu_su: '鲁肃', meng_huo: '孟获', sun_jian: '孙坚', xu_huang: '徐晃', zhu_rong: '祝融',
+  cai_wen_ji: '蔡文姬', deng_ai: '邓艾', jiang_wei: '姜维', liu_chan: '刘禅', sun_ce: '孙策', zhang_he: '张郃', zhang_zhao_zhang_hong: '张昭张纮', zuo_ci: '左慈',
+  shen_cao_cao: '神曹操', shen_guan_yu: '神关羽', shen_lv_bu: '神吕布', shen_lv_meng: '神吕蒙', shen_si_ma_yi: '神司马懿', shen_zhao_yun: '神赵云', shen_zhou_yu: '神周瑜', shen_zhu_ge_liang: '神诸葛亮',
+} satisfies Record<FullGeneralId, string>;
+
+const factionNames: Record<PlayableFaction, string> = { wei: '魏', shu: '蜀', wu: '吴', qun: '群' };
+const roleNames: Record<GameRole, string> = { lord: '主公', loyalist: '忠臣', rebel: '反贼', renegade: '内奸' };
+const packNames: Record<PackId, string> = {
+  standard: '标准', sp: 'SP', wind: '风', fire: '火', forest: '林', mountain: '山', god: '神',
+};
+
+export function RoomScreen({
+  room,
+  user,
+  connected,
+  onReady,
+  onStart,
+  onLeave,
+  onAddBot,
+  onRemoveBot,
+  onChooseGeneral,
+  onChooseGodFaction,
+}: RoomScreenProps) {
+  const [busy, setBusy] = useState<'ready' | 'start' | 'leave' | 'draft'>();
   const self = room.members.find((member) => member.userId === user.id || member.username === user.username);
   const isHost = self?.isHost || room.hostId === user.id;
   const allReady = room.members.every((member) => member.ready);
@@ -63,11 +94,136 @@ export function RoomScreen({ room, user, connected, onReady, onStart, onLeave, o
     }
   };
 
+  const chooseGeneral = async (generalId: FullGeneralId) => {
+    setBusy('draft');
+    try {
+      await onChooseGeneral(generalId);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const chooseGodFaction = async (faction: PlayableFaction) => {
+    setBusy('draft');
+    try {
+      await onChooseGodFaction(faction);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  if (room.status === 'drafting' && room.draft) {
+    const ownDraft = room.draft.players.find((player) => player.playerId === user.id);
+    const selectedName = ownDraft?.generalId ? generalNames[ownDraft.generalId] : undefined;
+    const isOwnTurn = room.draft.currentPlayerId === null || room.draft.currentPlayerId === user.id;
+    const currentMember = room.members.find((member) => member.userId === room.draft?.currentPlayerId);
+    const waitingFor = currentMember?.displayName ?? '当前成员';
+    return (
+      <main className="page room-page draft-page">
+        <section className="room-heading paper-card">
+          <div>
+            <span className="section-kicker">Room / General selection</span>
+            <h1>{room.name}</h1>
+            <p className="document-lead">1 号位主公先选，其他成员按座位顺序选择；身份和候选均由服务器确认。</p>
+          </div>
+          <div className="room-heading__status">
+            <Tag color="blue">选将中</Tag>
+            <span>{room.draft.players.filter((player) => player.selected).length} / {room.draft.players.length} 已确认</span>
+          </div>
+        </section>
+
+        {!connected && (
+          <Alert className="connection-alert" type="warning" showIcon message="实时连接暂时中断，恢复后才能提交选择。" />
+        )}
+
+        <div className="draft-layout">
+          <section className="paper-card draft-document">
+            <div className="section-title-row">
+              <div>
+                <span className="section-kicker">Private candidates</span>
+                <h2>{ownDraft?.needsFaction && isOwnTurn ? '选择神武将势力' : ownDraft?.selected ? '选择已提交' : isOwnTurn ? '选择一名武将' : `等待 ${waitingFor} 选择`}</h2>
+                <p>
+                  {ownDraft?.role ? `你的身份是${roleNames[ownDraft.role]}。` : ''}
+                  {ownDraft?.selected ? `${selectedName ?? '服务器随机武将'}已由服务器记录。` : isOwnTurn ? '候选仅在当前账号中可见，提交后不可更改。' : '轮到你时才可提交武将。'}
+                </p>
+              </div>
+            </div>
+
+            {!ownDraft?.selected && isOwnTurn && room.draft.stage === 'selecting_generals' ? (
+              <div className="general-option-grid">
+                {room.draft.candidates.map((generalId, index) => (
+                  <button
+                    className="general-option"
+                    type="button"
+                    key={generalId}
+                    disabled={!connected || busy === 'draft'}
+                    onClick={() => void chooseGeneral(generalId)}
+                  >
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <strong>{generalNames[generalId]}</strong>
+                    <code>{generalId}</code>
+                    <small>{generalId.startsWith('shen_') ? '神武将 · 后续选择势力' : '候选武将'}</small>
+                  </button>
+                ))}
+              </div>
+            ) : ownDraft?.needsFaction && isOwnTurn ? (
+              <div className="faction-options" aria-label="神武将势力">
+                {(Object.keys(factionNames) as PlayableFaction[]).map((faction) => (
+                  <Button
+                    key={faction}
+                    size="large"
+                    disabled={!connected}
+                    loading={busy === 'draft'}
+                    onClick={() => void chooseGodFaction(faction)}
+                  >
+                    {factionNames[faction]}势力
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <div className="draft-waiting" role="status">
+                <strong>{selectedName ?? '选择已完成'}</strong>
+                <p>{room.draft.stage === 'complete' ? '正在创建权威游戏状态……' : `等待 ${waitingFor} 完成选择。`}</p>
+              </div>
+            )}
+          </section>
+
+          <aside className="paper-card draft-progress" aria-label="成员选择进度">
+            <div className="draft-progress__heading">
+              <strong>成员进度</strong>
+              <small>实时更新</small>
+            </div>
+            <ol>
+              {room.draft.players.map((player, index) => {
+                const member = room.members.find((candidate) => candidate.userId === player.playerId);
+                return (
+                  <li key={player.playerId}>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <div>
+                      <strong>{member?.displayName ?? `成员 ${index + 1}`}{player.role ? ` · ${roleNames[player.role]}` : ''}</strong>
+                      <small>{player.playerId === user.id && player.generalId ? generalNames[player.generalId] : player.needsFaction ? '待选择势力' : player.selected ? '已确认' : player.playerId === room.draft?.currentPlayerId ? '正在选择' : '等待顺序'}</small>
+                    </div>
+                    <Tag color={player.selected && !player.needsFaction ? 'green' : player.playerId === room.draft?.currentPlayerId ? 'blue' : 'default'}>
+                      {player.selected && !player.needsFaction ? '完成' : player.playerId === room.draft?.currentPlayerId ? '进行中' : '等待'}
+                    </Tag>
+                  </li>
+                );
+              })}
+            </ol>
+            <Popconfirm title="确定离开房间？" onConfirm={() => void leave()}>
+              <Button danger block loading={busy === 'leave'}>离开房间</Button>
+            </Popconfirm>
+          </aside>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="page room-page">
       <section className="room-heading paper-card">
         <div>
-          <span className="section-kicker">候战席</span>
+          <span className="section-kicker">Room / Members</span>
           <h1>{room.name}</h1>
           <button className="room-id" type="button" onClick={() => void copyRoomId()} title="复制房间号">
             房间号 {room.id} · 点击复制
@@ -83,11 +239,20 @@ export function RoomScreen({ room, user, connected, onReady, onStart, onLeave, o
         <Alert className="connection-alert" type="warning" showIcon message="实时连接暂时中断，恢复前无法准备或开始游戏。" />
       )}
 
+      {room.ruleConfig && (
+        <section className="room-rule-summary" aria-label="房间规则">
+          <div><span>武将包</span><strong>{room.ruleConfig.enabledGeneralPacks.map((pack) => packNames[pack]).join(' / ')}</strong></div>
+          <div><span>选将</span><strong>{room.ruleConfig.generalSelection.mode === 'random' ? '服务器随机' : `私有候选 ${room.ruleConfig.generalSelection.candidatesPerPlayer} 选 1`}</strong></div>
+          <div><span>牌堆</span><strong>原版 160 张</strong></div>
+          <div><span>重洗上限</span><strong>{room.ruleConfig.maximumReshuffles} 次</strong></div>
+        </section>
+      )}
+
       <section className="seat-section">
         <div className="section-title-row">
           <div>
-            <h2>在席玩家</h2>
-            <p>房主开始游戏后，身份与武将将由系统分配。</p>
+            <h2>成员列表</h2>
+            <p>所有成员准备后，房主可以开始并进入服务器选将流程。</p>
           </div>
           <span className="ready-summary">
             {room.members.filter((member) => member.ready).length} / {room.members.length} 已就绪

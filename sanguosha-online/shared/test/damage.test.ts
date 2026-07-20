@@ -291,5 +291,9 @@ describe("damage pipeline", () => {
     const corrupt = cloneDamageInstance(instance);
     corrupt.targetId = "target";
     expect(() => assertDamageInstance(corrupt)).toThrow(/redirect history/);
+
+    const corruptReason = cloneDamageInstance(instance);
+    (corruptReason.reason as { type: string }).type = "forged";
+    expect(() => assertDamageInstance(corruptReason)).toThrow(/metadata/);
   });
 });

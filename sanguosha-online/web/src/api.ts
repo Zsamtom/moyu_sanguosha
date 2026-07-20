@@ -1,4 +1,4 @@
-import type { AuthUser, RoomDetail, RoomSummary } from './types';
+import type { AuthUser, FullGeneralId, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -93,10 +93,10 @@ export const api = {
     };
   },
 
-  async createRoom(name: string, maxPlayers: number): Promise<RoomDetail> {
+  async createRoom(name: string, maxPlayers: number, ruleConfig?: RoomRuleConfig): Promise<RoomDetail> {
     const result = await request<RoomDetail | { room: RoomDetail }>('/api/rooms', {
       method: 'POST',
-      ...jsonBody({ name, maxPlayers }),
+      ...jsonBody({ name, maxPlayers, ...(ruleConfig ? { ruleConfig } : {}) }),
     });
     return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
   },
@@ -120,8 +120,25 @@ export const api = {
     return result ? normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>) : null;
   },
 
-  async startRoom(roomId: string): Promise<void> {
-    await request(`/api/rooms/${encodeURIComponent(roomId)}/start`, { method: 'POST' });
+  async startRoom(roomId: string): Promise<RoomDetail> {
+    const result = await request<RoomDetail | { room: RoomDetail }>(`/api/rooms/${encodeURIComponent(roomId)}/start`, { method: 'POST' });
+    return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
+  },
+
+  async chooseGeneral(roomId: string, generalId: FullGeneralId): Promise<RoomDetail> {
+    const result = await request<RoomDetail | { room: RoomDetail }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/draft/general`,
+      { method: 'POST', ...jsonBody({ generalId }) },
+    );
+    return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
+  },
+
+  async chooseGodFaction(roomId: string, faction: PlayableFaction): Promise<RoomDetail> {
+    const result = await request<RoomDetail | { room: RoomDetail }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/draft/god-faction`,
+      { method: 'POST', ...jsonBody({ faction }) },
+    );
+    return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
   },
 
   async addBot(roomId: string): Promise<RoomDetail> {
@@ -146,7 +163,6 @@ export const api = {
     username: string;
     displayName: string;
     password: string;
-    mustChangePassword?: boolean;
   }): Promise<AuthUser> {
     const result = await request<AuthUser | { user: AuthUser }>('/api/admin/users', {
       method: 'POST',
@@ -163,16 +179,12 @@ export const api = {
     return extractUser(result);
   },
 
-  async resetPassword(
-    userId: string,
-    password: string,
-    mustChangePassword = true,
-  ): Promise<AuthUser> {
+  async resetPassword(userId: string, password: string): Promise<AuthUser> {
     const result = await request<AuthUser | { user: AuthUser }>(
       `/api/admin/users/${encodeURIComponent(userId)}/reset-password`,
       {
         method: 'POST',
-        ...jsonBody({ password, mustChangePassword }),
+        ...jsonBody({ password }),
       },
     );
     return extractUser(result);

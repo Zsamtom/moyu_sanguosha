@@ -4,6 +4,10 @@ import {
   GameRuleError,
   STANDARD_DECK_SIZE,
   applyAction,
+  assertRestorableDuelResponse,
+  assertRestorableMassAttackResponse,
+  assertRestorableNullificationResponse,
+  assertRestorableSlashResponse,
   createGame,
   createStandardDeck,
   distanceBetweenPlayers,
@@ -255,6 +259,12 @@ describe("elemental Slash, Wine, and immediate cards", () => {
       cardId: "thunder-1",
       targetId: target.id,
     });
+    if (attacked.pendingResponse?.type !== "slash") throw new Error("Missing Slash response");
+    assertRestorableSlashResponse(attacked, attacked.pendingResponse);
+    const forged = JSON.parse(JSON.stringify(attacked)) as GameSession;
+    if (forged.pendingResponse?.type !== "slash") throw new Error("Missing forged Slash response");
+    forged.pendingResponse = { ...forged.pendingResponse, armorAttempted: true };
+    expect(() => assertRestorableSlashResponse(forged, forged.pendingResponse as typeof attacked.pendingResponse)).toThrow(/游标/);
     expect(getGameView(attacked, target.id).prompt).toMatchObject({
       type: "respond",
       targetId: target.id,
@@ -270,6 +280,7 @@ describe("elemental Slash, Wine, and immediate cards", () => {
       cardId: "dodge-1",
     });
     expect(dodged.pendingResponse).toBeNull();
+    expect(dodged.completeRules.lifecycle.effects.some((effect) => effect.kind === "slash_response_progress")).toBe(false);
     expect(dodged.turn.phase).toBe("play");
   });
 
@@ -391,6 +402,12 @@ describe("chained responses", () => {
       initiatorId: actor.id,
       originalTargetId: target.id,
     });
+    if (challenged.pendingResponse?.type !== "duel") throw new Error("Missing Duel response");
+    assertRestorableDuelResponse(challenged, challenged.pendingResponse);
+    const forged = JSON.parse(JSON.stringify(challenged)) as GameSession;
+    if (forged.pendingResponse?.type !== "duel") throw new Error("Missing forged Duel response");
+    forged.pendingResponse = { ...forged.pendingResponse, declinedLordSkillIds: ["jijiang"] };
+    expect(() => assertRestorableDuelResponse(forged, forged.pendingResponse as typeof challenged.pendingResponse)).toThrow(/游标/);
     expect(getGameView(challenged, target.id).prompt).toMatchObject({
       type: "respond",
       context: "duel",
@@ -418,6 +435,8 @@ describe("chained responses", () => {
       attackerId: target.id,
       targetId: actor.id,
     });
+    if (returned.pendingResponse?.type !== "duel") throw new Error("Missing returned Duel response");
+    assertRestorableDuelResponse(returned, returned.pendingResponse);
     const countered = applyAction(returned, {
       type: "respond",
       playerId: actor.id,
@@ -435,6 +454,7 @@ describe("chained responses", () => {
     });
     expect(player(resolved, target.id).hp).toBe(targetHp - 1);
     expect(resolved.pendingResponse).toBeNull();
+    expect(resolved.completeRules.lifecycle.effects.some((effect) => effect.kind === "duel_response_progress")).toBe(false);
     expect(resolved.turn.phase).toBe("play");
     expect(resolved.discardPile.map((candidate) => candidate.kind)).toEqual([
       "duel",
@@ -463,6 +483,17 @@ describe("chained responses", () => {
       playerId: actor.id,
       cardId: "barbarians",
     });
+    if (started.pendingResponse?.type !== "mass_attack") throw new Error("Missing mass-attack response");
+    assertRestorableMassAttackResponse(started, started.pendingResponse);
+    const commitment = started.completeRules.lifecycle.effects.find((effect) => effect.kind === "mass_attack_commitment");
+    expect(JSON.parse(String(commitment?.payload.commitment))).toMatchObject({
+      huoshouSourceId: null,
+      initialTargetIds: [first.id, second.id, third.id],
+    });
+    const forged = JSON.parse(JSON.stringify(started)) as GameSession;
+    if (forged.pendingResponse?.type !== "mass_attack") throw new Error("Missing forged mass-attack response");
+    forged.pendingResponse = { ...forged.pendingResponse, armorAttempted: true };
+    expect(() => assertRestorableMassAttackResponse(forged, forged.pendingResponse as PendingMassAttackResponse)).toThrow(/游标/);
     expect(started.pendingResponse).toEqual({
       type: "mass_attack",
       attackerId: actor.id,
@@ -470,6 +501,7 @@ describe("chained responses", () => {
       cardId: "barbarians",
       cardKind: "barbarian_invasion",
       responseKind: "slash",
+      effectiveSuit: "spade",
       remainingTargetIds: [second.id, third.id],
     });
     expectRuleError(
@@ -490,6 +522,8 @@ describe("chained responses", () => {
       targetId: second.id,
       remainingTargetIds: [third.id],
     });
+    if (firstDone.pendingResponse?.type !== "mass_attack") throw new Error("Missing advanced mass attack");
+    assertRestorableMassAttackResponse(firstDone, firstDone.pendingResponse);
     expectRuleError(
       () =>
         applyAction(firstDone, {
@@ -515,6 +549,7 @@ describe("chained responses", () => {
       cardId: "third-thunder",
     });
     expect(resolved.pendingResponse).toBeNull();
+    expect(resolved.completeRules.lifecycle.effects.some((effect) => effect.kind === "mass_attack_commitment")).toBe(false);
     expect(resolved.turn.phase).toBe("play");
   });
 
@@ -701,10 +736,17 @@ describe("Nullification chain", () => {
     actor.hand = [card("ex-nullification-pass", "ex_nihilo"), card("held-nullification", "wu_xie_ke_ji")];
     const started = applyAction(initial, { type: "play_card", playerId: actor.id, cardId: "ex-nullification-pass" });
     expect(started.pendingResponse).toMatchObject({ type: "nullification", targetId: actor.id, cardKind: "ex_nihilo", negated: false });
+    if (started.pendingResponse?.type !== "nullification") throw new Error("Missing Nullification response");
+    assertRestorableNullificationResponse(started, started.pendingResponse);
+    const forged = JSON.parse(JSON.stringify(started)) as GameSession;
+    if (forged.pendingResponse?.type !== "nullification") throw new Error("Missing forged Nullification response");
+    forged.pendingResponse = { ...forged.pendingResponse, negated: true };
+    expect(() => assertRestorableNullificationResponse(forged, forged.pendingResponse as typeof started.pendingResponse)).toThrow(/游标/);
     expect(getGameView(started, actor.id).prompt).toMatchObject({ type: "nullification", allowedCardIds: ["held-nullification"] });
     expect(getGameView(started, orderedOpponents(started, actor.id)[0]!.id).pendingResponse).toBeNull();
     const resolved = applyAction(started, { type: "respond", playerId: actor.id, cardId: null });
     expect(resolved.pendingResponse).toBeNull();
+    expect(resolved.completeRules.lifecycle.effects.some((effect) => effect.kind === "nullification_progress")).toBe(false);
     expect(player(resolved, actor.id).hand).toHaveLength(3);
     expect(player(resolved, actor.id).hand.map((candidate) => candidate.id)).toContain("held-nullification");
   });
@@ -1416,7 +1458,11 @@ describe("delayed tricks and judgment phase", () => {
     expect(current.pendingResponse).toMatchObject({
       type: "standard_skill",
       skillId: "jianxiong",
-      aftermath: { sourceId: null, damageCardIds: ["jianxiong-lightning"] },
+      damageOpportunity: { frameId: 1, damageId: 1 },
+    });
+    expect(current.completeRules.damageFlow.frames.at(-1)?.damage).toMatchObject({
+      sourceId: null,
+      physicalCardIds: ["jianxiong-lightning"],
     });
     expect(current.resolvingCards.map((candidate) => candidate.id)).toContain("jianxiong-lightning");
     if (current.pendingResponse?.type !== "standard_skill") throw new Error("Expected Jianxiong prompt");

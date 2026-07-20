@@ -31,17 +31,17 @@ export function AppShell({
       <header className="app-header">
         <Brand compact />
         <nav className="app-nav" aria-label="主导航">
-          <Button type={view === 'lobby' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onLobby}>
-            房间大厅
+          <Button aria-current={view === 'lobby' ? 'page' : undefined} type={view === 'lobby' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onLobby}>
+            房间目录
           </Button>
           {user.role === 'admin' && (
-            <Button type={view === 'admin' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onAdmin}>
+            <Button aria-current={view === 'admin' ? 'page' : undefined} type={view === 'admin' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onAdmin}>
               账号管理
             </Button>
           )}
         </nav>
         <Space className="app-account" size="middle">
-          <Badge status={connected ? 'success' : 'warning'} text={connected ? '实时在线' : '正在重连'} />
+          <Badge status={connected ? 'success' : 'warning'} text={connected ? '同步正常' : '正在重连'} />
           <div className="account-name">
             <span>{user.displayName}</span>
             {user.role === 'admin' && <Tag color="gold">管理员</Tag>}
@@ -50,9 +50,9 @@ export function AppShell({
           <Button size="small" onClick={onLogout}>退出</Button>
         </Space>
       </header>
-      <Layout.Content className={view === 'game' ? 'app-content app-content--game' : 'app-content'}>
+      <div className={view === 'game' ? 'app-content app-content--game' : 'app-content'}>
         {children}
-      </Layout.Content>
+      </div>
     </Layout>
   );
 }

@@ -6,6 +6,7 @@ import { asyncHandler, HttpError } from "../errors.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import { SESSION_COOKIE_NAME } from "../session.js";
 import type { SecurityEvents } from "../security-events.js";
+import type { RoomService } from "../rooms.js";
 import type { UserStore } from "../users.js";
 
 const loginSchema = z.object({
@@ -31,7 +32,7 @@ function saveSession(request: Express.Request): Promise<void> {
   });
 }
 
-export function createAuthRouter(users: UserStore, securityEvents: SecurityEvents): Router {
+export function createAuthRouter(users: UserStore, securityEvents: SecurityEvents, rooms: RoomService): Router {
   const router = Router();
   const loginLimiter = rateLimit({
     windowMs: 10 * 60 * 1_000,
@@ -68,7 +69,10 @@ export function createAuthRouter(users: UserStore, securityEvents: SecurityEvent
     await new Promise<void>((resolve, reject) => {
       request.session.destroy((error) => error ? reject(error) : resolve());
     });
-    if (userId) securityEvents.sessionRevoked(userId);
+    if (userId) {
+      securityEvents.sessionRevoked(userId);
+      await rooms.waitForPersistence();
+    }
     response.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
     response.status(204).end();
   }));

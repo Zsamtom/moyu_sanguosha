@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   activeSkillDescriptions,
+  canSubmitStandardSkill,
   canSubmitSkillUse,
   canSubmitCardPlay,
   cardPlayButtonLabel,
   cardRequiresTarget,
   createUseSkillAction,
+  createStandardSkillAction,
+  createZhangBaSlashAction,
+  findSkillVariant,
   getRoomStartBlockReason,
   generalSkillNames,
   isCardAllowedByPrompt,
   isCardResponsePrompt,
   responseCardName,
   selectableResponseSkills,
+  skillVariantKey,
   surrenderCopy,
 } from './interactionRules';
 import type { ActionPrompt, GameCard, PlayableSkillHint, RoomDetail } from './types';
@@ -58,6 +63,11 @@ describe('active-game exit copy', () => {
     expect(surrenderCopy.title).toContain('确定');
     expect(surrenderCopy.description).toMatch(/放弃本局.*结束你的个人参与/);
   });
+});
+
+it('provides a non-empty Web label for all 124 live skills', () => {
+  expect(Object.keys(generalSkillNames)).toHaveLength(124);
+  expect(Object.values(generalSkillNames).every(Boolean)).toBe(true);
 });
 
 function gameCard(overrides: Partial<GameCard>): GameCard {
@@ -121,6 +131,20 @@ describe('standard-card interaction rules', () => {
     expect(canSubmitCardPlay(slash, ['user-2', 'user-3', 'user-4'])).toBe(true);
     expect(canSubmitCardPlay(slash, ['user-2', 'user-2'])).toBe(false);
     expect(canSubmitCardPlay(slash, ['user-2', 'forged'])).toBe(false);
+  });
+
+  it('supports single-any and one-to-four target contracts', () => {
+    const singleAny = gameCard({ targetMode: 'single-any', allowedTargetIds: ['self', 'other'] });
+    expect(canSubmitCardPlay(singleAny, ['self'])).toBe(true);
+    expect(canSubmitCardPlay(singleAny, [])).toBe(false);
+
+    const upToFour = gameCard({
+      kind: 'slash', name: '杀', targetMode: 'up-to-four', allowedTargetIds: ['one', 'two', 'three', 'four'],
+    });
+    expect(canSubmitCardPlay(upToFour, ['one', 'two', 'three', 'four'])).toBe(true);
+    expect(canSubmitCardPlay(upToFour, [])).toBe(false);
+    expect(canSubmitCardPlay(upToFour, ['one', 'two', 'three', 'four', 'five'])).toBe(false);
+    expect(cardPlayButtonLabel(upToFour)).toContain('至多四名');
   });
 
   it('requires a legal ordered target pair for Borrowed Sword', () => {
@@ -273,10 +297,11 @@ describe('general-skill interaction rules', () => {
     expect(generalSkillNames).toMatchObject({
       wusheng: '武圣', longdan: '龙胆', qixi: '奇袭', kurou: '苦肉',
       zhiheng: '制衡', rende: '仁德', qingnang: '青囊', jieyin: '结姻', guose: '国色', qingguo: '倾国',
-      jijiu: '急救', fanjian: '反间', lijian: '离间', jijiang: '激将',
+      jijiu: '急救', fanjian: '反间', lijian: '离间', jijiang: '激将', huangtian: '黄天',
       luoyi: '裸衣', keji: '克己', yingzi: '英姿', biyue: '闭月', luoshen: '洛神',
+      niepan: '涅槃',
       jianxiong: '奸雄', tiandu: '天妒', yiji: '遗计', guicai: '鬼才', fankui: '反馈',
-      ganglie: '刚烈', tuxi: '突袭', guanxing: '观星', tieqi: '铁骑', liuli: '流离',
+      ganglie: '刚烈', tuxi: '突袭', guanxing: '观星', tieqi: '铁骑', liuli: '流离', buqu: '不屈', liegong: '烈弓', tianxiang: '天香',
     });
     expect(activeSkillDescriptions.kurou).toContain('失去 1 点体力');
     expect(activeSkillDescriptions.zhiheng).toContain('装备牌');
@@ -285,6 +310,7 @@ describe('general-skill interaction rules', () => {
     expect(activeSkillDescriptions.fanjian).toContain('声明花色');
     expect(activeSkillDescriptions.lijian).toContain('不可被无懈');
     expect(activeSkillDescriptions.jijiang).toContain('实体');
+    expect(activeSkillDescriptions.huangtian).toContain('闪电');
   });
 
   it('creates a no-target Zhiheng payload with every selected hand or equipment cost', () => {
@@ -361,5 +387,215 @@ describe('general-skill interaction rules', () => {
       expect.objectContaining({ skillId: 'qingguo', cardIds: ['black-hand'], minCards: 1, maxCards: 1, targetMode: 'none' }),
       expect.objectContaining({ skillId: 'jijiu', cardIds: ['red-horse'], minCards: 1, maxCards: 1, targetMode: 'none' }),
     ]);
+  });
+
+  it('enforces exact card pairs, card groups and per-group target limits', () => {
+    const luanji: PlayableSkillHint = {
+      skillId: 'luanji', cardIds: ['a', 'b', 'c'], minCards: 2, maxCards: 2,
+      targetMode: 'none', targetIds: [], cardPairs: [['a', 'b']],
+    };
+    expect(canSubmitSkillUse(luanji, ['b', 'a'], [])).toBe(true);
+    expect(canSubmitSkillUse(luanji, ['a', 'c'], [])).toBe(false);
+
+    const longhun: PlayableSkillHint = {
+      skillId: 'longhun', cardIds: ['d1', 'd2', 'd3', 'd4'], minCards: 2, maxCards: 2,
+      targetMode: 'up-to-four', targetIds: ['one', 'two', 'three', 'four'],
+      cardGroups: [['d1', 'd2'], ['d3', 'd4']],
+      cardGroupTargets: [
+        { cardIds: ['d1', 'd2'], targetIds: ['one', 'two'], maxTargets: 2 },
+        { cardIds: ['d3', 'd4'], targetIds: ['three'], maxTargets: 1 },
+      ],
+      virtualCardKind: 'fire_slash',
+    };
+    expect(canSubmitSkillUse(longhun, ['d2', 'd1'], ['one', 'two'])).toBe(true);
+    expect(canSubmitSkillUse(longhun, ['d1', 'd2'], ['three'])).toBe(false);
+    expect(canSubmitSkillUse(longhun, ['d3', 'd4'], ['three', 'one'])).toBe(false);
+
+    const singleAny: PlayableSkillHint = {
+      skillId: 'huoji', cardIds: ['red'], minCards: 1, maxCards: 1,
+      targetMode: 'single-any', targetIds: ['self'], virtualCardKind: 'fire_attack',
+    };
+    expect(createUseSkillAction('self', singleAny, ['red'], ['self'])).toMatchObject({ targetId: 'self' });
+  });
+
+  it('keeps grouped response costs and resolves same-skill variants by the selected contract', () => {
+    const responseSkills = selectableResponseSkills([
+      {
+        skillId: 'longhun', cardIds: ['d1', 'd2'], responseKind: 'slash', minCards: 2, maxCards: 2,
+        cardGroups: [['d1', 'd2']],
+      },
+      { skillId: 'jiuchi', cardIds: ['spade'], responseKind: 'wine' },
+    ]);
+    expect(responseSkills).toEqual([
+      expect.objectContaining({
+        skillId: 'longhun', minCards: 2, maxCards: 2, cardGroups: [['d1', 'd2']], virtualCardKind: 'slash',
+      }),
+      expect.objectContaining({ skillId: 'jiuchi', minCards: 1, maxCards: 1, virtualCardKind: 'wine' }),
+    ]);
+
+    const variants: PlayableSkillHint[] = [
+      {
+        skillId: 'longhun', cardIds: ['h1', 'h2'], minCards: 2, maxCards: 2,
+        targetMode: 'none', targetIds: [], cardGroups: [['h1', 'h2']], virtualCardKind: 'peach',
+      },
+      {
+        skillId: 'longhun', cardIds: ['d1', 'd2'], minCards: 2, maxCards: 2,
+        targetMode: 'single-any', targetIds: ['victim'], cardGroups: [['d1', 'd2']], virtualCardKind: 'fire_slash',
+      },
+    ];
+    expect(skillVariantKey(variants[0]!)).not.toBe(skillVariantKey(variants[1]!));
+    expect(findSkillVariant(variants, 'longhun', ['h1', 'h2'], [])).toBe(variants[0]);
+    expect(findSkillVariant(variants, 'longhun', ['d2', 'd1'], ['victim'])).toBe(variants[1]);
+  });
+
+  it('builds multi-target Jijiang and ZhangBa actions without losing ordered targetIds', () => {
+    const jijiang: PlayableSkillHint = {
+      skillId: 'jijiang', cardIds: [], minCards: 0, maxCards: 0,
+      targetMode: 'up-to-four', targetIds: ['one', 'two', 'three'], virtualCardKind: 'slash',
+    };
+    expect(canSubmitSkillUse({ ...jijiang, targetMode: 'up-to-two' }, [], [])).toBe(false);
+    expect(createUseSkillAction('lord', jijiang, [], ['one', 'two', 'three'])).toEqual({
+      type: 'invoke_lord_skill', playerId: 'lord', skillId: 'jijiang',
+      targetId: 'one', targetIds: ['one', 'two', 'three'],
+    });
+    expect(createZhangBaSlashAction('owner', ['cost-1', 'cost-2'], ['one', 'two', 'three'], 3)).toEqual({
+      type: 'use_zhang_ba_slash', playerId: 'owner', cardIds: ['cost-1', 'cost-2'],
+      targetId: 'one', targetIds: ['one', 'two', 'three'],
+    });
+    expect(() => createZhangBaSlashAction('owner', ['cost-1', 'cost-1'], ['one'], 1)).toThrow();
+  });
+
+  it('validates Yeyan allocations and emits only the authoritative allocation payload', () => {
+    const lesser: PlayableSkillHint = {
+      skillId: 'yeyan', cardIds: [], minCards: 0, maxCards: 0,
+      targetMode: 'up-to-three', targetIds: ['one', 'two', 'three'],
+    };
+    const lesserAllocations = [{ targetId: 'one', damage: 1 }, { targetId: 'two', damage: 1 }];
+    expect(canSubmitSkillUse(lesser, [], ['one', 'two'], lesserAllocations)).toBe(true);
+    expect(createUseSkillAction('zhou-yu', lesser, [], ['one', 'two'], lesserAllocations)).toEqual({
+      type: 'use_skill', playerId: 'zhou-yu', skillId: 'yeyan', allocations: lesserAllocations,
+    });
+    expect(canSubmitSkillUse(lesser, [], ['one'], [{ targetId: 'one', damage: 2 }])).toBe(false);
+
+    const greater: PlayableSkillHint = {
+      skillId: 'yeyan', cardIds: ['s', 'h', 'c', 'd'], minCards: 4, maxCards: 4,
+      targetMode: 'up-to-three', targetIds: ['one'], cardGroups: [['s', 'h', 'c', 'd']],
+    };
+    expect(canSubmitSkillUse(greater, ['d', 'c', 'h', 's'], ['one'], [{ targetId: 'one', damage: 3 }])).toBe(true);
+    expect(canSubmitSkillUse(greater, ['s', 'h', 'c', 'd'], ['one'], [{ targetId: 'one', damage: 2 }])).toBe(true);
+    expect(canSubmitSkillUse(greater, ['s', 'h', 'c', 'd'], ['one'], [{ targetId: 'one', damage: 1 }])).toBe(false);
+  });
+});
+
+describe('generic standard-skill action rules', () => {
+  const prompt = (overrides: Partial<ActionPrompt> = {}): ActionPrompt & { kind: 'standard-skill' } => ({
+    id: 'standard:1', message: '处理技能', optional: true,
+    min: 0, max: 0, minTargets: 0, maxTargets: 0,
+    allowedCardIds: [], allowedTargetIds: [],
+    ...overrides,
+    kind: 'standard-skill',
+  });
+
+  it('defaults an unknown optional prompt to decline and never activates implicitly', () => {
+    const unknown = prompt({ standardStage: 'future_stage', skillId: 'future_skill' });
+    expect(createStandardSkillAction('self', unknown)).toEqual({
+      type: 'resolve_standard_skill', playerId: 'self', promptId: 'standard:1', activate: false,
+    });
+    expect(canSubmitStandardSkill('self', unknown)).toBe(true);
+  });
+
+  it('blocks an incomplete mandatory prompt', () => {
+    const mandatory = prompt({
+      optional: false, min: 1, max: 1, allowedCardIds: ['required-card'],
+    });
+    expect(canSubmitStandardSkill('self', mandatory)).toBe(false);
+    expect(() => createStandardSkillAction('self', mandatory)).toThrow('必须完成选择');
+    expect(createStandardSkillAction('self', mandatory, { activate: true, cardId: 'required-card' })).toMatchObject({
+      activate: true, cardId: 'required-card',
+    });
+  });
+
+  it('accepts only advertised options and zone tokens', () => {
+    const choice = prompt({
+      options: ['draw', 'recover'],
+      zoneChoices: [{ token: 'judgment:lightning', ownerId: 'other', zone: 'judgment', label: '闪电' }],
+    });
+    expect(createStandardSkillAction('self', choice, { activate: true, tokens: ['recover'] })).toMatchObject({
+      activate: true, tokens: ['recover'],
+    });
+    expect(() => createStandardSkillAction('self', choice, { activate: true, tokens: ['forged'] })).toThrow('选项');
+    expect(() => createStandardSkillAction('self', choice, { activate: true })).toThrow('选项');
+
+    const mandatoryZoneChoice = prompt({
+      optional: false, min: 1, max: 1,
+      zoneChoices: [{ token: 'hand:0', ownerId: 'other', zone: 'hand', label: '一张手牌' }],
+    });
+    expect(createStandardSkillAction('self', mandatoryZoneChoice, {
+      activate: true, tokens: ['hand:0'],
+    })).toMatchObject({ activate: true, tokens: ['hand:0'] });
+    expect(() => createStandardSkillAction('self', mandatoryZoneChoice, { activate: true })).toThrow('技能牌');
+  });
+
+  it('preserves view-as, multi-target and allocation payloads after boundary validation', () => {
+    const viewAs = prompt({
+      min: 2, max: 2, allowedCardIds: ['one', 'two'],
+      minTargets: 1, maxTargets: 2, allowedTargetIds: ['target-a', 'target-b'],
+    });
+    expect(createStandardSkillAction('self', viewAs, {
+      activate: true,
+      cardIds: ['one', 'two'],
+      targetIds: ['target-a', 'target-b'],
+      viewAsSkillId: 'longhun',
+    })).toEqual({
+      type: 'resolve_standard_skill', playerId: 'self', promptId: 'standard:1', activate: true,
+      cardIds: ['one', 'two'], targetIds: ['target-a', 'target-b'], viewAsSkillId: 'longhun',
+    });
+
+    const distribution = prompt({
+      optional: false,
+      cardChoices: [gameCard({ id: 'viewed-1' }), gameCard({ id: 'viewed-2' })],
+      allowedCardIds: ['viewed-1', 'viewed-2'], min: 2, max: 2,
+      allowedTargetIds: ['target-a', 'target-b'],
+      minTargets: 1, maxTargets: 2,
+    });
+    const allocations = [
+      { cardId: 'viewed-1', targetId: 'target-a' },
+      { cardId: 'viewed-2', targetId: 'target-b' },
+    ];
+    expect(createStandardSkillAction('self', distribution, { activate: true, allocations })).toMatchObject({
+      activate: true, allocations,
+    });
+    expect(() => createStandardSkillAction('self', distribution, {
+      activate: true, allocations: [{ cardId: 'forged', targetId: 'target-a' }],
+    })).toThrow('分配');
+    expect(() => createStandardSkillAction('self', distribution, {
+      activate: true, cardIds: ['viewed-1', 'viewed-2'], targetIds: ['target-a'], allocations,
+    })).toThrow('不能与普通牌');
+  });
+
+  it('requires a complete Guanxing reorder and validates card-specific targets', () => {
+    const guanxing = prompt({
+      optional: false, standardStage: 'guanxing_reorder',
+      allowedCardIds: ['top-1', 'top-2', 'top-3'], min: 0, max: 3,
+    });
+    expect(canSubmitStandardSkill('self', guanxing, { activate: true })).toBe(false);
+    expect(() => createStandardSkillAction('self', guanxing, {
+      activate: true, topCardIds: ['top-1'], bottomCardIds: ['top-2'],
+    })).toThrow('牌序');
+    expect(createStandardSkillAction('self', guanxing, {
+      activate: true, topCardIds: ['top-2', 'top-1'], bottomCardIds: ['top-3'],
+    })).toMatchObject({ topCardIds: ['top-2', 'top-1'], bottomCardIds: ['top-3'] });
+
+    const paired = prompt({
+      min: 1, max: 1, allowedCardIds: ['short-range', 'long-range'],
+      minTargets: 1, maxTargets: 1, allowedTargetIds: ['near', 'far'],
+      cardTargetIds: { 'short-range': ['near'], 'long-range': ['near', 'far'] },
+    });
+    expect(canSubmitStandardSkill('self', paired, {
+      activate: true, cardId: 'short-range', targetId: 'far',
+    })).toBe(false);
+    expect(createStandardSkillAction('self', paired, {
+      activate: true, cardId: 'long-range', targetId: 'far',
+    })).toMatchObject({ cardId: 'long-range', targetId: 'far' });
   });
 });

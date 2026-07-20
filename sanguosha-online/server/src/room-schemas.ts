@@ -1,121 +1,219 @@
+import {
+  CARD_DEFINITIONS,
+  FULL_GENERAL_IDS,
+  FULL_GENERAL_PACKS,
+  validateRoomRuleConfig,
+  type GameAction,
+} from "@sanguosha/shared";
 import { z } from "zod";
 
 export const roomIdSchema = z.string().uuid();
 
+export const roomRuleConfigSchema = z.object({
+  ruleSetVersion: z.literal("original-66-v1"),
+  enabledGeneralPacks: z.array(z.enum(FULL_GENERAL_PACKS)).min(1).max(FULL_GENERAL_PACKS.length),
+  generalSelection: z.object({
+    mode: z.enum(["choice", "random"]),
+    candidatesPerPlayer: z.number().int().min(1).max(10),
+    allowDuplicateGenerals: z.boolean(),
+  }).strict(),
+  deckProfile: z.literal("original-160"),
+  maximumReshuffles: z.number().int().min(0).max(100),
+  lordBonusMinimumPlayers: z.number().int().min(2).max(10),
+  godFactionChoice: z.boolean(),
+}).strict().superRefine((config, context) => {
+  try {
+    validateRoomRuleConfig(config);
+  } catch (error) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: error instanceof Error ? error.message : "Invalid room rule configuration",
+    });
+  }
+});
+
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(40),
   maxPlayers: z.number().int().min(2).max(10).optional(),
-});
+  ruleConfig: roomRuleConfigSchema.optional(),
+}).strict();
+
+const generalIdSchema = z.enum(FULL_GENERAL_IDS);
+const playableFactionSchema = z.enum(["wei", "shu", "wu", "qun"]);
+
+export const chooseGeneralSchema = z.object({ generalId: generalIdSchema }).strict();
+export const chooseGodFactionSchema = z.object({ faction: playableFactionSchema }).strict();
+export const chooseGeneralPayloadSchema = chooseGeneralSchema.extend({ roomId: roomIdSchema }).strict();
+export const chooseGodFactionPayloadSchema = chooseGodFactionSchema.extend({ roomId: roomIdSchema }).strict();
 
 export const readySchema = z.object({ ready: z.boolean() });
 
 const playerId = z.string().uuid();
 const cardId = z.string().min(1).max(100);
+const promptId = z.string().min(1).max(240);
+const opaqueToken = z.string().min(1).max(240);
+const targetIds = z.array(playerId).max(10);
+const cardIds = z.array(cardId).max(200);
+const cardKind = z.enum(Object.keys(CARD_DEFINITIONS) as [
+  keyof typeof CARD_DEFINITIONS,
+  ...(keyof typeof CARD_DEFINITIONS)[],
+]);
 
-export const gameActionSchema = z.discriminatedUnion("type", [
-  z.object({
+type UseSkillId = Extract<GameAction, { readonly type: "use_skill" }>["skillId"];
+const useSkillIds = [
+  "wusheng", "longdan", "qixi", "kurou", "zhiheng", "rende",
+  "qingnang", "jieyin", "guose", "qingguo", "jijiu", "fanjian", "lijian", "huangtian",
+  "shuangxiong", "lianhuan", "huoji", "kanpo", "luanji", "qiangxi", "tianyi", "quhu",
+  "luanwu", "dimeng", "jiuchi", "duanliang", "tiaoxin", "zhiba", "zhijian", "jixi",
+  "wushen", "wuqian", "shenfen", "longhun", "yeyan", "gongxin", "jilue",
+] as const satisfies readonly UseSkillId[];
+
+type ResolveSkillId = Extract<GameAction, { readonly type: "resolve_skill" }>["skillId"];
+const resolveSkillIds = [
+  "luoyi", "keji", "yingzi", "biyue", "luoshen", "jizhi", "jilue", "lianying", "xiaoji", "buqu", "niepan",
+] as const satisfies readonly ResolveSkillId[];
+
+const strictObject = <Shape extends z.ZodRawShape>(shape: Shape) => z.object(shape).strict();
+
+const parsedGameActionSchema = z.discriminatedUnion("type", [
+  strictObject({
     type: z.literal("play_card"),
     playerId,
     cardId,
     targetId: playerId.optional(),
-    targetIds: z.array(playerId).max(3).optional(),
+    targetIds: targetIds.optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("respond"),
     playerId,
     cardId: cardId.nullish(),
     cardIds: z.array(cardId).length(2).optional(),
   }),
-  z.object({
+  strictObject({
+    type: z.literal("declare_guhuo"),
+    playerId,
+    cardId,
+    declaredKind: cardKind,
+    targetId: playerId.optional(),
+    targetIds: targetIds.optional(),
+  }),
+  strictObject({
+    type: z.literal("resolve_guhuo"),
+    playerId,
+    promptId,
+    challenge: z.boolean(),
+  }),
+  strictObject({
+    type: z.literal("choose_pindian_card"),
+    playerId,
+    promptId,
+    cardId,
+  }),
+  strictObject({
     type: z.literal("use_skill"),
     playerId,
-    skillId: z.enum([
-      "wusheng", "longdan", "qixi", "kurou", "zhiheng", "rende",
-      "qingnang", "jieyin", "guose", "qingguo", "jijiu", "fanjian", "lijian",
-    ]),
-    cardIds: z.array(cardId).max(200).optional(),
+    skillId: z.enum(useSkillIds),
+    cardIds: cardIds.optional(),
     targetId: playerId.optional(),
-    targetIds: z.array(playerId).max(3).optional(),
+    targetIds: targetIds.optional(),
+    allocations: z.array(strictObject({
+      targetId: playerId,
+      damage: z.number().int().min(1).max(10),
+    })).max(10).optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("invoke_lord_skill"),
     playerId,
     skillId: z.enum(["hujia", "jijiang"]),
     targetId: playerId.optional(),
+    targetIds: targetIds.optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("resolve_lord_dispatch"),
     playerId,
-    promptId: z.string().min(1).max(240),
+    promptId,
     cardId: cardId.nullish(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("choose_fanjian_suit"),
     playerId,
     suit: z.enum(["spade", "heart", "club", "diamond"]),
-    promptId: z.string().min(1).max(240),
+    promptId,
   }),
-  z.object({
+  strictObject({
     type: z.literal("resolve_skill"),
     playerId,
-    skillId: z.enum(["luoyi", "keji", "yingzi", "biyue", "luoshen", "jizhi", "lianying", "xiaoji"]),
+    skillId: z.enum(resolveSkillIds),
     activate: z.boolean(),
-    promptId: z.string().min(1).max(240).optional(),
+    promptId: promptId.optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("resolve_standard_skill"),
     playerId,
-    promptId: z.string().min(1).max(240),
+    promptId,
     activate: z.boolean(),
     cardId: cardId.optional(),
-    cardIds: z.array(cardId).max(10).optional(),
+    cardIds: cardIds.optional(),
     targetId: playerId.optional(),
-    targetIds: z.array(playerId).max(10).optional(),
-    tokens: z.array(z.string().regex(/^(hand:\d+|equipment:(weapon|armor|offensive_horse|defensive_horse))$/).max(80)).max(10).optional(),
+    targetIds: targetIds.optional(),
+    tokens: z.array(opaqueToken).max(10).optional(),
     topCardIds: z.array(cardId).max(5).optional(),
     bottomCardIds: z.array(cardId).max(5).optional(),
-    allocations: z.array(z.object({ cardId, targetId: playerId })).max(2).optional(),
+    allocations: z.array(strictObject({ cardId, targetId: playerId })).max(2).optional(),
+    viewAsSkillId: z.enum(["wusheng", "longdan", "wushen", "longhun", "zhang_ba_she_mao"]).optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("use_zhang_ba_slash"),
     playerId,
     cardIds: z.array(cardId).length(2),
     targetId: playerId,
+    targetIds: targetIds.optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("activate_armor"),
     playerId,
     activate: z.boolean(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("resolve_weapon"),
     playerId,
+    promptId: promptId.optional(),
     activate: z.boolean(),
     cardIds: z.array(cardId).max(2).optional(),
-    tokens: z.array(z.string().regex(/^(hand:\d+|equipment:(weapon|armor|offensive_horse|defensive_horse))$/).max(80)).max(1).optional(),
+    tokens: z.array(opaqueToken).max(1).optional(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("end_play"),
     playerId,
   }),
-  z.object({
+  strictObject({
     type: z.literal("discard"),
     playerId,
-    cardIds: z.array(cardId).max(20),
+    cardIds,
   }),
-  z.object({
+  strictObject({
     type: z.literal("choose_zone_card"),
     playerId,
-    token: z.string().regex(/^(hand:\d+|equipment:(weapon|armor|offensive_horse|defensive_horse)|judgment:\d+)$/).max(80),
+    token: opaqueToken,
   }),
-  z.object({
+  strictObject({
     type: z.literal("choose_hand_card"),
     playerId,
     cardId: cardId.nullish(),
   }),
-  z.object({
+  strictObject({
     type: z.literal("choose_amazing_grace_card"),
     playerId,
     cardId,
   }),
 ]);
+
+export const gameActionSchema = parsedGameActionSchema.transform((action): GameAction => action);
+
+export const gameActionEnvelopeSchema = z.object({
+  expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  expectedPromptId: promptId,
+  action: gameActionSchema,
+}).strict();
+
+export const gameActionPayloadSchema = gameActionEnvelopeSchema.extend({ roomId: roomIdSchema }).strict();

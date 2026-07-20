@@ -1,33 +1,53 @@
-import { Button, Empty, Form, Input, InputNumber, Modal, Progress, Select, Skeleton, Tag } from 'antd';
+import { Button, Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Progress, Select, Skeleton, Tag } from 'antd';
 import { useMemo, useState } from 'react';
-import type { RoomDetail, RoomSummary } from '../types';
+import type { PackId, RoomDetail, RoomRuleConfig, RoomSummary } from '../types';
 
 interface CreateRoomValues {
   name: string;
   maxPlayers: number;
+  enabledGeneralPacks: PackId[];
+  selectionMode: 'choice' | 'random';
+  candidatesPerPlayer: number;
+  allowDuplicateGenerals: boolean;
+  maximumReshuffles: number;
+  lordBonusMinimumPlayers: number;
+  godFactionChoice: boolean;
 }
 
 interface LobbyScreenProps {
   rooms: RoomSummary[];
   loading: boolean;
   onRefresh: () => Promise<void>;
-  onCreate: (name: string, maxPlayers: number) => Promise<RoomDetail>;
+  onCreate: (name: string, maxPlayers: number, ruleConfig: RoomRuleConfig) => Promise<RoomDetail>;
   onJoin: (roomId: string) => Promise<void>;
 }
 
 const statusLabel: Record<RoomSummary['status'], string> = {
   waiting: '等待中',
+  drafting: '选将中',
   playing: '对局中',
   finished: '已结束',
 };
+
+const packOptions: Array<{ label: string; value: PackId }> = [
+  { label: '标准', value: 'standard' },
+  { label: 'SP', value: 'sp' },
+  { label: '风', value: 'wind' },
+  { label: '火', value: 'fire' },
+  { label: '林', value: 'forest' },
+  { label: '山', value: 'mountain' },
+  { label: '神', value: 'god' },
+];
 
 export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: LobbyScreenProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [joiningId, setJoiningId] = useState<string>();
-  const [filter, setFilter] = useState<'all' | 'waiting' | 'playing'>('all');
+  const [filter, setFilter] = useState<'all' | RoomSummary['status']>('all');
   const [keyword, setKeyword] = useState('');
   const [form] = Form.useForm<CreateRoomValues>();
+  const selectionMode = Form.useWatch('selectionMode', form);
+  const enabledPacks = Form.useWatch('enabledGeneralPacks', form);
 
   const visibleRooms = useMemo(() => {
     const lowerKeyword = keyword.trim().toLowerCase();
@@ -39,13 +59,25 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
   }, [filter, keyword, rooms]);
 
   const waitingCount = rooms.filter((room) => room.status === 'waiting').length;
-  const playingCount = rooms.filter((room) => room.status === 'playing').length;
+  const playingCount = rooms.filter((room) => room.status === 'drafting' || room.status === 'playing').length;
   const playerCount = rooms.reduce((total, room) => total + room.playerCount, 0);
 
   const createRoom = async (values: CreateRoomValues) => {
     setCreating(true);
     try {
-      await onCreate(values.name.trim(), values.maxPlayers);
+      await onCreate(values.name.trim(), values.maxPlayers, {
+        ruleSetVersion: 'original-66-v1',
+        enabledGeneralPacks: values.enabledGeneralPacks,
+        generalSelection: {
+          mode: values.selectionMode,
+          candidatesPerPlayer: values.selectionMode === 'choice' ? values.candidatesPerPlayer : 1,
+          allowDuplicateGenerals: values.allowDuplicateGenerals,
+        },
+        deckProfile: 'original-160',
+        maximumReshuffles: values.maximumReshuffles,
+        lordBonusMinimumPlayers: values.lordBonusMinimumPlayers,
+        godFactionChoice: values.godFactionChoice ?? true,
+      });
       setCreateOpen(false);
       form.resetFields();
     } finally {
@@ -66,9 +98,9 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
     <main className="page lobby-page">
       <section className="lobby-hero">
         <div>
-          <span className="section-kicker">群雄已至</span>
-          <h1>房间大厅</h1>
-          <p>择一席加入，或自行开局。房主可在全员准备后开始对战。</p>
+          <span className="section-kicker">Workspace / Rooms</span>
+          <h1>房间目录</h1>
+          <p>查看实时协作房间，或按当前规则模板新建一个工作区。</p>
         </div>
         <Button className="primary-ink-button" type="primary" size="large" onClick={() => setCreateOpen(true)}>
           创建房间
@@ -77,15 +109,15 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
 
       <section className="lobby-stats" aria-label="大厅统计">
         <div><strong>{waitingCount}</strong><span>等待房间</span></div>
-        <div><strong>{playingCount}</strong><span>进行中</span></div>
-        <div><strong>{playerCount}</strong><span>在席玩家</span></div>
+        <div><strong>{playingCount}</strong><span>活动房间</span></div>
+        <div><strong>{playerCount}</strong><span>在线成员</span></div>
       </section>
 
       <section className="paper-card lobby-list-section">
         <div className="section-toolbar">
           <div>
-            <h2>公开房间</h2>
-            <p>列表会随服务器状态实时更新</p>
+            <h2>房间索引</h2>
+            <p>状态由服务器实时同步</p>
           </div>
           <div className="room-filters">
             <Input.Search
@@ -100,7 +132,9 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
               options={[
                 { value: 'all', label: '全部状态' },
                 { value: 'waiting', label: '等待中' },
+                { value: 'drafting', label: '选将中' },
                 { value: 'playing', label: '对局中' },
+                { value: 'finished', label: '已结束' },
               ]}
             />
             <Button loading={loading} onClick={() => void onRefresh()}>刷新</Button>
@@ -122,12 +156,12 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
               return (
                 <article className="room-card" key={room.id}>
                   <div className="room-card__head">
-                    <div className="room-mark" aria-hidden="true">局</div>
+                    <div className="room-mark" aria-hidden="true">#</div>
                     <div>
                       <h3>{room.name}</h3>
                       <p>{room.hostName ? `房主 · ${room.hostName}` : `房间号 · ${room.id.slice(0, 8)}`}</p>
                     </div>
-                    <Tag color={room.status === 'waiting' ? 'green' : room.status === 'playing' ? 'volcano' : 'default'}>
+                    <Tag color={room.status === 'waiting' ? 'green' : room.status === 'drafting' ? 'blue' : room.status === 'playing' ? 'orange' : 'default'}>
                       {statusLabel[room.status]}
                     </Tag>
                   </div>
@@ -138,8 +172,8 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                   <Progress
                     percent={Math.round((room.playerCount / room.maxPlayers) * 100)}
                     showInfo={false}
-                    strokeColor="#7c2428"
-                    trailColor="#e8ddca"
+                    strokeColor="#111111"
+                    trailColor="#e8e8e8"
                   />
                   <Button
                     block
@@ -148,7 +182,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                     loading={joiningId === room.id}
                     onClick={() => void joinRoom(room.id)}
                   >
-                    {room.status === 'playing' ? '对局进行中' : room.playerCount >= room.maxPlayers ? '房间已满' : '加入房间'}
+                    {room.status === 'drafting' ? '正在选将' : room.status === 'playing' ? '对局进行中' : room.status === 'finished' ? '房间已结束' : room.playerCount >= room.maxPlayers ? '房间已满' : '加入房间'}
                   </Button>
                 </article>
               );
@@ -168,7 +202,16 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
           form={form}
           layout="vertical"
           requiredMark={false}
-          initialValues={{ maxPlayers: 5 }}
+          initialValues={{
+            maxPlayers: 5,
+            enabledGeneralPacks: ['standard', 'sp'],
+            selectionMode: 'random',
+            candidatesPerPlayer: 3,
+            allowDuplicateGenerals: false,
+            maximumReshuffles: 5,
+            lordBonusMinimumPlayers: 5,
+            godFactionChoice: true,
+          }}
           onFinish={createRoom}
         >
           <Form.Item
@@ -190,6 +233,54 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
           >
             <InputNumber min={2} max={10} precision={0} style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item
+            label="武将扩展包"
+            name="enabledGeneralPacks"
+            rules={[{ required: true, message: '请至少启用一个武将包' }]}
+          >
+            <Checkbox.Group options={packOptions} />
+          </Form.Item>
+          <Form.Item label="选将方式" name="selectionMode">
+            <Select options={[
+              { value: 'random', label: '服务器随机分配' },
+              { value: 'choice', label: '每人从私有候选中选择' },
+            ]} />
+          </Form.Item>
+          {selectionMode === 'choice' && (
+            <Form.Item
+              label="每人候选数"
+              name="candidatesPerPlayer"
+              extra="候选仅本人可见；武将不足时请增加扩展包或允许重复。"
+            >
+              <InputNumber min={1} max={10} precision={0} style={{ width: '100%' }} />
+            </Form.Item>
+          )}
+          <Collapse
+            ghost
+            items={[{
+              key: 'advanced',
+              label: '高级规则',
+              forceRender: true,
+              children: (
+                <div className="advanced-rule-fields">
+                  <Form.Item name="allowDuplicateGenerals" valuePropName="checked">
+                    <Checkbox>允许不同玩家使用相同武将</Checkbox>
+                  </Form.Item>
+                  {enabledPacks?.includes('god') && (
+                    <Form.Item name="godFactionChoice" valuePropName="checked">
+                      <Checkbox>神武将由玩家选择魏、蜀、吴或群势力</Checkbox>
+                    </Form.Item>
+                  )}
+                  <Form.Item label="牌堆最多重洗次数" name="maximumReshuffles">
+                    <InputNumber min={0} max={100} precision={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item label="主公增加体力的人数门槛" name="lordBonusMinimumPlayers">
+                    <InputNumber min={2} max={10} precision={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                </div>
+              ),
+            }]}
+          />
           <Button className="primary-ink-button" type="primary" htmlType="submit" block loading={creating}>
             创建并入席
           </Button>

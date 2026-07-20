@@ -47,6 +47,8 @@ export interface JudgmentReplacement {
   readonly skillId: string;
   readonly oldCardId: CardId;
   readonly newCardId: CardId;
+  /** Frozen source zone for restore-time provenance checks. */
+  readonly replacementFrom?: ZoneRef;
   readonly oldCardDestination: ZoneRef;
 }
 
@@ -514,6 +516,7 @@ export function replaceJudgmentCard(
     skillId: input.skillId,
     oldCardId,
     newCardId: input.replacementCardId,
+    replacementFrom: { ...input.replacementFrom },
     oldCardDestination: { ...input.oldCardTo },
   });
   refreshEffectiveCard(state, frame);
@@ -661,6 +664,7 @@ export function cloneJudgmentFrame(frame: JudgmentFrame): JudgmentFrame {
     effectiveCard: frame.effectiveCard ? { ...frame.effectiveCard } : null,
     replacements: frame.replacements.map((replacement) => ({
       ...replacement,
+      ...(replacement.replacementFrom ? { replacementFrom: { ...replacement.replacementFrom } } : {}),
       oldCardDestination: { ...replacement.oldCardDestination },
     })),
     suitModifiers: frame.suitModifiers.map((modifier) => ({ ...modifier })),
@@ -724,6 +728,7 @@ export function assertJudgmentFrame(state: AtomicZoneState, frame: JudgmentFrame
       throw new JudgmentError("judgment replacement metadata is incomplete");
     }
     assertZoneRef(replacement.oldCardDestination);
+    if (replacement.replacementFrom) assertZoneRef(replacement.replacementFrom);
     if (replacement.oldCardId !== chainCardId || replacement.oldCardId === replacement.newCardId || seenCardIds.has(replacement.newCardId)) {
       throw new JudgmentError("judgment replacement history is not a valid physical-card chain");
     }

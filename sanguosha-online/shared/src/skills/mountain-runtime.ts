@@ -1399,7 +1399,7 @@ export function evaluateZhijian(input: ZhijianInput): MountainRuleResult<Zhijian
   ) return reject("invalid_card", "Zhijian requires an equipment card from the owner's hand");
   if (input.targetId === input.context.actorId) return reject("invalid_target", "Zhijian targets another player");
   if (!input.targetAlive) return reject("target_dead", "Zhijian cannot install equipment on a dead player");
-  if (!input.targetCanReceiveEquipment || input.occupiedEquipmentSlots.includes(input.equipmentCard.equipmentSlot)) {
+  if (!input.targetCanReceiveEquipment) {
     return reject("invalid_target", "the target's corresponding equipment slot is unavailable");
   }
   return accept({

@@ -22,12 +22,26 @@ export {
   GameRuleError,
   attackRangeFor,
   applyAction,
+  assertRestorableCardUseContinuation,
+  assertRestorableCardUseIntent,
+  assertRestorableDuelResponse,
+  assertRestorableMassAttackResponse,
+  assertRestorableNullificationResponse,
+  assertRestorableSlashResponse,
+  assertShenfenContinuation,
+  assertWumouContinuation,
+  assertYeyanContinuation,
+  beginDirectDeath,
   createGame,
+  createGameFromDraft,
   distanceBetweenPlayers,
   forfeitPlayer,
   getEffectiveGeneralSkillIds,
+  getEffectivePlayerFaction,
   getGameView,
   getRoleDistribution,
+  handLimitFor,
+  initializeGameStartSkills,
   turnOverGamePlayer,
   viewGame,
 } from "./game.js";
@@ -59,3 +73,11 @@ export * from "./skills/program-coverage.js";
 export * from "./skills/live-coverage.js";
 export * from "./skills/rule-text.js";
 export * from "./skills/standard-runtime.js";
+export {
+  adjudicateGuhuoChallenge,
+  evaluateTianxiangChoice,
+  isGuhuoDeclarableKind,
+  resolveHongyanSuit,
+  type HongyanContext,
+  type WindCardSnapshot,
+} from "./skills/wind-runtime.js";

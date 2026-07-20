@@ -4,9 +4,11 @@ import {
   GameRuleError,
   applyAction,
   assertCompleteRulesEngineState,
+  assertRestorableSlashResponse,
   createGame,
   getCardDefinition,
   getGameView,
+  grantSkill,
   turnOverGamePlayer,
   type Card,
   type CardKind,
@@ -37,7 +39,7 @@ function setup(count = 4): { game: GameSession; actor: GamePlayer; others: GameP
   }
   game.pendingResponse = null;
   game.resolvingCards = [];
-  game.afterMove = { queuedTriggers: [], suspendedPhase: null, suspendedResponse: null };
+  game.afterMove = { queuedRecoveries: [], queuedTriggers: [], suspendedPhase: null, suspendedResponse: null };
   game.turn = {
     ...game.turn,
     playerId: actor.id,
@@ -70,6 +72,21 @@ function attachTurnFlowCompletion(
     ...game.pendingResponse,
     completion: { type: "turn_flow", continuationId, playerId: game.currentPlayerId, destination },
   };
+  const slash = game.pendingResponse;
+  if (slash.type !== "slash") throw new Error("Expected an in-flight Slash");
+  const effectIndex = game.completeRules.lifecycle.effects.findIndex((effect) =>
+    effect.kind === "slash_response_progress" && effect.payload.cardId === slash.cardId);
+  const effect = game.completeRules.lifecycle.effects[effectIndex];
+  if (!effect) throw new Error("Expected a Slash response commitment");
+  const commitment = JSON.parse(String(effect.payload.commitment)) as Record<string, unknown>;
+  game.completeRules.lifecycle.effects[effectIndex] = {
+    ...effect,
+    payload: {
+      ...effect.payload,
+      commitment: JSON.stringify({ ...commitment, completion: slash.completion }),
+    },
+  };
+  assertRestorableSlashResponse(game, slash);
   return game;
 }
 
@@ -117,6 +134,13 @@ describe("live player posture", () => {
     const skipped = game.players[(actor.seat + 1) % game.players.length]!;
     const following = game.players[(skipped.seat + 1) % game.players.length]!;
     const originalTurnNumber = game.turn.number;
+    grantSkill(game.completeRules.lifecycle, {
+      ownerId: skipped.id,
+      skillId: "wansha",
+      sourcePlayerId: skipped.id,
+      sourceSkillId: "jilue",
+      expiry: { type: "turn_end", turnId: originalTurnNumber + 1 },
+    });
 
     const turned = turnOverGamePlayer(game, skipped.id);
     expect(game.players.find((player) => player.id === skipped.id)?.faceUp).toBe(true);
@@ -128,6 +152,11 @@ describe("live player posture", () => {
     expect(advanced.turn.number).toBe(originalTurnNumber + 2);
     expect(advanced.players.find((player) => player.id === skipped.id)).toMatchObject({ faceUp: true, hand: [] });
     expect(advanced.logs.filter((entry) => entry.message.includes("跳过整个回合"))).toHaveLength(1);
+    expect(advanced.logs.filter((entry) => entry.message === `${actor.id} 的回合结束。`)).toHaveLength(1);
+    expect(advanced.logs.filter((entry) => entry.message === `${skipped.id} 的回合结束。`)).toHaveLength(1);
+    expect(advanced.completeRules.lifecycle.grants.some((entry) =>
+      entry.ownerId === skipped.id && entry.skillId === "wansha" && entry.sourceSkillId === "jilue"
+    )).toBe(false);
     expect(others.map((player) => player.id)).toContain(skipped.id);
   });
 });
@@ -213,13 +242,22 @@ describe("serializable Slash completion continuations", () => {
     let current = attachTurnFlowCompletion(startSlash(game, actor, target!), "discard_or_end");
     current = applyAction(current, { type: "respond", playerId: target!.id, cardId: null });
     expect(current.pendingResponse).toMatchObject({ type: "weapon_action", stage: "qilin_discard_horse" });
-    expect(current.completeRules.damageFlow.frames).toEqual([]);
+    expect(current.completeRules.damageFlow.frames).toHaveLength(1);
     expect(current.completeRules.damageFlow.completedDamageIds).toEqual([]);
     expect(current.completeRules.damageFlow.completedFrameIds).toEqual([]);
-    expect(current.completeRules.nextDamageId).toBe(1);
-    current = applyAction(current, { type: "resolve_weapon", playerId: actor.id, activate: false });
+    expect(current.completeRules.nextDamageId).toBe(2);
+    const prompt = getGameView(current, actor.id).prompt;
+    if (prompt.type !== "weapon_action" || !prompt.promptId) throw new Error("Expected identified Qilin prompt");
+    current = applyAction(current, {
+      type: "resolve_weapon",
+      playerId: actor.id,
+      promptId: prompt.promptId,
+      activate: false,
+    });
     expect(current.turn.phase).toBe("discard");
     expect(current.pendingResponse).toBeNull();
+    expect(current.completeRules.damageFlow.frames).toEqual([]);
+    expect(current.completeRules.damageFlow.completedDamageIds).toEqual([1]);
   });
 });
 
@@ -297,16 +335,18 @@ describe("live opportunity-free DamageFlow slice", () => {
     });
     expect(resolved.completeRules.damageFlow.completedDamageIds).toEqual([]);
     expect(resolved.completeRules.nextDamageId).toBe(2);
+    const restored = JSON.parse(JSON.stringify(resolved)) as GameSession;
     expect(() => assertCompleteRulesEngineState(
-      (JSON.parse(JSON.stringify(resolved)) as GameSession).completeRules,
+      restored.completeRules,
+      restored.players.map(({ id, hp, maxHp, alive }) => ({ id, hp, maxHp, alive })),
     )).not.toThrow();
   });
 
-  it("keeps legacy after-damage skills on their existing prompt path without live frames", () => {
+  it("keeps standard after-damage skills inside the live DamageFlow frame", () => {
     const { game, actor, others: [target] } = setup(3);
     target!.generalId = "cao_cao";
     const pending = startSlash(game, actor, target!, "slash", "legacy-jianxiong-slash");
-    const resolved = applyAction(pending, { type: "respond", playerId: target!.id, cardId: null });
+    let resolved = applyAction(pending, { type: "respond", playerId: target!.id, cardId: null });
 
     expect(resolved.pendingResponse).toMatchObject({
       type: "standard_skill",
@@ -315,8 +355,17 @@ describe("live opportunity-free DamageFlow slice", () => {
       stage: "invoke",
     });
     expect(resolved.players.find((player) => player.id === target!.id)?.hp).toBe(3);
-    expect(resolved.completeRules.damageFlow.frames).toEqual([]);
+    expect(resolved.completeRules.damageFlow.frames).toHaveLength(1);
     expect(resolved.completeRules.damageFlow.completedDamageIds).toEqual([]);
-    expect(resolved.completeRules.nextDamageId).toBe(1);
+    expect(resolved.completeRules.nextDamageId).toBe(2);
+    if (resolved.pendingResponse?.type !== "standard_skill") throw new Error("Expected Jianxiong prompt");
+    resolved = applyAction(resolved, {
+      type: "resolve_standard_skill",
+      playerId: target!.id,
+      promptId: resolved.pendingResponse.promptId,
+      activate: false,
+    });
+    expect(resolved.completeRules.damageFlow.frames).toEqual([]);
+    expect(resolved.completeRules.damageFlow.completedDamageIds).toEqual([1]);
   });
 });

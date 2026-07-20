@@ -1,4 +1,4 @@
-import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag } from 'antd';
+import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import type { AuthUser } from '../types';
@@ -8,13 +8,11 @@ interface CreateUserValues {
   displayName: string;
   password: string;
   confirmPassword: string;
-  mustChangePassword: boolean;
 }
 
 interface ResetPasswordValues {
   password: string;
   confirmPassword: string;
-  mustChangePassword: boolean;
 }
 
 interface AdminUsersScreenProps {
@@ -22,9 +20,9 @@ interface AdminUsersScreenProps {
   users: AuthUser[];
   loading: boolean;
   onRefresh: () => Promise<void>;
-  onCreate: (values: Pick<CreateUserValues, 'username' | 'displayName' | 'password' | 'mustChangePassword'>) => Promise<void>;
+  onCreate: (values: Pick<CreateUserValues, 'username' | 'displayName' | 'password'>) => Promise<void>;
   onStatus: (userId: string, disabled: boolean) => Promise<void>;
-  onResetPassword: (userId: string, password: string, mustChangePassword: boolean) => Promise<void>;
+  onResetPassword: (userId: string, password: string) => Promise<void>;
 }
 
 export function AdminUsersScreen({
@@ -64,7 +62,6 @@ export function AdminUsersScreen({
         username: values.username.trim(),
         displayName: values.displayName.trim(),
         password: values.password,
-        mustChangePassword: values.mustChangePassword,
       });
       createForm.resetFields();
       setCreateOpen(false);
@@ -77,7 +74,7 @@ export function AdminUsersScreen({
     if (!resetTarget) return;
     setSubmitting(true);
     try {
-      await onResetPassword(resetTarget.id, values.password, values.mustChangePassword);
+      await onResetPassword(resetTarget.id, values.password);
       closeReset();
     } finally {
       setSubmitting(false);
@@ -199,7 +196,6 @@ export function AdminUsersScreen({
           form={createForm}
           layout="vertical"
           requiredMark={false}
-          initialValues={{ mustChangePassword: true }}
           onFinish={createUser}
         >
           <Form.Item
@@ -234,9 +230,7 @@ export function AdminUsersScreen({
           >
             <Input.Password autoComplete="new-password" placeholder="再次输入初始密码" />
           </Form.Item>
-          <Form.Item name="mustChangePassword" valuePropName="checked">
-            <Checkbox>首次登录必须修改此密码</Checkbox>
-          </Form.Item>
+          <p className="form-note">安全策略：玩家首次登录必须修改该临时密码。</p>
           <Button className="primary-ink-button" type="primary" htmlType="submit" block loading={submitting}>创建账号</Button>
         </Form>
       </Modal>
@@ -252,7 +246,6 @@ export function AdminUsersScreen({
           form={resetForm}
           layout="vertical"
           requiredMark={false}
-          initialValues={{ mustChangePassword: true }}
           onFinish={resetPassword}
         >
           <Form.Item label="新密码" name="password" rules={passwordRules}>
@@ -273,9 +266,7 @@ export function AdminUsersScreen({
           >
             <Input.Password autoComplete="new-password" placeholder="再次输入新密码" />
           </Form.Item>
-          <Form.Item name="mustChangePassword" valuePropName="checked">
-            <Checkbox>下次登录必须再次修改密码</Checkbox>
-          </Form.Item>
+          <p className="form-note">安全策略：重置后，玩家下次登录必须修改该临时密码。</p>
           <Button type="primary" htmlType="submit" block loading={submitting}>确认重置</Button>
         </Form>
       </Modal>

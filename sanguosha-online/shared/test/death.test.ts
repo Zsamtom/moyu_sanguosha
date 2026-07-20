@@ -86,7 +86,7 @@ describe("recoverable death frame", () => {
     expect(() => assertDeathFrame(frame)).not.toThrow();
   });
 
-  it("rejects partial or forged card disposition and reward provenance", () => {
+  it("rejects partial card disposition and forged reward provenance", () => {
     const frame = createDeathFrame({
       frameId: 1,
       death: death(),
@@ -110,8 +110,8 @@ describe("recoverable death frame", () => {
       eventId: 5,
       kind: "rebel_bounty",
       affectedPlayerId: "killer",
-      moveRecords: [move(2, ["only-two", "draw-2"], { kind: "deck" }, { kind: "hand", playerId: "killer" }, "draw")],
-    })).toThrow(/exactly three/);
+      moveRecords: [move(2, ["draw-1", "draw-2", "draw-3", "draw-4"], { kind: "deck" }, { kind: "hand", playerId: "killer" }, "draw")],
+    })).toThrow(/at most three/);
     expect(frame.stage).toBe("reward_punishment");
   });
 
@@ -179,5 +179,48 @@ describe("recoverable death frame", () => {
     const corrupted = cloneDeathFrame(frame);
     corrupted.rewardPunishment = { ...corrupted.rewardPunishment!, affectedPlayerId: "other" };
     expect(() => assertDeathFrame(corrupted)).toThrow(DeathFrameError);
+  });
+
+  it("accepts JSON round-trips and rejects non-JSON or unexpected persisted fields", () => {
+    const legal = createDeathFrame({ frameId: 50, death: death() });
+    const restored = JSON.parse(JSON.stringify(legal)) as typeof legal;
+    expect(() => assertDeathFrame(restored)).not.toThrow();
+
+    const extraFrame = structuredClone(restored) as typeof restored & { forged?: boolean };
+    extraFrame.forged = true;
+    expect(() => assertDeathFrame(extraFrame)).toThrow(/missing or unexpected fields/);
+
+    const extraReason = structuredClone(restored);
+    (extraReason.death.reason as unknown as Record<string, unknown>).forged = true;
+    expect(() => assertDeathFrame(extraReason)).toThrow(/missing or unexpected fields/);
+
+    const sparse = structuredClone(restored);
+    (sparse.ownedPhysicalCardIds as string[]).length = 1;
+    expect(() => assertDeathFrame(sparse)).toThrow(/dense array/);
+
+    const undefinedField = structuredClone(restored) as unknown as Record<string, unknown>;
+    undefinedField.identityReveal = undefined;
+    expect(() => assertDeathFrame(undefinedField as never)).toThrow(/not strict JSON/);
+
+    const stack = createDeathStack();
+    pushDeathFrame(stack, restored);
+    const extraStack = structuredClone(stack) as typeof stack & { forged?: boolean };
+    extraStack.forged = true;
+    expect(() => assertDeathStack(extraStack)).toThrow(/missing or unexpected fields/);
+
+    const progressed = createDeathFrame({
+      frameId: 51,
+      death: death(),
+      ownedPhysicalCardIds: ["owned"],
+    });
+    revealDeathIdentity(progressed, { eventId: 2, role: "renegade" });
+    completeDeathTriggers(progressed, { eventId: 3 });
+    completeDeathCardDisposition(progressed, {
+      eventId: 4,
+      moveRecords: [move(1, ["owned"], { kind: "hand", playerId: "victim" }, { kind: "discard" }, "death")],
+    });
+    const extraMove = JSON.parse(JSON.stringify(progressed)) as typeof progressed;
+    (extraMove.cardDisposition!.moveRecords[0] as unknown as Record<string, unknown>).forged = true;
+    expect(() => assertDeathFrame(extraMove)).toThrow(/missing or unexpected fields/);
   });
 });

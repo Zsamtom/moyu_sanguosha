@@ -575,23 +575,17 @@ describe("forfeiture", () => {
     if (!lord || !loyalist) throw new Error("Missing required roles");
     setTurn(initial, lord.id);
     const resolvingSlash = card("departed-target-slash", "slash");
-    initial.resolvingCards = [resolvingSlash];
-    initial.turn.phase = "respond";
-    initial.pendingResponse = {
-      type: "slash",
-      attackerId: lord.id,
-      targetId: loyalist.id,
+    for (const candidate of initial.players) candidate.generalId = "gan_ning";
+    lord.hand = [resolvingSlash];
+    lord.equipment.weapon = card("forfeit-range-weapon", "qing_long_yan_yue_dao");
+    const resolving = applyAction(initial, {
+      type: "play_card",
+      playerId: lord.id,
       cardId: resolvingSlash.id,
-      slashKind: "slash",
-      damage: 1,
-      nature: "normal",
-      color: "black",
-      remainingTargetIds: [],
-      zhuQueChecked: true,
-      ciXiongChecked: true,
-    };
+      targetId: loyalist.id,
+    });
 
-    const continued = forfeitPlayer(initial, loyalist.id);
+    const continued = forfeitPlayer(resolving, loyalist.id);
 
     expect(continued.status).toBe("playing");
     expect(continued.currentPlayerId).toBe(lord.id);
@@ -610,53 +604,47 @@ describe("forfeiture", () => {
       playerIds: ["a", "b", "c", "d", "e"],
       seed: seedFor(505),
     });
-    const source = initial.players.find((candidate) => candidate.role === "loyalist");
     const rebels = initial.players.filter((candidate) => candidate.role === "rebel");
-    const victim = rebels[0];
-    const remainingTarget = rebels[1];
-    if (!source || !victim || !remainingTarget) throw new Error("Missing mass-attack roles");
+    const victim = rebels.find((candidate) =>
+      initial.players[(candidate.seat + initial.players.length - 1) % initial.players.length]?.role !== "lord");
+    const source = victim
+      ? initial.players[(victim.seat + initial.players.length - 1) % initial.players.length]
+      : undefined;
+    if (!source || !victim) throw new Error("Missing mass-attack roles");
     setTurn(initial, source.id);
-    for (const candidate of initial.players) candidate.hand = [];
-    if (answers) remainingTarget.hand = [card("remaining-target-slash", "slash")];
-    victim.hp = 0;
-    const massAttack = card("departed-source-mass-attack", "barbarian_invasion");
-    initial.resolvingCards = [massAttack];
-    initial.turn.phase = "respond";
-    initial.pendingResponse = {
-      type: "dying",
-      victimId: victim.id,
-      damageSourceId: source.id,
-      targetId: victim.id,
-      remainingResponderIds: initial.players
-        .filter((candidate) => candidate.id !== victim.id)
-        .map((candidate) => candidate.id),
-      resume: {
-        type: "mass_attack",
-        pending: {
-          type: "mass_attack",
-          attackerId: source.id,
-          targetId: victim.id,
-          cardId: massAttack.id,
-          cardKind: "barbarian_invasion",
-          responseKind: "slash",
-          remainingTargetIds: [remainingTarget.id],
-        },
-      },
-    };
+    for (const candidate of initial.players) {
+      candidate.generalId = "gan_ning";
+      candidate.hand = candidate.id === source.id
+        ? [card("departed-source-mass-attack", "barbarian_invasion")]
+        : answers && candidate.id !== victim.id ? [card(`mass-answer-${candidate.id}`, "slash")] : [];
+      candidate.hp = candidate.id === victim.id ? 1 : candidate.maxHp;
+    }
     const sourceIndex = initial.players.findIndex((candidate) => candidate.id === source.id);
 
-    const departed = forfeitPlayer(initial, source.id);
-    const resumed = declineAllDyingRescues(departed);
-    expect(resumed.pendingResponse).toMatchObject({
-      type: "mass_attack",
-      attackerId: source.id,
-      targetId: remainingTarget.id,
+    const started = applyAction(initial, {
+      type: "play_card",
+      playerId: source.id,
+      cardId: "departed-source-mass-attack",
     });
-    const resolved = applyAction(resumed, {
+    if (started.pendingResponse?.type !== "mass_attack" || started.pendingResponse.targetId !== victim.id) {
+      throw new Error("Mass attack did not start at the chosen victim");
+    }
+    const dying = applyAction(started, {
       type: "respond",
-      playerId: remainingTarget.id,
-      cardId: answers ? "remaining-target-slash" : null,
+      playerId: victim.id,
+      cardId: null,
     });
+    const departed = forfeitPlayer(dying, source.id);
+    let resolved = declineAllDyingRescues(departed);
+    while (resolved.pendingResponse?.type === "mass_attack") {
+      const targetId = resolved.pendingResponse.targetId;
+      resolved = applyAction(resolved, {
+        type: "respond",
+        playerId: targetId,
+        cardId: answers ? `mass-answer-${targetId}` : null,
+      });
+      resolved = declineAllDyingRescues(resolved);
+    }
     const expectedNext = Array.from({ length: resolved.players.length - 1 }, (_, offset) =>
       resolved.players[(sourceIndex + offset + 1) % resolved.players.length]!,
     ).find((candidate) => candidate.alive);

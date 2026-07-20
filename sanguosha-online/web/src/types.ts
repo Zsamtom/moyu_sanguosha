@@ -5,6 +5,7 @@ import {
   type CardTargetMode,
   type StandardCardKind,
 } from './gameCards';
+import { activeSkillDescriptions, generalSkillNames } from './interactionRules';
 
 export type UserRole = 'admin' | 'player';
 
@@ -19,7 +20,54 @@ export interface AuthUser {
   updatedAt?: string;
 }
 
-export type RoomStatus = 'waiting' | 'playing' | 'finished';
+export type FullGeneralId =
+  | 'cao_cao' | 'guo_jia' | 'si_ma_yi' | 'xia_hou_dun' | 'xu_chu' | 'zhang_liao' | 'zhen_ji'
+  | 'guan_yu' | 'huang_yue_ying' | 'liu_bei' | 'ma_chao' | 'zhang_fei' | 'zhao_yun' | 'zhu_ge_liang'
+  | 'da_qiao' | 'gan_ning' | 'huang_gai' | 'lu_xun' | 'lv_meng' | 'sun_quan' | 'sun_shang_xiang' | 'zhou_yu'
+  | 'diao_chan' | 'hua_tuo' | 'lv_bu' | 'yuan_shu'
+  | 'cao_ren' | 'huang_zhong' | 'wei_yan' | 'xia_hou_yuan' | 'xiao_qiao' | 'yu_ji' | 'zhang_jiao' | 'zhou_tai'
+  | 'dian_wei' | 'pang_de' | 'pang_tong' | 'tai_shi_ci' | 'wo_long' | 'xun_yu' | 'yan_liang_wen_chou' | 'yuan_shao'
+  | 'cao_pi' | 'dong_zhuo' | 'jia_xu' | 'lu_su' | 'meng_huo' | 'sun_jian' | 'xu_huang' | 'zhu_rong'
+  | 'cai_wen_ji' | 'deng_ai' | 'jiang_wei' | 'liu_chan' | 'sun_ce' | 'zhang_he' | 'zhang_zhao_zhang_hong' | 'zuo_ci'
+  | 'shen_cao_cao' | 'shen_guan_yu' | 'shen_lv_bu' | 'shen_lv_meng'
+  | 'shen_si_ma_yi' | 'shen_zhao_yun' | 'shen_zhou_yu' | 'shen_zhu_ge_liang';
+
+export type PackId = 'standard' | 'sp' | 'wind' | 'fire' | 'forest' | 'mountain' | 'god';
+export type PlayableFaction = 'wei' | 'shu' | 'wu' | 'qun';
+export type GameRole = 'lord' | 'loyalist' | 'rebel' | 'renegade';
+export type GeneralDraftStage = 'selecting_generals' | 'selecting_factions' | 'complete';
+
+export interface RoomRuleConfig {
+  readonly ruleSetVersion: 'original-66-v1';
+  readonly enabledGeneralPacks: readonly PackId[];
+  readonly generalSelection: {
+    readonly mode: 'choice' | 'random';
+    readonly candidatesPerPlayer: number;
+    readonly allowDuplicateGenerals: boolean;
+  };
+  readonly deckProfile: 'original-160';
+  readonly maximumReshuffles: number;
+  readonly lordBonusMinimumPlayers: number;
+  readonly godFactionChoice: boolean;
+}
+
+export interface GeneralDraftView {
+  readonly stage: GeneralDraftStage;
+  readonly currentPlayerId: string | null;
+  readonly playerIds: readonly string[];
+  /** This list contains only the current caller's private candidates. */
+  readonly candidates: readonly FullGeneralId[];
+  readonly players: readonly {
+    readonly playerId: string;
+    readonly role: GameRole | null;
+    readonly selected: boolean;
+    readonly generalId: FullGeneralId | null;
+    readonly needsFaction: boolean;
+    readonly faction: PlayableFaction | null;
+  }[];
+}
+
+export type RoomStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
 
 export interface RoomSummary {
   id: string;
@@ -45,9 +93,13 @@ export interface RoomMember {
 
 export interface RoomDetail extends RoomSummary {
   members: RoomMember[];
+  ruleConfig?: RoomRuleConfig;
+  /** Private projection for the caller; absent from public room summaries. */
+  draft?: GeneralDraftView;
 }
 
 export type CardSuit = 'spade' | 'heart' | 'club' | 'diamond' | 'none';
+export type GameTargetMode = CardTargetMode | 'single-any' | 'up-to-four';
 
 export interface GameCard {
   id: string;
@@ -57,7 +109,7 @@ export interface GameCard {
   rank: string;
   description?: string;
   category?: CardCategory | string;
-  targetMode?: CardTargetMode;
+  targetMode?: GameTargetMode;
   playable?: boolean;
   allowedTargetIds?: string[];
   allowedTargetPairs?: Array<readonly [string, string]>;
@@ -67,43 +119,46 @@ export interface EquipmentView extends GameCard {
   slot: string;
 }
 
-export type ActiveGeneralSkillId =
-  | 'wusheng'
-  | 'longdan'
-  | 'qixi'
-  | 'kurou'
-  | 'zhiheng'
-  | 'rende'
-  | 'qingnang'
-  | 'jieyin'
-  | 'guose'
-  | 'qingguo'
-  | 'jijiu'
-  | 'fanjian'
-  | 'lijian'
-  | 'jijiang';
+// The shared engine remains authoritative; Web accepts new skill ids without requiring a lockstep UI release.
+export type ActiveGeneralSkillId = string;
 export type LordDispatchSkillId = 'hujia' | 'jijiang';
-export type SkillChoiceId = 'luoyi' | 'keji' | 'yingzi' | 'biyue' | 'luoshen' | 'jizhi' | 'lianying' | 'xiaoji';
+export type SkillChoiceId = 'luoyi' | 'keji' | 'yingzi' | 'biyue' | 'luoshen' | 'jizhi' | 'jilue' | 'lianying' | 'xiaoji' | 'buqu' | 'niepan';
 export type StandardImplementedSkillId =
   | 'jianxiong' | 'tiandu' | 'yiji' | 'guicai' | 'fankui'
-  | 'ganglie' | 'tuxi' | 'guanxing' | 'tieqi' | 'liuli';
+  | 'ganglie' | 'tuxi' | 'guanxing' | 'tieqi' | 'liuli' | 'liegong' | 'buqu' | 'tianxiang'
+  | 'jushou' | 'shensu' | 'leiji' | 'guidao' | 'mengjin' | 'jieming' | 'shuangxiong'
+  | 'benghuai' | 'luanwu' | 'haoshi' | 'dimeng' | 'zaiqi' | 'yinghun'
+  | 'xingshang' | 'fangzhu' | 'songwei' | 'baonue' | 'lieren' | 'beige' | 'huashen' | 'xinsheng'
+  | 'guixin' | 'wuhun' | 'kuangbao' | 'wumou' | 'shenfen' | 'renjie' | 'baiyin' | 'jilue'
+  | 'qinyin' | 'lianpo' | 'yeyan' | 'shelie' | 'gongxin' | 'qixing' | 'kuangfeng' | 'dawu'
+  | 'tiaoxin' | 'xiangle' | 'jiang' | 'yingyang' | 'zhiba' | 'zhijian' | 'tuntian' | 'zaoxian'
+  | 'jixi' | 'zhiji' | 'fangquan' | 'ruoyu' | 'hunzi' | 'qiaobian' | 'guzheng';
 
 export interface PlayableSkillHint {
   skillId: ActiveGeneralSkillId;
   cardIds: string[];
   minCards: number;
   maxCards: number;
-  targetMode: CardTargetMode;
+  targetMode: GameTargetMode;
   targetIds: string[];
   targetPairs?: Array<readonly [string, string]>;
   cardTargetIds?: Record<string, string[]>;
-  virtualCardKind?: 'slash' | 'guo_he_chai_qiao' | 'le_bu_si_shu';
+  cardPairs?: Array<readonly [string, string]>;
+  cardGroups?: string[][];
+  cardGroupTargets?: Array<{ cardIds: string[]; targetIds: string[]; maxTargets: number }>;
+  virtualCardKind?:
+    | 'slash' | 'fire_slash' | 'peach' | 'duel'
+    | 'guo_he_chai_qiao' | 'shun_shou_qian_yang' | 'le_bu_si_shu' | 'bing_liang_cun_duan'
+    | 'fire_attack' | 'iron_chain' | 'arrow_barrage' | 'wine';
 }
 
 export interface SkillResponseHint {
-  skillId: Extract<ActiveGeneralSkillId, 'wusheng' | 'longdan' | 'qingguo' | 'jijiu'>;
+  skillId: 'wusheng' | 'longdan' | 'qingguo' | 'jijiu' | 'jiuchi' | 'wushen' | 'longhun';
   cardIds: string[];
-  responseKind: 'slash' | 'dodge' | 'peach';
+  responseKind: 'slash' | 'dodge' | 'peach' | 'wine';
+  minCards?: number;
+  maxCards?: number;
+  cardGroups?: string[][];
 }
 
 export interface GamePlayerView {
@@ -125,8 +180,19 @@ export interface GamePlayerView {
   isCurrent: boolean;
   equipment?: EquipmentView[];
   judgment?: EquipmentView[];
+  publicPiles?: Record<string, GameCard[]>;
+  publicPileCounts?: Record<string, number>;
+  privatePiles?: Record<string, GameCard[]>;
+  publicMarks?: Record<string, number>;
+  publicEffects?: Array<{
+    effectId: number;
+    kind: 'kuangfeng' | 'dawu';
+    targetPlayerId: string;
+    sourcePlayerId: string;
+  }>;
   chained?: boolean;
   effectiveSkillIds?: string[];
+  effectiveSkills?: Array<{ id: string; name: string; description: string }>;
 }
 
 export interface GameLogEntry {
@@ -148,6 +214,7 @@ export type PromptKind =
 
 export interface ActionPrompt {
   id: string;
+  promptId?: string;
   kind: PromptKind;
   message: string;
   min?: number;
@@ -158,12 +225,19 @@ export interface ActionPrompt {
   allowedTargetIds?: string[];
   zoneChoices?: Array<{ token: string; ownerId?: string; zone: 'hand' | 'equipment' | 'judgment'; label: string }>;
   cardChoices?: GameCard[];
+  options?: string[];
   weaponStage?: string;
   zhangBaAllowedCardIds?: string[];
   skillResponses?: SkillResponseHint[];
-  skillId?: SkillChoiceId | StandardImplementedSkillId;
+  skillId?: ActiveGeneralSkillId | SkillChoiceId | StandardImplementedSkillId;
   standardStage?: string;
   cardTargetIds?: Record<string, string[]>;
+  kanpoCardIds?: string[];
+  longhunCardGroups?: string[][];
+  sourceId?: string;
+  opponentId?: string;
+  declaredKind?: string;
+  canChallenge?: boolean;
   minTargets?: number;
   maxTargets?: number;
   requiredCount?: number;
@@ -176,6 +250,8 @@ export interface ActionPrompt {
 
 export interface GameView {
   roomId: string;
+  revision: number;
+  actionPromptId: string;
   status: 'playing' | 'finished';
   round: number;
   phase: string;
@@ -185,7 +261,7 @@ export interface GameView {
   players: GamePlayerView[];
   hand: GameCard[];
   publicCards?: GameCard[];
-  zhangBaSlash?: { allowedCardIds: string[]; targetIds: string[] } | null;
+  zhangBaSlash?: { allowedCardIds: string[]; targetIds: string[]; maxTargets?: number } | null;
   skills: PlayableSkillHint[];
   logs: GameLogEntry[];
   prompt?: ActionPrompt | null;
@@ -196,7 +272,10 @@ export interface GameView {
 export type GameAction =
   | { type: 'play_card'; playerId: string; cardId: string; targetId?: string; targetIds?: string[] }
   | { type: 'respond'; playerId: string; cardId?: string | null; cardIds?: string[] }
-  | { type: 'use_zhang_ba_slash'; playerId: string; cardIds: string[]; targetId: string }
+  | { type: 'declare_guhuo'; playerId: string; cardId: string; declaredKind: string; targetId?: string; targetIds?: string[] }
+  | { type: 'resolve_guhuo'; playerId: string; promptId: string; challenge: boolean }
+  | { type: 'choose_pindian_card'; playerId: string; promptId: string; cardId: string }
+  | { type: 'use_zhang_ba_slash'; playerId: string; cardIds: string[]; targetId: string; targetIds?: string[] }
   | { type: 'discard'; playerId: string; cardIds: string[] }
   | { type: 'end_play'; playerId: string }
   | { type: 'activate_armor'; playerId: string; activate: boolean }
@@ -216,6 +295,7 @@ export type GameAction =
       cardIds?: string[];
       targetId?: string;
       targetIds?: string[];
+      allocations?: Array<{ targetId: string; damage: number }>;
     }
   | { type: 'resolve_skill'; playerId: string; skillId: SkillChoiceId; activate: boolean; promptId?: string }
   | {
@@ -223,10 +303,11 @@ export type GameAction =
       cardId?: string; cardIds?: string[]; targetId?: string; targetIds?: string[]; tokens?: string[];
       topCardIds?: string[]; bottomCardIds?: string[];
       allocations?: Array<{ cardId: string; targetId: string }>;
+      viewAsSkillId?: 'wusheng' | 'longdan' | 'wushen' | 'longhun' | 'zhang_ba_she_mao';
     }
-  | { type: 'invoke_lord_skill'; playerId: string; skillId: LordDispatchSkillId; targetId?: string }
+  | { type: 'invoke_lord_skill'; playerId: string; skillId: LordDispatchSkillId; targetId?: string; targetIds?: string[] }
   | { type: 'resolve_lord_dispatch'; playerId: string; promptId: string; cardId?: string | null }
-  | { type: 'resolve_weapon'; playerId: string; activate: boolean; cardIds?: string[]; tokens?: string[] };
+  | { type: 'resolve_weapon'; playerId: string; promptId?: string; activate: boolean; cardIds?: string[]; tokens?: string[] };
 
 export interface ApiErrorBody {
   code?: string;
@@ -267,17 +348,28 @@ interface EnginePlayer {
   hand: EngineCard[] | null;
   equipment?: EngineCard[];
   judgment?: EngineCard[];
+  publicPiles?: Record<string, EngineCard[]>;
+  publicPileCounts?: Record<string, number>;
+  privatePiles?: Record<string, EngineCard[]>;
+  publicMarks?: Record<string, number>;
+  publicEffects?: Array<{
+    effectId: number;
+    kind: 'kuangfeng' | 'dawu';
+    targetPlayerId: string;
+    sourcePlayerId: string;
+  }>;
   chained?: boolean;
-  role: 'lord' | 'loyalist' | 'rebel' | 'renegade' | null;
+  role: GameRole | null;
   general?: { id: string; name: string; faction: 'wei' | 'shu' | 'wu' | 'qun' | 'god'; gender: 'male' | 'female' } | null;
   effectiveSkillIds?: string[];
+  effectiveSkills?: Array<{ id: string; name: string; description: string }>;
 }
 
 interface EnginePlayableCardHint {
   cardId: string;
   kind: EngineCardKind;
   targetIds: string[];
-  targetMode?: CardTargetMode;
+  targetMode?: GameTargetMode;
   targetPairs?: Array<readonly [string, string]>;
 }
 
@@ -286,17 +378,27 @@ interface EnginePlayableSkillHint {
   cardIds: string[];
   minCards: number;
   maxCards: number;
-  targetMode: CardTargetMode;
+  targetMode: GameTargetMode;
   targetIds: string[];
   targetPairs?: Array<readonly [string, string]>;
   cardTargetIds?: Readonly<Record<string, string[]>>;
-  virtualCardKind?: 'slash' | 'guo_he_chai_qiao' | 'le_bu_si_shu';
+  cardPairs?: ReadonlyArray<readonly [string, string]>;
+  cardGroups?: ReadonlyArray<readonly string[]>;
+  cardGroupTargets?: ReadonlyArray<{
+    cardIds: readonly string[];
+    targetIds: readonly string[];
+    maxTargets: number;
+  }>;
+  virtualCardKind?: PlayableSkillHint['virtualCardKind'];
 }
 
 interface EngineSkillResponseHint {
-  skillId: Extract<ActiveGeneralSkillId, 'wusheng' | 'longdan' | 'qingguo' | 'jijiu'>;
+  skillId: SkillResponseHint['skillId'];
   cardIds: string[];
-  responseKind: 'slash' | 'dodge' | 'peach';
+  responseKind: 'slash' | 'dodge' | 'peach' | 'wine';
+  minCards?: number;
+  maxCards?: number;
+  cardGroups?: ReadonlyArray<readonly string[]>;
 }
 
 type EngineResponseContext = 'slash' | 'duel' | 'barbarian_invasion' | 'arrow_barrage' | 'borrowed_sword';
@@ -307,7 +409,15 @@ type EnginePrompt =
       playerId: string;
       cards: EnginePlayableCardHint[];
       skills?: EnginePlayableSkillHint[];
-      zhangBaSlash?: { allowedCardIds: string[]; targetIds: string[] } | null;
+      zhangBaSlash?: { allowedCardIds: string[]; targetIds: string[]; maxTargets?: number } | null;
+    }
+  | {
+      type: 'guhuo_challenge'; playerId: string; sourceId: string;
+      declaredKind: EngineCardKind; promptId: string; canChallenge: true;
+    }
+  | {
+      type: 'choose_pindian_card'; playerId: string; opponentId: string;
+      skillId: 'tianyi' | 'quhu' | 'lieren' | 'zhiba'; promptId: string; allowedCardIds: string[];
     }
   | {
       type: 'fanjian_suit'; playerId: string; sourceId: string; promptId: string;
@@ -315,11 +425,13 @@ type EnginePrompt =
     }
   | {
       type: 'armor'; playerId: string; armorKind: 'ba_gua_zhen';
+      sourceSkillId?: 'bazhen' | null;
       requiredCount?: number; respondedCount?: number; canPass: true;
     }
   | {
       type: 'nullification'; playerId: string; sourceId: string; effectTargetId: string;
-      cardKind: EngineCardKind; allowedCardIds: string[]; canPass: true;
+      cardKind: EngineCardKind; allowedCardIds: string[]; kanpoCardIds?: string[];
+      longhunCardGroups?: ReadonlyArray<readonly string[]>; canPass: true;
     }
   | {
       type: 'zone_selection'; playerId: string; victimId: string; mode: 'discard' | 'gain';
@@ -333,6 +445,7 @@ type EnginePrompt =
   | { type: 'amazing_grace_selection'; playerId: string; cards: EngineCard[] }
   | {
       type: 'weapon_action'; playerId: string; weaponKind: EngineCardKind; stage: string; victimId: string;
+      promptId?: string;
       allowedCardIds: string[]; minCards: number; maxCards: number; canPass: boolean;
       choices?: Array<{ token: string; zone: 'hand' | 'equipment'; card: EngineCard | null }>;
     }
@@ -373,7 +486,8 @@ type EnginePrompt =
       type: 'standard_skill'; playerId: string; skillId: StandardImplementedSkillId;
       stage: string; promptId: string; canPass: boolean; cards: EngineCard[]; allowedCardIds: string[];
       targetIds: string[]; minCards: number; maxCards: number; minTargets: number; maxTargets: number;
-      choices?: Array<{ token: string; ownerId: string; zone: 'hand' | 'equipment'; card: EngineCard | null }>;
+      options?: readonly string[];
+      choices?: Array<{ token: string; ownerId: string; zone: 'hand' | 'equipment' | 'judgment'; card: EngineCard | null }>;
       cardTargetIds?: Record<string, string[]>;
     }
   | { type: 'discard'; playerId: string; count: number; cardIds: string[] }
@@ -382,6 +496,8 @@ type EnginePrompt =
 
 interface EngineGameView {
   version: 1;
+  revision: number;
+  actionPromptId: string;
   status: 'playing' | 'finished';
   players: EnginePlayer[];
   currentPlayerId: string;
@@ -444,6 +560,13 @@ export function normalizeGameView(
         cardTargetIds: skill.cardTargetIds
           ? Object.fromEntries(Object.entries(skill.cardTargetIds).map(([cardId, targetIds]) => [cardId, [...targetIds]]))
           : undefined,
+        cardPairs: skill.cardPairs?.map(([first, second]) => [first, second] as const),
+        cardGroups: skill.cardGroups?.map((cardIds) => [...cardIds]),
+        cardGroupTargets: skill.cardGroupTargets?.map((group) => ({
+          cardIds: [...group.cardIds],
+          targetIds: [...group.targetIds],
+          maxTargets: group.maxTargets,
+        })),
       }))
     : [];
   const responseCardIds = prompt.type === 'dying'
@@ -457,6 +580,8 @@ export function normalizeGameView(
       : prompt.type === 'lord_dispatch'
         ? prompt.allowedCardIds
       : prompt.type === 'standard_skill'
+        ? prompt.allowedCardIds
+      : prompt.type === 'choose_pindian_card'
         ? prompt.allowedCardIds
       : prompt.type === 'fire_attack_reveal' || prompt.type === 'fire_attack_discard' || prompt.type === 'weapon_action'
         ? prompt.allowedCardIds
@@ -489,7 +614,7 @@ export function normalizeGameView(
       playable:
         prompt.type === 'play'
           ? playableCards.has(card.id)
-          : prompt.type === 'respond' || prompt.type === 'lord_dispatch' || prompt.type === 'dying' || prompt.type === 'nullification' || prompt.type === 'fire_attack_reveal' || prompt.type === 'fire_attack_discard' || prompt.type === 'weapon_action' || prompt.type === 'standard_skill'
+          : prompt.type === 'respond' || prompt.type === 'lord_dispatch' || prompt.type === 'dying' || prompt.type === 'nullification' || prompt.type === 'choose_pindian_card' || prompt.type === 'fire_attack_reveal' || prompt.type === 'fire_attack_discard' || prompt.type === 'weapon_action' || prompt.type === 'standard_skill'
             ? responseCardIds.includes(card.id)
             : prompt.type === 'discard'
               ? prompt.cardIds.includes(card.id)
@@ -500,7 +625,32 @@ export function normalizeGameView(
   };
 
   let normalizedPrompt: ActionPrompt | null = null;
-  if (prompt.type === 'fanjian_suit' && prompt.playerId === selfId) {
+  if (prompt.type === 'guhuo_challenge' && prompt.playerId === selfId) {
+    const sourceName = displayNameById.get(prompt.sourceId) ?? '蛊惑来源';
+    normalizedPrompt = {
+      id: prompt.promptId,
+      promptId: prompt.promptId,
+      kind: 'guhuo-challenge',
+      message: `${sourceName} 声明使用「${cardPresentation(prompt.declaredKind)?.name ?? prompt.declaredKind}」，是否质疑？`,
+      optional: true,
+      sourceId: prompt.sourceId,
+      declaredKind: prompt.declaredKind,
+      canChallenge: prompt.canChallenge,
+    };
+  } else if (prompt.type === 'choose_pindian_card' && prompt.playerId === selfId) {
+    const opponentName = displayNameById.get(prompt.opponentId) ?? '拼点对手';
+    normalizedPrompt = {
+      id: prompt.promptId,
+      promptId: prompt.promptId,
+      kind: 'choose-pindian-card',
+      message: `请选择一张手牌与 ${opponentName} 拼点。`,
+      min: 1,
+      max: 1,
+      allowedCardIds: [...prompt.allowedCardIds],
+      opponentId: prompt.opponentId,
+      skillId: prompt.skillId,
+    };
+  } else if (prompt.type === 'fanjian_suit' && prompt.playerId === selfId) {
     const sourceName = displayNameById.get(prompt.sourceId) ?? '反间来源';
     const suitLabels = { spade: '黑桃 ♠', heart: '红桃 ♥', club: '梅花 ♣', diamond: '方块 ♦' } as const;
     normalizedPrompt = {
@@ -537,6 +687,10 @@ export function normalizeGameView(
         name: '集智',
         message: '是否发动「集智」？在当前普通锦囊结算前摸一张牌。',
       },
+      jilue: {
+        name: '极略',
+        message: '是否消耗一枚「忍」发动本次「极略」子技能？',
+      },
       lianying: {
         name: '连营',
         message: '你失去了最后的手牌，是否发动「连营」摸一张牌？',
@@ -544,6 +698,14 @@ export function normalizeGameView(
       xiaoji: {
         name: '枭姬',
         message: '你失去了装备区里的牌，是否发动「枭姬」摸两张牌？',
+      },
+      buqu: {
+        name: '不屈',
+        message: '你即将进入濒死状态，是否发动「不屈」？亮出不屈牌且点数均不重复时可避免此次濒死。',
+      },
+      niepan: {
+        name: '涅槃',
+        message: '你正处于濒死状态，是否发动「涅槃」？你将弃置区域内的牌，复原状态并摸三张牌。',
       },
     };
     normalizedPrompt = {
@@ -554,9 +716,9 @@ export function normalizeGameView(
       skillId: prompt.skillId,
     };
   } else if (prompt.type === 'standard_skill' && prompt.playerId === selfId) {
-    const skillName: Record<StandardImplementedSkillId, string> = {
+    const skillName: Partial<Record<StandardImplementedSkillId, string>> = {
       jianxiong: '奸雄', tiandu: '天妒', yiji: '遗计', guicai: '鬼才', fankui: '反馈',
-      ganglie: '刚烈', tuxi: '突袭', guanxing: '观星', tieqi: '铁骑', liuli: '流离',
+      ganglie: '刚烈', tuxi: '突袭', guanxing: '观星', tieqi: '铁骑', liuli: '流离', buqu: '不屈', liegong: '烈弓', tianxiang: '天香',
     };
     const stageMessages: Record<string, string> = {
       judgment_retrial: '是否发动「鬼才」？可选择一张手牌替换当前最终判定牌，原判定牌进入弃牌堆。',
@@ -567,8 +729,10 @@ export function normalizeGameView(
       fankui_select: '请选择伤害来源的一张手牌或装备牌，通过「反馈」获得。',
       ganglie_punish: '「刚烈」判定不为红桃：请选择弃置两张手牌；若不弃置，则受到 1 点伤害。',
       liuli_redirect: '可弃置一张手牌或装备牌发动「流离」，将此杀转移给你攻击范围内的合法新目标。',
+      tianxiang_redirect: '可弃置一张服务器判定有效花色为红桃的手牌发动「天香」，将此伤害转移给一名合法的其他角色。',
+      buqu_recovery: '请选择一张「不屈」伤牌移除。',
     };
-    const invokeMessages: Record<StandardImplementedSkillId, string> = {
+    const invokeMessages: Partial<Record<StandardImplementedSkillId, string>> = {
       jianxiong: '是否发动「奸雄」，获得仍在处理区中的伤害实体牌？',
       tiandu: '是否发动「天妒」？',
       yiji: '是否发动本次「遗计」，观看牌堆顶两张牌并分配？',
@@ -579,11 +743,16 @@ export function normalizeGameView(
       guanxing: '是否发动「观星」，观看并重排牌堆顶 X 张牌？',
       tieqi: '是否对当前杀的目标发动「铁骑」？红色判定将令其不能使用或打出闪。',
       liuli: '是否发动「流离」？',
+      buqu: '是否发动「不屈」？',
+      liegong: '是否发动「烈弓」？令当前目标不能使用「闪」响应此「杀」。',
+      tianxiang: '是否发动「天香」？',
     };
     normalizedPrompt = {
       id: prompt.promptId,
       kind: 'standard-skill',
-      message: prompt.stage === 'invoke' ? invokeMessages[prompt.skillId] : stageMessages[prompt.stage] ?? `请处理「${skillName[prompt.skillId]}」。`,
+      message: prompt.stage === 'invoke'
+        ? invokeMessages[prompt.skillId] ?? `是否发动「${skillName[prompt.skillId] ?? prompt.skillId}」？`
+        : stageMessages[prompt.stage] ?? `请处理「${skillName[prompt.skillId] ?? prompt.skillId}」。`,
       optional: prompt.canPass,
       min: prompt.minCards,
       max: prompt.maxCards,
@@ -592,6 +761,7 @@ export function normalizeGameView(
       allowedCardIds: [...prompt.allowedCardIds],
       allowedTargetIds: [...prompt.targetIds],
       cardChoices: prompt.cards.map(mapCard),
+      options: prompt.options ? [...prompt.options] : undefined,
       skillId: prompt.skillId,
       standardStage: prompt.stage,
       cardTargetIds: prompt.cardTargetIds
@@ -602,7 +772,7 @@ export function normalizeGameView(
         ownerId: choice.ownerId,
         zone: choice.zone,
         label: choice.card
-          ? `${displayNameById.get(choice.ownerId) ?? '角色'} · 装备区 · ${choice.card.name ?? cardPresentation(choice.card.kind)?.name ?? choice.card.kind}`
+          ? `${displayNameById.get(choice.ownerId) ?? '角色'} · ${choice.zone === 'hand' ? '手牌' : choice.zone === 'equipment' ? '装备区' : '判定区'} · ${choice.card.name ?? cardPresentation(choice.card.kind)?.name ?? choice.card.kind}`
           : `${displayNameById.get(choice.ownerId) ?? '角色'} · 手牌 ${index + 1}（暗牌）`,
       })),
     };
@@ -629,6 +799,8 @@ export function normalizeGameView(
       max: 1,
       responseKind: 'nullification',
       allowedCardIds: responseCardIds,
+      kanpoCardIds: [...(prompt.kanpoCardIds ?? [])],
+      longhunCardGroups: prompt.longhunCardGroups?.map((cardIds) => [...cardIds]),
     };
   } else if (prompt.type === 'respond' && prompt.playerId === selfId) {
     const responseKind = prompt.responseKind ?? 'dodge';
@@ -650,6 +822,7 @@ export function normalizeGameView(
       skillResponses: (prompt.skillResponses ?? []).map((skill) => ({
         ...skill,
         cardIds: [...skill.cardIds],
+        cardGroups: skill.cardGroups?.map((cardIds) => [...cardIds]),
       })),
       lordSkills: [...(prompt.lordSkills ?? [])],
     };
@@ -684,6 +857,7 @@ export function normalizeGameView(
       skillResponses: (prompt.skillResponses ?? []).map((skill) => ({
         ...skill,
         cardIds: [...skill.cardIds],
+        cardGroups: skill.cardGroups?.map((cardIds) => [...cardIds]),
       })),
     };
   } else if (prompt.type === 'zone_selection' && prompt.playerId === selfId) {
@@ -744,7 +918,8 @@ export function normalizeGameView(
       qilin_discard_horse: `是否发动「${weaponName}」，弃置 ${victimName} 的一匹坐骑？`,
     };
     normalizedPrompt = {
-      id: `weapon-${raw.turn.number}-${prompt.stage}-${prompt.playerId}-${prompt.victimId}`,
+      id: prompt.promptId ?? `weapon-${raw.turn.number}-${prompt.stage}-${prompt.playerId}-${prompt.victimId}`,
+      promptId: prompt.promptId,
       kind: 'weapon-action',
       weaponStage: prompt.stage,
       message: messages[prompt.stage] ?? `是否发动「${weaponName}」？`,
@@ -773,6 +948,8 @@ export function normalizeGameView(
 
   return {
     roomId,
+    revision: raw.revision,
+    actionPromptId: raw.actionPromptId,
     status: raw.status,
     round: raw.turn.number,
     phase: raw.turn.phase,
@@ -810,12 +987,32 @@ export function normalizeGameView(
           ...mapCard(card),
           slot: '判定区',
         })),
+        publicPiles: player.publicPiles
+          ? Object.fromEntries(Object.entries(player.publicPiles).map(([pileId, cards]) => [pileId, cards.map(mapCard)]))
+          : undefined,
+        publicPileCounts: player.publicPileCounts ? { ...player.publicPileCounts } : undefined,
+        privatePiles: player.privatePiles
+          ? Object.fromEntries(Object.entries(player.privatePiles).map(([pileId, cards]) => [pileId, cards.map(mapCard)]))
+          : undefined,
+        publicMarks: player.publicMarks ? { ...player.publicMarks } : undefined,
+        publicEffects: player.publicEffects?.map((effect) => ({ ...effect })),
         chained: player.chained ?? false,
         effectiveSkillIds: [...(player.effectiveSkillIds ?? [])],
+        effectiveSkills: (player.effectiveSkills ?? (player.effectiveSkillIds ?? []).map((id) => ({
+          id,
+          name: generalSkillNames[id] ?? id,
+          description: activeSkillDescriptions[id] ?? '暂无技能说明。',
+        }))).map((skill) => ({ ...skill })),
       };
     }),
     hand: (selfRaw?.hand ?? []).map(mapCard),
-    zhangBaSlash: prompt.type === 'play' ? prompt.zhangBaSlash ?? null : null,
+    zhangBaSlash: prompt.type === 'play' && prompt.zhangBaSlash
+      ? {
+          allowedCardIds: [...prompt.zhangBaSlash.allowedCardIds],
+          targetIds: [...prompt.zhangBaSlash.targetIds],
+          maxTargets: prompt.zhangBaSlash.maxTargets,
+        }
+      : null,
     skills: playableSkills,
     publicCards: (raw.publicCards ?? []).map(mapCard),
     logs: raw.logs.map((log) => ({
@@ -865,5 +1062,34 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
       isBot: Boolean(member.isBot),
     };
   });
-  return { ...summary, members, playerCount: members.length };
+  const ruleConfig = room.ruleConfig ? {
+    ruleSetVersion: room.ruleConfig.ruleSetVersion,
+    enabledGeneralPacks: [...room.ruleConfig.enabledGeneralPacks],
+    generalSelection: { ...room.ruleConfig.generalSelection },
+    deckProfile: room.ruleConfig.deckProfile,
+    maximumReshuffles: room.ruleConfig.maximumReshuffles,
+    lordBonusMinimumPlayers: room.ruleConfig.lordBonusMinimumPlayers,
+    godFactionChoice: room.ruleConfig.godFactionChoice,
+  } satisfies RoomRuleConfig : undefined;
+  const draft = room.draft ? {
+    stage: room.draft.stage,
+    currentPlayerId: room.draft.currentPlayerId ?? null,
+    playerIds: [...room.draft.playerIds],
+    candidates: [...room.draft.candidates],
+    players: room.draft.players.map((player) => ({
+      playerId: player.playerId,
+      role: player.role ?? null,
+      selected: player.selected,
+      generalId: player.generalId,
+      needsFaction: player.needsFaction,
+      faction: player.faction,
+    })),
+  } satisfies GeneralDraftView : undefined;
+  return {
+    ...summary,
+    members,
+    playerCount: members.length,
+    ...(ruleConfig ? { ruleConfig } : {}),
+    ...(draft ? { draft } : {}),
+  };
 }

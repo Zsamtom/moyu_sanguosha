@@ -1,18 +1,42 @@
 import { EventEmitter } from "node:events";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  DEFAULT_COMPLETE_RULE_CONFIG,
   applyAction,
-  createGame,
+  assertGeneralDraftForConfig,
+  autoChooseGeneral,
+  chooseGeneral as chooseDraftGeneral,
+  chooseGodFaction as chooseDraftGodFaction,
+  cloneGeneralDraft,
+  createGameFromDraft,
+  createGeneralDraft,
   forfeitPlayer,
+  getGeneralDraftView,
   getGameView,
+  validateRoomRuleConfig,
+  type FullGeneralId,
   type GameAction,
   type GameSession,
   type GameView,
+  type GeneralDraftState,
+  type GeneralDraftView,
+  type PlayableFaction,
+  type RoomRuleConfig,
 } from "@sanguosha/shared";
 import { HttpError } from "./errors.js";
 import type { PublicUser } from "./users.js";
 
-export type RoomStatus = "waiting" | "playing" | "finished";
+export type RoomStatus = "waiting" | "drafting" | "playing" | "finished";
+
+export const DEFAULT_SERVER_ROOM_RULE_CONFIG: Readonly<RoomRuleConfig> = Object.freeze({
+  ...DEFAULT_COMPLETE_RULE_CONFIG,
+  enabledGeneralPacks: Object.freeze(["standard", "sp"] as const),
+  generalSelection: Object.freeze({
+    mode: "random",
+    candidatesPerPlayer: 1,
+    allowDuplicateGenerals: false,
+  }),
+});
 
 export interface RoomPlayerView {
   id: string;
@@ -37,6 +61,9 @@ export interface RoomSummary {
 
 export interface RoomView extends RoomSummary {
   players: RoomPlayerView[];
+  ruleConfig: RoomRuleConfig;
+  /** Present only in the requesting member's private room view. */
+  draft?: GeneralDraftView;
 }
 
 interface RoomPlayer extends RoomPlayerView {
@@ -52,6 +79,8 @@ interface Room {
   maxPlayers: number;
   createdAt: string;
   players: RoomPlayer[];
+  ruleConfig: RoomRuleConfig;
+  draft?: GeneralDraftState;
   game?: GameSession;
 }
 
@@ -65,6 +94,8 @@ export interface RoomServiceSnapshot {
     maxPlayers: number;
     createdAt: string;
     players: Array<RoomPlayerView & { departed?: boolean }>;
+    ruleConfig: RoomRuleConfig;
+    draft?: GeneralDraftState;
     game?: GameSession;
   }>;
 }
@@ -72,6 +103,13 @@ export interface RoomServiceSnapshot {
 export interface CreateRoomInput {
   name: string;
   maxPlayers?: number;
+  ruleConfig?: RoomRuleConfig;
+}
+
+function cloneRuleConfig(config: RoomRuleConfig): RoomRuleConfig {
+  const clone = structuredClone(config);
+  validateRoomRuleConfig(clone);
+  return clone;
 }
 
 export class RoomService {
@@ -82,6 +120,8 @@ export class RoomService {
   private readonly botRuns = new Set<string>();
   private readonly botContinuations = new Map<string, NodeJS.Immediate>();
   private readonly events = new EventEmitter();
+  private snapshotPersistence?: (snapshot: RoomServiceSnapshot) => Promise<void>;
+  private persistenceBarrier: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly disconnectGraceMs = 90_000,
@@ -95,6 +135,23 @@ export class RoomService {
   onChanged(listener: () => void): () => void {
     this.events.on("changed", listener);
     return () => this.events.off("changed", listener);
+  }
+
+  setSnapshotPersistence(persist: (snapshot: RoomServiceSnapshot) => Promise<void>): void {
+    this.snapshotPersistence = persist;
+  }
+
+  async waitForPersistence(): Promise<void> {
+    while (true) {
+      const barrier = this.persistenceBarrier;
+      try {
+        await barrier;
+      } catch (error) {
+        if (barrier === this.persistenceBarrier) throw error;
+        continue;
+      }
+      if (barrier === this.persistenceBarrier) return;
+    }
   }
 
   exportSnapshot(): RoomServiceSnapshot {
@@ -124,7 +181,16 @@ export class RoomService {
       if (saved.status === "playing" && !saved.game) {
         throw new Error(`Playing room ${saved.id} has no game state`);
       }
+      if (saved.status === "drafting" && (!saved.draft || saved.game)) {
+        throw new Error(`Drafting room ${saved.id} has inconsistent draft state`);
+      }
+      if (saved.status !== "drafting" && saved.draft) {
+        throw new Error(`Non-drafting room ${saved.id} retains a draft`);
+      }
       const room = structuredClone(saved) as Room;
+      room.ruleConfig = cloneRuleConfig(
+        saved.ruleConfig ?? DEFAULT_SERVER_ROOM_RULE_CONFIG,
+      );
       room.players.forEach((player, seat) => {
         player.isBot ??= false;
         player.departed ??= false;
@@ -135,11 +201,23 @@ export class RoomService {
         player.connected = Boolean(player.isBot && !player.departed);
         if (!player.isBot && !player.departed) this.roomByUser.set(player.id, room.id);
       });
+      if (room.status === "drafting") {
+        const draftPlayerIds = room.players.filter((player) => !player.departed).map((player) => player.id);
+        if (room.players.some((player) => player.departed) ||
+            room.draft!.playerIds.length !== draftPlayerIds.length ||
+            room.draft!.playerIds.some((playerId, index) => playerId !== draftPlayerIds[index])) {
+          throw new Error(`Drafting room ${saved.id} roster does not match its draft`);
+        }
+        assertGeneralDraftForConfig(room.draft!, room.ruleConfig);
+        this.commitDraft(room, cloneGeneralDraft(room.draft!));
+      }
       this.rooms.set(room.id, room);
-      if (room.status === "playing") {
+      if (room.status === "drafting" || room.status === "playing") {
         for (const player of room.players) {
           if (!player.isBot && !player.departed) this.scheduleDisconnectResolution(player.id);
         }
+      }
+      if (room.status === "playing") {
         this.runBots(room);
       }
     }
@@ -158,11 +236,22 @@ export class RoomService {
 
   getForUser(userId: string): RoomView | undefined {
     const roomId = this.roomByUser.get(userId);
-    return roomId ? this.get(roomId) : undefined;
+    const room = roomId ? this.rooms.get(roomId) : undefined;
+    return room ? this.toView(room, userId) : undefined;
   }
 
   create(owner: PublicUser, input: CreateRoomInput): RoomView {
     this.assertNotInRoom(owner.id);
+    let ruleConfig: RoomRuleConfig;
+    try {
+      ruleConfig = cloneRuleConfig(input.ruleConfig ?? DEFAULT_SERVER_ROOM_RULE_CONFIG);
+    } catch (error) {
+      throw new HttpError(
+        400,
+        "INVALID_ROOM_RULE_CONFIG",
+        error instanceof Error ? error.message : "房间规则配置无效",
+      );
+    }
     const id = randomUUID();
     const room: Room = {
       id,
@@ -172,16 +261,17 @@ export class RoomService {
       maxPlayers: input.maxPlayers ?? 8,
       createdAt: new Date().toISOString(),
       players: [this.toPlayer(owner, 0)],
+      ruleConfig,
     };
     this.rooms.set(id, room);
     this.roomByUser.set(owner.id, id);
     this.changed();
-    return this.toView(room);
+    return this.toView(room, owner.id);
   }
 
   join(roomId: string, user: PublicUser): RoomView {
     const currentRoomId = this.roomByUser.get(user.id);
-    if (currentRoomId === roomId) return this.requireRoomView(roomId);
+    if (currentRoomId === roomId) return this.requireRoomView(roomId, user.id);
     this.assertNotInRoom(user.id);
     const room = this.requireRoom(roomId);
     if (room.status !== "waiting") {
@@ -195,7 +285,7 @@ export class RoomService {
     room.players.forEach((player) => { player.ready = Boolean(player.isBot); });
     this.roomByUser.set(user.id, room.id);
     this.changed();
-    return this.toView(room);
+    return this.toView(room, user.id);
   }
 
   addBot(roomId: string, ownerId: string): RoomView {
@@ -216,7 +306,7 @@ export class RoomService {
       departed: false,
     });
     this.changed();
-    return this.toView(room);
+    return this.toView(room, ownerId);
   }
 
   removeBot(roomId: string, ownerId: string, botId: string): RoomView {
@@ -228,12 +318,13 @@ export class RoomService {
     room.players.splice(index, 1);
     room.players.forEach((player, seat) => { player.seat = seat; });
     this.changed();
-    return this.toView(room);
+    return this.toView(room, ownerId);
   }
 
   leave(roomId: string, userId: string): void {
     const room = this.requireMember(roomId, userId);
     this.clearDisconnectTimer(userId);
+    if (room.status === "drafting") this.cancelDraft(room);
     if (room.status === "playing") {
       if (!room.game) {
         console.error(`Playing room ${room.id} has no game state; closing it`);
@@ -300,7 +391,7 @@ export class RoomService {
     const player = room.players.find((candidate) => candidate.id === userId)!;
     player.ready = ready;
     this.changed();
-    return this.toView(room);
+    return this.toView(room, userId);
   }
 
   start(roomId: string, userId: string): RoomView {
@@ -321,26 +412,86 @@ export class RoomService {
       throw new HttpError(409, "PLAYERS_NOT_READY", "所有玩家准备后才能开始");
     }
 
-    room.game = createGame({
-      playerIds: room.players.map((player) => player.id),
-      seed: randomBytes(32).toString("hex"),
-    });
-    room.status = "playing";
+    try {
+      const draft = createGeneralDraft({
+        playerIds: room.players.map((player) => player.id),
+        config: room.ruleConfig,
+        rng: { key: randomBytes(32).toString("hex"), counter: 0 },
+      });
+      this.commitDraft(room, draft);
+    } catch (error) {
+      throw new HttpError(
+        409,
+        "INVALID_ROOM_RULE_CONFIG",
+        error instanceof Error ? error.message : "房间规则配置无法开始游戏",
+      );
+    }
     this.runBots(room);
     if (!this.rooms.has(room.id)) {
       throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
     }
     this.changed();
-    return this.toView(room);
+    return this.toView(room, userId);
   }
 
-  applyAction(roomId: string, userId: string, action: GameAction): GameView {
+  chooseGeneral(roomId: string, userId: string, generalId: FullGeneralId): RoomView {
+    const room = this.requireDraftingMember(roomId, userId);
+    const draft = cloneGeneralDraft(room.draft!);
+    try {
+      chooseDraftGeneral(draft, userId, generalId);
+      this.commitDraft(room, draft);
+    } catch (error) {
+      throw new HttpError(
+        409,
+        "INVALID_GENERAL_SELECTION",
+        error instanceof Error ? error.message : "武将选择无效",
+      );
+    }
+    if (room.status === "playing") this.runBots(room);
+    if (!this.rooms.has(room.id)) {
+      throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
+    }
+    this.changed();
+    return this.toView(room, userId);
+  }
+
+  chooseGodFaction(roomId: string, userId: string, faction: PlayableFaction): RoomView {
+    const room = this.requireDraftingMember(roomId, userId);
+    const draft = cloneGeneralDraft(room.draft!);
+    try {
+      chooseDraftGodFaction(draft, userId, faction);
+      this.commitDraft(room, draft);
+    } catch (error) {
+      throw new HttpError(
+        409,
+        "INVALID_GOD_FACTION",
+        error instanceof Error ? error.message : "神武将势力选择无效",
+      );
+    }
+    if (room.status === "playing") this.runBots(room);
+    if (!this.rooms.has(room.id)) {
+      throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
+    }
+    this.changed();
+    return this.toView(room, userId);
+  }
+
+  applyAction(
+    roomId: string,
+    userId: string,
+    input: { expectedRevision: number; expectedPromptId: string; action: GameAction },
+  ): GameView {
     const room = this.requireMember(roomId, userId);
     if (room.status !== "playing" || !room.game) {
       throw new HttpError(409, "GAME_NOT_IN_PROGRESS", "游戏尚未开始或已经结束");
     }
+    const { expectedRevision, expectedPromptId, action } = input;
     if (action.playerId !== userId) {
       throw new HttpError(403, "PLAYER_MISMATCH", "不能替其他玩家执行操作");
+    }
+    const currentView = getGameView(room.game, userId);
+    if (expectedRevision !== currentView.revision || expectedPromptId !== currentView.actionPromptId) {
+      throw new HttpError(409, "STALE_GAME_ACTION", "游戏状态已更新，请基于最新界面重试");
     }
 
     room.game = applyAction(room.game, action);
@@ -372,7 +523,7 @@ export class RoomService {
     if (!player || player.connected === connected) return;
     player.connected = connected;
     this.changed();
-    if (!connected && room?.status === "playing") {
+    if (!connected && (room?.status === "drafting" || room?.status === "playing")) {
       this.scheduleDisconnectResolution(userId);
     }
   }
@@ -401,13 +552,40 @@ export class RoomService {
     };
   }
 
-  private toView(room: Room): RoomView {
+  private toView(room: Room, viewerId?: string): RoomView {
     return {
       ...this.toSummary(room),
       players: room.players
         .filter((player) => !player.departed)
         .map(({ departed: _departed, ...player }) => ({ ...player })),
+      ruleConfig: structuredClone(room.ruleConfig),
+      ...(viewerId && room.draft ? { draft: getGeneralDraftView(room.draft, viewerId) } : {}),
     };
+  }
+
+  private commitDraft(room: Room, draft: GeneralDraftState): void {
+    for (let pass = 0; pass < draft.playerIds.length * 2; pass += 1) {
+      for (const player of room.players) {
+        if (player.isBot && !player.departed) autoChooseGeneral(draft, player.id);
+      }
+    }
+    if (draft.stage !== "complete") {
+      room.status = "drafting";
+      room.draft = draft;
+      room.game = undefined;
+      return;
+    }
+    const game = createGameFromDraft({ draft, config: room.ruleConfig });
+    room.status = "playing";
+    room.draft = undefined;
+    room.game = game;
+  }
+
+  private cancelDraft(room: Room): void {
+    room.status = "waiting";
+    room.draft = undefined;
+    room.game = undefined;
+    for (const player of room.players) player.ready = Boolean(player.isBot);
   }
 
   private toPlayer(user: PublicUser, seat: number): RoomPlayer {
@@ -485,6 +663,7 @@ export class RoomService {
 
   private actionForBot(game: GameSession, bot: RoomPlayer): GameAction {
     const prompt = getGameView(game, bot.id).prompt;
+    const canRevealJudgment = game.deck.length > 0 || game.discardPile.length > 0;
     if (prompt.type === "play") {
       const player = game.players.find((candidate) => candidate.id === bot.id);
       if (!player) throw new Error(`Bot ${bot.id} is absent from the game`);
@@ -554,6 +733,17 @@ export class RoomService {
           targetIds: [...lijianPair],
         };
       }
+      const huangtian = prompt.skills.find((hint) => hint.skillId === "huangtian");
+      const huangtianCard = huangtian ? costCards(huangtian.cardIds, 1)[0] : undefined;
+      if (huangtianCard && huangtian?.targetIds[0]) {
+        return {
+          type: "use_skill",
+          playerId: bot.id,
+          skillId: "huangtian",
+          cardIds: [huangtianCard],
+          targetId: huangtian.targetIds[0],
+        };
+      }
 
       const preferred = prompt.cards.find((hint) => hint.kind === "peach")
         ?? prompt.cards.find((hint) => hint.kind === "ex_nihilo")
@@ -565,6 +755,17 @@ export class RoomService {
           : preferred.targetMode === "up-to-two" || preferred.targetMode === "up-to-three"
             ? { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetIds: preferred.targetIds.slice(0, preferred.targetMode === "up-to-three" ? 3 : 2) }
             : { type: "play_card", playerId: bot.id, cardId: preferred.cardId, targetId: preferred.targetIds[0] };
+      }
+      const lesserYeyan = prompt.skills.find((hint) => hint.skillId === "yeyan" && hint.minCards === 0);
+      const yeyanTargetId = lesserYeyan?.targetIds.find((targetId) =>
+        targetId !== bot.id && game.players.some((candidate) => candidate.id === targetId && candidate.alive));
+      if (yeyanTargetId) {
+        return {
+          type: "use_skill",
+          playerId: bot.id,
+          skillId: "yeyan",
+          allocations: [{ targetId: yeyanTargetId, damage: 1 }],
+        };
       }
       const jijiang = prompt.skills.find((hint) => hint.skillId === "jijiang");
       if (jijiang?.targetIds[0]) {
@@ -605,16 +806,25 @@ export class RoomService {
       }
       return { type: "end_play", playerId: bot.id };
     }
+    if (prompt.type === "guhuo_challenge") {
+      return { type: "resolve_guhuo", playerId: bot.id, promptId: prompt.promptId, challenge: false };
+    }
+    if (prompt.type === "choose_pindian_card") {
+      const cardId = prompt.allowedCardIds[0];
+      if (!cardId) throw new Error("Bot received a Pindian prompt without a legal hand card");
+      return { type: "choose_pindian_card", playerId: bot.id, promptId: prompt.promptId, cardId };
+    }
     if (prompt.type === "respond") {
       const physicalCardId = prompt.responseKind === "slash" ? prompt.slashCardIds[0] : prompt.dodgeCardIds[0];
       if (physicalCardId) return { type: "respond", playerId: bot.id, cardId: physicalCardId };
-      const skillResponse = prompt.skillResponses.find((hint) => hint.cardIds.length > 0);
+      const skillResponse = prompt.skillResponses.find((hint) => (hint.cardGroups?.[0]?.length ?? hint.cardIds.length) > 0);
       if (skillResponse) {
+        const cardIds = skillResponse.cardGroups?.[0] ?? skillResponse.cardIds.slice(0, skillResponse.minCards ?? 1);
         return {
           type: "use_skill",
           playerId: bot.id,
           skillId: skillResponse.skillId,
-          cardIds: [skillResponse.cardIds[0]!],
+          cardIds: [...cardIds],
         };
       }
       const lordSkill = prompt.lordSkills[0];
@@ -634,13 +844,20 @@ export class RoomService {
     if (prompt.type === "dying") {
       const physicalCardId = prompt.allowedCardIds[0];
       if (physicalCardId) return { type: "respond", playerId: bot.id, cardId: physicalCardId };
-      const jijiu = prompt.skillResponses.find((hint) => hint.skillId === "jijiu" && hint.cardIds.length > 0);
-      return jijiu
-        ? { type: "use_skill", playerId: bot.id, skillId: "jijiu", cardIds: [jijiu.cardIds[0]!] }
-        : { type: "respond", playerId: bot.id, cardId: null };
+      const skillResponse = prompt.skillResponses.find((hint) => (hint.cardGroups?.[0]?.length ?? hint.cardIds.length) > 0);
+      if (!skillResponse) return { type: "respond", playerId: bot.id, cardId: null };
+      const cardIds = skillResponse.cardGroups?.[0] ?? skillResponse.cardIds.slice(0, skillResponse.minCards ?? 1);
+      return { type: "use_skill", playerId: bot.id, skillId: skillResponse.skillId, cardIds: [...cardIds] };
     }
     if (prompt.type === "nullification") {
-      return { type: "respond", playerId: bot.id, cardId: prompt.allowedCardIds[0] ?? null };
+      const physicalCardId = prompt.allowedCardIds[0];
+      if (physicalCardId) return { type: "respond", playerId: bot.id, cardId: physicalCardId };
+      const kanpoCardId = prompt.kanpoCardIds[0];
+      if (kanpoCardId) return { type: "use_skill", playerId: bot.id, skillId: "kanpo", cardIds: [kanpoCardId] };
+      const longhunCardIds = prompt.longhunCardGroups?.[0];
+      return longhunCardIds
+        ? { type: "use_skill", playerId: bot.id, skillId: "longhun", cardIds: [...longhunCardIds] }
+        : { type: "respond", playerId: bot.id, cardId: null };
     }
     if (prompt.type === "skill_choice") {
       const player = game.players.find((candidate) => candidate.id === bot.id);
@@ -660,10 +877,12 @@ export class RoomService {
           prompt.skillId === "keji" ||
           prompt.skillId === "yingzi" ||
           prompt.skillId === "biyue" ||
-          prompt.skillId === "luoshen" ||
+          (prompt.skillId === "luoshen" && canRevealJudgment) ||
           prompt.skillId === "jizhi" ||
           prompt.skillId === "lianying" ||
           prompt.skillId === "xiaoji" ||
+          prompt.skillId === "buqu" ||
+          prompt.skillId === "niepan" ||
           canSafelyUseLuoyi,
       };
     }
@@ -679,6 +898,17 @@ export class RoomService {
       if (prompt.skillId === "guanxing" && prompt.stage === "guanxing_reorder") {
         return { ...base, activate: true, topCardIds: prompt.cards.map((card) => card.id), bottomCardIds: [] };
       }
+      if (prompt.skillId === "shelie" && prompt.stage === "shelie_select") {
+        const suits = new Set<string>();
+        const cardIds = prompt.cards
+          .filter((card) => {
+            if (suits.has(card.suit)) return false;
+            suits.add(card.suit);
+            return true;
+          })
+          .map((card) => card.id);
+        return { ...base, activate: true, cardIds };
+      }
       if (prompt.skillId === "tuxi") {
         const targetIds = prompt.targetIds.slice(0, 2);
         const tokens = targetIds.map((targetId) => prompt.choices?.find((choice) => choice.ownerId === targetId)?.token);
@@ -692,6 +922,11 @@ export class RoomService {
           activate: true,
           allocations: prompt.cards.map((card) => ({ cardId: card.id, targetId: bot.id })),
         };
+      }
+      if (prompt.skillId === "buqu" && prompt.stage === "buqu_recovery") {
+        const cardId = prompt.allowedCardIds[0];
+        if (!cardId) throw new Error("Bot received Buqu recovery without a wound choice");
+        return { ...base, activate: true, cardId };
       }
       if (prompt.skillId === "fankui" && prompt.stage === "fankui_select") {
         const choice = prompt.choices?.[0];
@@ -710,7 +945,45 @@ export class RoomService {
           ? { ...base, activate: true, cardId, targetId }
           : { ...base, activate: false };
       }
-      return { ...base, activate: true };
+      if (prompt.skillId === "tianxiang" && prompt.stage === "tianxiang_redirect") {
+        const cardId = prompt.allowedCardIds[0];
+        const targetId = prompt.targetIds[0];
+        return cardId && targetId
+          ? { ...base, activate: true, cardId, targetId }
+          : { ...base, activate: false };
+      }
+      if ((prompt.stage === "invoke" && (prompt.skillId === "liegong" || prompt.skillId === "tieqi")) ||
+          (prompt.skillId === "shelie" && prompt.stage === "shelie_invoke")) {
+        return { ...base, activate: prompt.skillId !== "tieqi" || canRevealJudgment };
+      }
+      if (prompt.skillId === "beige" && prompt.stage === "beige_source_discard") {
+        return { ...base, activate: true, cardIds: prompt.allowedCardIds.slice(0, prompt.minCards) };
+      }
+      if (prompt.canPass) return { ...base, activate: false };
+
+      const choiceTokens = prompt.options?.[0]
+        ? [prompt.options[0]]
+        : prompt.choices?.slice(0, Math.max(1, prompt.minCards)).map((choice) => choice.token);
+      const cardTargetPair = prompt.minCards === 1 && prompt.minTargets === 1
+        ? prompt.allowedCardIds
+          .map((cardId) => ({ cardId, targetId: prompt.cardTargetIds?.[cardId]?.[0] }))
+          .find((choice) => choice.targetId !== undefined)
+        : undefined;
+      const cardIds = prompt.choices || cardTargetPair
+        ? []
+        : prompt.allowedCardIds.slice(0, prompt.minCards);
+      const targetIds = cardTargetPair
+        ? [cardTargetPair.targetId!]
+        : prompt.targetIds.slice(0, prompt.minTargets);
+      return {
+        ...base,
+        activate: true,
+        ...(choiceTokens?.length ? { tokens: choiceTokens } : {}),
+        ...(cardTargetPair
+          ? { cardId: cardTargetPair.cardId }
+          : cardIds.length === 1 ? { cardId: cardIds[0] } : cardIds.length > 1 ? { cardIds } : {}),
+        ...(targetIds.length === 1 ? { targetId: targetIds[0] } : targetIds.length > 1 ? { targetIds } : {}),
+      };
     }
     if (prompt.type === "fanjian_suit") {
       const suit = prompt.suits[0];
@@ -718,16 +991,21 @@ export class RoomService {
       return { type: "choose_fanjian_suit", playerId: bot.id, suit, promptId: prompt.promptId };
     }
     if (prompt.type === "armor") {
-      return { type: "activate_armor", playerId: bot.id, activate: true };
+      return { type: "activate_armor", playerId: bot.id, activate: canRevealJudgment };
     }
     if (prompt.type === "weapon_action") {
+      const base = {
+        type: "resolve_weapon" as const,
+        playerId: bot.id,
+        ...(prompt.promptId ? { promptId: prompt.promptId } : {}),
+      };
       const choice = prompt.choices?.[0];
       const selectedCards = prompt.allowedCardIds.slice(0, prompt.minCards);
       return choice
-        ? { type: "resolve_weapon", playerId: bot.id, activate: true, tokens: [choice.token] }
+        ? { ...base, activate: true, tokens: [choice.token] }
         : prompt.minCards === 0 || selectedCards.length === prompt.minCards
-          ? { type: "resolve_weapon", playerId: bot.id, activate: true, cardIds: selectedCards }
-          : { type: "resolve_weapon", playerId: bot.id, activate: false };
+          ? { ...base, activate: true, cardIds: selectedCards }
+          : { ...base, activate: false };
     }
     if (prompt.type === "discard") {
       return { type: "discard", playerId: bot.id, cardIds: prompt.cardIds.slice(0, prompt.count) };
@@ -791,14 +1069,22 @@ export class RoomService {
     return room;
   }
 
-  private requireRoomView(roomId: string): RoomView {
-    return this.toView(this.requireRoom(roomId));
+  private requireRoomView(roomId: string, viewerId?: string): RoomView {
+    return this.toView(this.requireRoom(roomId), viewerId);
   }
 
   private requireMember(roomId: string, userId: string): Room {
     const room = this.requireRoom(roomId);
     if (!room.players.some((player) => player.id === userId && !player.departed)) {
       throw new HttpError(403, "NOT_ROOM_MEMBER", "你不在该房间中");
+    }
+    return room;
+  }
+
+  private requireDraftingMember(roomId: string, userId: string): Room {
+    const room = this.requireMember(roomId, userId);
+    if (room.status !== "drafting" || !room.draft) {
+      throw new HttpError(409, "GENERAL_DRAFT_NOT_ACTIVE", "当前不在选将阶段");
     }
     return room;
   }
@@ -838,6 +1124,16 @@ export class RoomService {
   }
 
   private changed(): void {
-    this.events.emit("changed");
+    const persist = this.snapshotPersistence;
+    if (!persist) {
+      this.events.emit("changed");
+      return;
+    }
+    const snapshot = this.exportSnapshot();
+    const barrier = Promise.resolve().then(() => persist(snapshot));
+    this.persistenceBarrier = barrier;
+    void barrier.then(() => {
+      if (this.persistenceBarrier === barrier) this.events.emit("changed");
+    }, () => {});
   }
 }

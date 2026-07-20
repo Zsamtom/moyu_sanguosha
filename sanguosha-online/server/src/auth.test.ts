@@ -277,7 +277,7 @@ describe("account allocation and authorization", () => {
     expect(JSON.stringify(users.audits)).not.toContain("new-player-password");
   });
 
-  it("lets admins opt out of forced change and makes reset require it again by default", async () => {
+  it("ignores attempts to bypass the required temporary-password change", async () => {
     const adminAgent = request.agent(app);
     await adminAgent.post("/api/auth/login")
       .send({ username: "admin", password: "admin-password" })
@@ -290,16 +290,16 @@ describe("account allocation and authorization", () => {
         mustChangePassword: false,
       })
       .expect(201);
-    expect(created.body.user.mustChangePassword).toBe(false);
+    expect(created.body.user.mustChangePassword).toBe(true);
 
     const playerAgent = request.agent(app);
     await playerAgent.post("/api/auth/login")
       .send({ username: "trusted_player", password: "trusted-password" })
       .expect(200);
-    await playerAgent.get("/api/rooms").expect(200);
+    expect((await playerAgent.get("/api/rooms").expect(403)).body.error.code).toBe("PASSWORD_CHANGE_REQUIRED");
 
     const reset = await adminAgent.post(`/api/admin/users/${created.body.user.id}/reset-password`)
-      .send({ password: "reset-password" })
+      .send({ password: "reset-password", mustChangePassword: false })
       .expect(200);
     expect(reset.body.user.mustChangePassword).toBe(true);
     await playerAgent.get("/api/auth/me").expect(401);
@@ -338,5 +338,53 @@ describe("account allocation and authorization", () => {
       .expect(200);
     expect(changed.body.user.mustChangePassword).toBe(false);
     await relogged.get("/api/admin/users").expect(200);
+  });
+
+  it("wires draft selections to the authenticated user and rejects injected player ids", async () => {
+    const roomId = "33333333-3333-4333-8333-333333333333";
+    const calls: unknown[][] = [];
+    const draftRooms = {
+      chooseGeneral: (selectedRoomId: string, userId: string, generalId: string) => {
+        calls.push(["general", selectedRoomId, userId, generalId]);
+        return { id: selectedRoomId, marker: "general" };
+      },
+      chooseGodFaction: (selectedRoomId: string, userId: string, faction: string) => {
+        calls.push(["faction", selectedRoomId, userId, faction]);
+        return { id: selectedRoomId, marker: "faction" };
+      },
+      waitForPersistence: async () => {},
+    } as unknown as RoomService;
+    const draftApp = createApplication({
+      config,
+      pool: { query: async () => ({ rows: [{ "?column?": 1 }] }) } as never,
+      sessionMiddleware: session({ secret: config.sessionSecret, resave: false, saveUninitialized: false }),
+      users,
+      rooms: draftRooms,
+      securityEvents: new SecurityEvents(),
+    });
+    const playerAgent = request.agent(draftApp);
+    await playerAgent.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+
+    await playerAgent.post(`/api/rooms/${roomId}/draft/general`)
+      .send({ generalId: "cao_cao", playerId: ADMIN_ID })
+      .expect(400);
+    const general = await playerAgent.post(`/api/rooms/${roomId}/draft/general`)
+      .send({ generalId: "cao_cao" })
+      .expect(200);
+    expect(general.body).toEqual({ room: { id: roomId, marker: "general" } });
+
+    await playerAgent.post(`/api/rooms/${roomId}/draft/god-faction`)
+      .send({ faction: "wu", playerId: ADMIN_ID })
+      .expect(400);
+    const faction = await playerAgent.post(`/api/rooms/${roomId}/draft/god-faction`)
+      .send({ faction: "wu" })
+      .expect(200);
+    expect(faction.body).toEqual({ room: { id: roomId, marker: "faction" } });
+    expect(calls).toEqual([
+      ["general", roomId, PLAYER_ID, "cao_cao"],
+      ["faction", roomId, PLAYER_ID, "wu"],
+    ]);
   });
 });

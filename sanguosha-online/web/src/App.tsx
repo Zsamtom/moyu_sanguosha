@@ -9,8 +9,38 @@ import { LobbyScreen } from './components/LobbyScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { RoomScreen } from './components/RoomScreen';
 import { realtime } from './realtime';
-import type { AuthUser, GameAction, GameLogEntry, RoomDetail, RoomSummary } from './types';
+import type {
+  AuthUser,
+  FullGeneralId,
+  GameAction,
+  GameLogEntry,
+  PlayableFaction,
+  RoomDetail,
+  RoomRuleConfig,
+  RoomSummary,
+} from './types';
 import { normalizeGameView } from './types';
+
+const documentTheme = {
+  token: {
+    colorPrimary: '#111111',
+    colorInfo: '#111111',
+    colorSuccess: '#237a45',
+    colorWarning: '#9a6700',
+    colorError: '#b42318',
+    colorText: '#1f1f1f',
+    colorTextSecondary: '#666666',
+    colorBgContainer: '#ffffff',
+    colorBorder: '#dedede',
+    borderRadius: 6,
+    fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+  },
+  components: {
+    Button: { fontWeight: 500, primaryShadow: 'none' },
+    Table: { headerBg: '#f7f7f7', headerColor: '#3d3d3d' },
+    Modal: { headerBg: '#ffffff', contentBg: '#ffffff' },
+  },
+};
 
 export default function App() {
   const [toast, toastContext] = message.useMessage();
@@ -152,9 +182,9 @@ export default function App() {
     }
   };
 
-  const createRoom = async (name: string, maxPlayers: number) => {
+  const createRoom = async (name: string, maxPlayers: number, ruleConfig: RoomRuleConfig) => {
     try {
-      const created = await api.createRoom(name, maxPlayers);
+      const created = await api.createRoom(name, maxPlayers, ruleConfig);
       setRoom(created);
       setAdminMode(false);
       toast.success('房间已创建');
@@ -191,8 +221,31 @@ export default function App() {
   const startRoom = async () => {
     if (!room) return;
     try {
-      await api.startRoom(room.id);
-      toast.success('游戏开始');
+      const updated = await api.startRoom(room.id);
+      setRoom(updated);
+      toast.success(updated.status === 'drafting' ? '进入选将' : '游戏开始');
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const chooseGeneral = async (generalId: FullGeneralId) => {
+    if (!room) return;
+    try {
+      setRoom(await api.chooseGeneral(room.id, generalId));
+      toast.success('武将已确认');
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const chooseGodFaction = async (faction: PlayableFaction) => {
+    if (!room) return;
+    try {
+      setRoom(await api.chooseGodFaction(room.id, faction));
+      toast.success('势力已确认');
     } catch (error) {
       toast.error(errorMessage(error));
       throw error;
@@ -239,7 +292,6 @@ export default function App() {
     username: string;
     displayName: string;
     password: string;
-    mustChangePassword: boolean;
   }) => {
     try {
       const created = await api.createUser(values);
@@ -262,9 +314,9 @@ export default function App() {
     }
   };
 
-  const resetPassword = async (userId: string, password: string, mustChangePassword: boolean) => {
+  const resetPassword = async (userId: string, password: string) => {
     try {
-      const updated = await api.resetPassword(userId, password, mustChangePassword);
+      const updated = await api.resetPassword(userId, password);
       setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
       if (updated.id === user?.id) {
         toast.success('当前账号密码已重置，请重新登录');
@@ -281,16 +333,16 @@ export default function App() {
   if (booting) {
     return (
       <div className="boot-screen">
-        <span className="boot-seal">杀</span>
+        <span className="boot-seal">01</span>
         <Spin size="large" />
-        <p>正在展开牌局……</p>
+        <p>正在载入工作区……</p>
       </div>
     );
   }
 
   if (!user) {
     return (
-      <ConfigProvider theme={{ token: { colorPrimary: '#7c2428', colorError: '#a61d24', borderRadius: 8 } }}>
+      <ConfigProvider theme={documentTheme}>
         {toastContext}
         <LoginScreen loading={loginLoading} error={loginError} onLogin={login} />
       </ConfigProvider>
@@ -299,7 +351,7 @@ export default function App() {
 
   if (user.mustChangePassword) {
     return (
-      <ConfigProvider theme={{ token: { colorPrimary: '#7c2428', colorError: '#a61d24', borderRadius: 8 } }}>
+      <ConfigProvider theme={documentTheme}>
         {toastContext}
         <RequiredPasswordChangeScreen
           displayName={user.displayName}
@@ -316,24 +368,7 @@ export default function App() {
 
   return (
     <ConfigProvider
-      theme={{
-        token: {
-          colorPrimary: '#7c2428',
-          colorInfo: '#7c2428',
-          colorSuccess: '#4f6c3f',
-          colorWarning: '#ad6800',
-          colorError: '#a61d24',
-          colorText: '#342b25',
-          colorBgContainer: '#fffaf0',
-          borderRadius: 8,
-          fontFamily: '"Noto Serif SC", "Songti SC", "SimSun", serif',
-        },
-        components: {
-          Button: { fontWeight: 600 },
-          Table: { headerBg: '#f3ead9', headerColor: '#5d2525' },
-          Modal: { headerBg: '#fffaf0', contentBg: '#fffaf0' },
-        },
-      }}
+      theme={documentTheme}
     >
       {toastContext}
       <AppShell
@@ -351,7 +386,18 @@ export default function App() {
         {game ? (
           <GameBoard game={game} connected={connected} onAction={sendAction} onExit={leaveRoom} />
         ) : room ? (
-          <RoomScreen room={room} user={user} connected={connected} onReady={setReady} onStart={startRoom} onLeave={leaveRoom} onAddBot={addBot} onRemoveBot={removeBot} />
+          <RoomScreen
+            room={room}
+            user={user}
+            connected={connected}
+            onReady={setReady}
+            onStart={startRoom}
+            onLeave={leaveRoom}
+            onAddBot={addBot}
+            onRemoveBot={removeBot}
+            onChooseGeneral={chooseGeneral}
+            onChooseGodFaction={chooseGodFaction}
+          />
         ) : adminMode && user.role === 'admin' ? (
           <AdminUsersScreen
             currentUser={user}

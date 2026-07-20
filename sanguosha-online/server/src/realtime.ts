@@ -1,11 +1,18 @@
 import type { Server as HttpServer } from "node:http";
-import { GameRuleError, type GameAction, type GameView } from "@sanguosha/shared";
+import { GameRuleError, type GameView } from "@sanguosha/shared";
 import type { RequestHandler, Request } from "express";
 import { Server, type Socket } from "socket.io";
 import { ZodError, z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
-import { createRoomSchema, gameActionSchema, readySchema, roomIdSchema } from "./room-schemas.js";
+import {
+  chooseGeneralPayloadSchema,
+  chooseGodFactionPayloadSchema,
+  createRoomSchema,
+  gameActionPayloadSchema,
+  readySchema,
+  roomIdSchema,
+} from "./room-schemas.js";
 import type { RoomService, RoomSummary, RoomView } from "./rooms.js";
 import type { SecurityEvents } from "./security-events.js";
 import type { PublicUser, UserStore } from "./users.js";
@@ -21,6 +28,8 @@ interface ClientToServerEvents {
   "room:leave": (input: unknown, ack: Ack<Record<string, never>>) => void;
   "room:ready": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
   "room:start": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
+  "room:choose-general": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
+  "room:choose-god-faction": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
   "game:action": (input: unknown, ack: Ack<{ game: GameView }>) => void;
 }
 
@@ -45,7 +54,6 @@ interface SocketData {
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, object, SocketData>;
 const roomIdPayload = z.object({ roomId: roomIdSchema });
 const readyPayload = roomIdPayload.extend({ ready: z.boolean() });
-const actionPayload = z.object({ roomId: roomIdSchema, action: gameActionSchema });
 
 function userChannel(userId: string): string {
   return `user:${userId}`;
@@ -139,48 +147,65 @@ export function attachRealtimeServer(options: {
     const userId = socket.data.user.id;
     void socket.join(userChannel(userId));
     rooms.setConnected(userId, true);
-    socket.emit("rooms:update", rooms.list());
-    const initialState = stateFor(userId);
-    socket.emit("room:update", initialState.room);
-    socket.emit("game:view", initialState.game);
-    socket.emit("state", initialState);
+    void rooms.waitForPersistence().then(() => {
+      if (!socket.connected) return;
+      socket.emit("rooms:update", rooms.list());
+      const initialState = stateFor(userId);
+      socket.emit("room:update", initialState.room);
+      socket.emit("game:view", initialState.game);
+      socket.emit("state", initialState);
+    }).catch((error) => {
+      socket.emit("server:error", errorPayload(error));
+      socket.disconnect(true);
+    });
 
     const sessionCheck = setInterval(() => {
       void verifySocketSession(socket, users).catch(() => socket.disconnect(true));
     }, 60_000);
     sessionCheck.unref();
 
-    socket.on("room:create", (raw, ack) => void withAck(socket, users, ack, async (user) => {
+    socket.on("room:create", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
       const room = rooms.create(user, createRoomSchema.parse(raw));
       return { room };
     }));
 
-    socket.on("room:join", (raw, ack) => void withAck(socket, users, ack, async (user) => {
+    socket.on("room:join", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
       const { roomId } = roomIdPayload.parse(raw);
       return { room: rooms.join(roomId, user) };
     }));
 
-    socket.on("room:leave", (raw, ack) => void withAck(socket, users, ack, async (user) => {
+    socket.on("room:leave", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
       const { roomId } = roomIdPayload.parse(raw);
       rooms.leave(roomId, user.id);
+      await rooms.waitForPersistence();
       io.to(userChannel(user.id)).emit("room:update", null);
       io.to(userChannel(user.id)).emit("game:view", null);
       return {};
     }));
 
-    socket.on("room:ready", (raw, ack) => void withAck(socket, users, ack, async (user) => {
+    socket.on("room:ready", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
       const { roomId, ready } = readyPayload.parse(raw);
       return { room: rooms.setReady(roomId, user.id, ready) };
     }));
 
-    socket.on("room:start", (raw, ack) => void withAck(socket, users, ack, async (user) => {
+    socket.on("room:start", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
       const { roomId } = roomIdPayload.parse(raw);
       return { room: rooms.start(roomId, user.id) };
     }));
 
-    socket.on("game:action", (raw, ack) => void withAck(socket, users, ack, async (user) => {
-      const { roomId, action } = actionPayload.parse(raw);
-      return { game: rooms.applyAction(roomId, user.id, action as GameAction) };
+    socket.on("room:choose-general", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
+      const { roomId, generalId } = chooseGeneralPayloadSchema.parse(raw);
+      return { room: rooms.chooseGeneral(roomId, user.id, generalId) };
+    }));
+
+    socket.on("room:choose-god-faction", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
+      const { roomId, faction } = chooseGodFactionPayloadSchema.parse(raw);
+      return { room: rooms.chooseGodFaction(roomId, user.id, faction) };
+    }));
+
+    socket.on("game:action", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
+      const { roomId, ...input } = gameActionPayloadSchema.parse(raw);
+      return { game: rooms.applyAction(roomId, user.id, input) };
     }));
 
     socket.on("disconnect", async () => {
@@ -196,12 +221,14 @@ export function attachRealtimeServer(options: {
 async function withAck<T>(
   socket: GameSocket,
   users: UserStore,
+  rooms: RoomService,
   ack: Ack<T> | undefined,
   operation: (user: PublicUser) => Promise<T>,
 ): Promise<void> {
   try {
     const user = await verifySocketSession(socket, users);
     const data = await operation(user);
+    await rooms.waitForPersistence();
     ack?.({ ok: true, data });
   } catch (error) {
     const payload = errorPayload(error);

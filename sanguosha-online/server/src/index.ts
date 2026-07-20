@@ -51,11 +51,8 @@ async function main(): Promise<void> {
       pool,
       (error) => console.error("Failed to persist room state; retry scheduled", error),
     );
-    const persistRooms = (): void => {
-      roomPersistence.enqueue(rooms.exportSnapshot());
-    };
-    const stopRoomPersistence = rooms.onChanged(persistRooms);
-    persistRooms();
+    rooms.setSnapshotPersistence((snapshot) => roomPersistence.enqueue(snapshot));
+    await roomPersistence.enqueue(rooms.exportSnapshot());
     const securityEvents = new SecurityEvents();
     const sessionMiddleware = createSessionMiddleware(config, pool);
     const app = createApplication({ config, pool, sessionMiddleware, users, rooms, securityEvents });
@@ -90,7 +87,6 @@ async function main(): Promise<void> {
       if (httpServer.listening) {
         await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       }
-      stopRoomPersistence();
       await roomPersistence.flush(rooms.exportSnapshot());
       await instanceLock?.query("SELECT pg_advisory_unlock($1)", [1_396_789_831]);
       instanceLock?.release();

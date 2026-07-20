@@ -1,5 +1,7 @@
 # Java 规则迁移到 TypeScript 的盘点与路线图
 
+> 历史说明：本文保留迁移过程中的阶段性盘点，部分“尚未接入”状态已过时。当前发布状态、原版差异和验收边界请以 [原版规则差异核查](./RULE_AUDIT.md) 及 `shared/src/skills/live-coverage.ts` 为准。
+
 > 盘点日期：2026-07-11；覆盖状态更新：2026-07-15  
 > 原始实现：`../sanguosha-master`（上游：[wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)）  
 > 当前实现：本仓库 `shared`、`server`、`web`  

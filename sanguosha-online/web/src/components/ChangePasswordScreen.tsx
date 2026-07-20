@@ -96,10 +96,10 @@ export function RequiredPasswordChangeScreen({
       <section className="login-intro" aria-labelledby="password-change-title">
         <div className="login-intro__content">
           <Brand />
-          <p className="login-eyebrow">账号安全 · 首次登录</p>
-          <h1 id="password-change-title">先换新钥，<br />再赴牌局。</h1>
+          <p className="login-eyebrow">Account security</p>
+          <h1 id="password-change-title">更新访问凭据。</h1>
           <p className="login-description">
-            {displayName}，当前使用的是管理员分配或重置的临时密码。修改完成前，房间大厅与实时牌局不会开放。
+            {displayName}，当前使用的是管理员分配或重置的临时密码。完成修改前，工作区不会开放。
           </p>
         </div>
       </section>
@@ -107,7 +107,7 @@ export function RequiredPasswordChangeScreen({
       <section className="login-panel" aria-label="修改初始密码">
         <div className="paper-card login-card password-change-card">
           <div className="login-card__heading">
-            <span className="section-kicker">必须完成</span>
+            <span className="section-kicker">Required action</span>
             <h2>设置你的新密码</h2>
             <p>新密码仅由你掌握，管理员和页面都不会显示或保存明文。</p>
           </div>
@@ -115,9 +115,9 @@ export function RequiredPasswordChangeScreen({
             className="login-alert"
             type="warning"
             showIcon
-            message="完成改密后会自动进入房间大厅"
+            message="完成改密后会自动进入工作区"
           />
-          <PasswordForm loading={loading} error={error} submitText="保存并进入大厅" onSubmit={onChangePassword} />
+          <PasswordForm loading={loading} error={error} submitText="保存并进入工作区" onSubmit={onChangePassword} />
           <Space className="password-change-actions">
             <Button type="link" onClick={onLogout}>退出当前账号</Button>
           </Space>

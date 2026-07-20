@@ -26,6 +26,7 @@ export const generalSkillNames: Record<ActiveGeneralSkillId | SkillChoiceId | St
   fanjian: '反间',
   lijian: '离间',
   jijiang: '激将',
+  huangtian: '黄天',
   luoyi: '裸衣',
   keji: '克己',
   yingzi: '英姿',
@@ -34,6 +35,7 @@ export const generalSkillNames: Record<ActiveGeneralSkillId | SkillChoiceId | St
   jizhi: '集智',
   lianying: '连营',
   xiaoji: '枭姬',
+  niepan: '涅槃',
   jianxiong: '奸雄',
   tiandu: '天妒',
   yiji: '遗计',
@@ -44,6 +46,96 @@ export const generalSkillNames: Record<ActiveGeneralSkillId | SkillChoiceId | St
   guanxing: '观星',
   tieqi: '铁骑',
   liuli: '流离',
+  buqu: '不屈',
+  liegong: '烈弓',
+  tianxiang: '天香',
+  hujia: '护驾',
+  qicai: '奇才',
+  mashu: '马术',
+  paoxiao: '咆哮',
+  kongcheng: '空城',
+  qianxun: '谦逊',
+  jiuyuan: '救援',
+  wushuang: '无双',
+  yongsi: '庸肆',
+  weidi: '伪帝',
+  jushou: '据守',
+  kuanggu: '狂骨',
+  shensu: '神速',
+  hongyan: '红颜',
+  guhuo: '蛊惑',
+  leiji: '雷击',
+  guidao: '鬼道',
+  qiangxi: '强袭',
+  mengjin: '猛进',
+  lianhuan: '连环',
+  tianyi: '天义',
+  bazhen: '八阵',
+  huoji: '火计',
+  kanpo: '看破',
+  quhu: '驱虎',
+  jieming: '节命',
+  shuangxiong: '双雄',
+  luanji: '乱击',
+  xueyi: '血裔',
+  xingshang: '行殇',
+  fangzhu: '放逐',
+  songwei: '颂威',
+  jiuchi: '酒池',
+  roulin: '肉林',
+  benghuai: '崩坏',
+  baonue: '暴虐',
+  wansha: '完杀',
+  luanwu: '乱武',
+  weimu: '帷幕',
+  haoshi: '好施',
+  dimeng: '缔盟',
+  huoshou: '祸首',
+  zaiqi: '再起',
+  yinghun: '英魂',
+  duanliang: '断粮',
+  juxiang: '巨象',
+  lieren: '烈刃',
+  beige: '悲歌',
+  duanchang: '断肠',
+  tuntian: '屯田',
+  zaoxian: '凿险',
+  jixi: '急袭',
+  tiaoxin: '挑衅',
+  zhiji: '志继',
+  xiangle: '享乐',
+  fangquan: '放权',
+  ruoyu: '若愚',
+  jiang: '激昂',
+  yingyang: '鹰扬',
+  hunzi: '魂姿',
+  zhiba: '制霸',
+  qiaobian: '巧变',
+  zhijian: '直谏',
+  guzheng: '固政',
+  huashen: '化身',
+  xinsheng: '新生',
+  guixin: '归心',
+  feiying: '飞影',
+  wushen: '武神',
+  wuhun: '武魂',
+  kuangbao: '狂暴',
+  wumou: '无谋',
+  wuqian: '无前',
+  shenfen: '神愤',
+  shelie: '涉猎',
+  gongxin: '攻心',
+  renjie: '忍戒',
+  baiyin: '拜印',
+  jilue: '极略',
+  lianpo: '连破',
+  juejing: '绝境',
+  longhun: '龙魂',
+  qinyin: '琴音',
+  yeyan: '业炎',
+  qixing: '七星',
+  kuangfeng: '狂风',
+  dawu: '大雾',
 };
 
 export const activeSkillDescriptions: Record<ActiveGeneralSkillId, string> = {
@@ -61,12 +153,43 @@ export const activeSkillDescriptions: Record<ActiveGeneralSkillId, string> = {
   fanjian: '出牌阶段限一次：令一名其他角色先声明花色，再随机获得并公开你的一张手牌；花色不同则其受到你造成的 1 点伤害。',
   lijian: '出牌阶段限一次：弃置一张牌，依次选择两名其他男性角色，令前者视为对后者使用不可被无懈的「决斗」。',
   jijiang: '主公技：依次请求其他蜀势力角色打出一张实体「杀」，视为由你使用或打出。',
+  huangtian: '出牌阶段限一次：将一张手牌中的「闪」或「闪电」交给拥有「黄天」的主公。',
+  wuqian: '移去 2 枚狂暴标记，本回合获得「无双」并使目标防具无效。',
+  shenfen: '移去 6 枚狂暴标记，对所有其他角色依次结算伤害与弃牌，然后将武将牌翻面。',
+  yeyan: '选择小业炎或支付四种花色发动大业炎，并按当前提示分配火焰伤害。',
+  longhun: '按当前体力值将同花色牌转化为对应的基本牌使用或打出。',
+  gongxin: '观看一名其他角色的手牌，并处理其中一张红桃牌。',
+  jiuchi: '将一张黑桃手牌当「酒」使用。',
+  duanliang: '将一张黑色基本牌或装备牌当「兵粮寸断」使用。',
+  jixi: '将一张田牌当「顺手牵羊」使用。',
+  tiaoxin: '令攻击范围内的一名角色选择对你使用「杀」，否则弃置其一张牌。',
+  zhiba: '与拥有「制霸」的吴势力主公拼点。',
+  zhijian: '将一张装备牌置入其他角色的装备区，然后摸一张牌。',
+  luanwu: '限定技：令所有其他角色依次使用「杀」或失去 1 点体力。',
+  dimeng: '弃置等同两名角色手牌数差值的牌，交换这两名角色的手牌。',
+  qiangxi: '弃置一张武器牌或失去 1 点体力，对攻击范围内的一名其他角色造成 1 点伤害。',
+  tianyi: '与一名其他角色拼点；胜出后强化本回合使用「杀」的次数与目标。',
+  quhu: '与一名体力值更高的角色拼点，并按拼点结果结算伤害。',
+  wushen: '将红桃手牌当「杀」使用或打出，且使用时无距离限制。',
+  shuangxiong: '将与本回合双雄判定颜色相反的一张手牌当「决斗」使用。',
+  lianhuan: '将一张梅花手牌当「铁索连环」使用或重铸。',
+  huoji: '将一张红色手牌当「火攻」使用。',
+  luanji: '将两张同花色手牌当「万箭齐发」使用。',
+  jilue: '移去一枚忍戒标记，按当前阶段发动一种「极略」技能。',
 };
+
+type UseSkillAction = Extract<GameAction, { type: 'use_skill' }>;
+type SkillDamageAllocation = NonNullable<UseSkillAction['allocations']>[number];
+
+function sameSelection(selectedIds: readonly string[], allowedIds: readonly string[]): boolean {
+  return selectedIds.length === allowedIds.length && selectedIds.every((id) => allowedIds.includes(id));
+}
 
 export function canSubmitSkillUse(
   skill: PlayableSkillHint | undefined,
   selectedCardIds: readonly string[],
   selectedTargetIds: readonly string[],
+  allocations: readonly SkillDamageAllocation[] = [],
 ): boolean {
   if (!skill) return false;
   if (new Set(selectedCardIds).size !== selectedCardIds.length || new Set(selectedTargetIds).size !== selectedTargetIds.length) {
@@ -74,12 +197,34 @@ export function canSubmitSkillUse(
   }
   if (selectedCardIds.length < skill.minCards || selectedCardIds.length > skill.maxCards) return false;
   if (!selectedCardIds.every((cardId) => skill.cardIds.includes(cardId))) return false;
+  if (skill.cardGroups && !skill.cardGroups.some((group) => sameSelection(selectedCardIds, group))) return false;
+  if (skill.cardPairs && !skill.cardPairs.some((pair) => sameSelection(selectedCardIds, pair))) return false;
 
-  const targetIds = selectedCardIds.length === 1 && skill.cardTargetIds?.[selectedCardIds[0]!]
+  if (skill.skillId === 'yeyan') {
+    if (allocations.length < 1 || allocations.length > 3 || new Set(allocations.map(({ targetId }) => targetId)).size !== allocations.length) {
+      return false;
+    }
+    if (allocations.some(({ targetId, damage }) =>
+      !skill.targetIds.includes(targetId) || !Number.isInteger(damage) || damage < 1)) return false;
+    const totalDamage = allocations.reduce((sum, { damage }) => sum + damage, 0);
+    if (totalDamage > 3) return false;
+    if (!sameSelection(selectedTargetIds, allocations.map(({ targetId }) => targetId))) return false;
+    if (selectedCardIds.length === 0
+      ? allocations.some(({ damage }) => damage !== 1)
+      : allocations.every(({ damage }) => damage === 1)) {
+      return false;
+    }
+  } else if (allocations.length > 0) {
+    return false;
+  }
+
+  const groupTargets = skill.cardGroupTargets?.find((group) => sameSelection(selectedCardIds, group.cardIds));
+  if (skill.cardGroupTargets && !groupTargets) return false;
+  const targetIds = groupTargets?.targetIds ?? (selectedCardIds.length === 1 && skill.cardTargetIds?.[selectedCardIds[0]!]
     ? skill.cardTargetIds[selectedCardIds[0]!]!
-    : skill.targetIds;
+    : skill.targetIds);
   if (skill.targetMode === 'none' || skill.targetMode === 'self') return selectedTargetIds.length === 0;
-  if (skill.targetMode === 'single-other') {
+  if (skill.targetMode === 'single-other' || skill.targetMode === 'single-any') {
     return selectedTargetIds.length === 1 && targetIds.includes(selectedTargetIds[0]!);
   }
   if (skill.targetMode === 'ordered-two') {
@@ -87,8 +232,8 @@ export function canSubmitSkillUse(
       skill.targetPairs?.some(([first, second]) => first === selectedTargetIds[0] && second === selectedTargetIds[1])
     );
   }
-  const max = skill.targetMode === 'up-to-three' ? 3 : 2;
-  const min = skill.targetMode === 'up-to-two' ? 0 : 1;
+  const max = groupTargets?.maxTargets ?? (skill.targetMode === 'up-to-four' ? 4 : skill.targetMode === 'up-to-three' ? 3 : 2);
+  const min = skill.targetMode === 'up-to-two' && skill.virtualCardKind === 'iron_chain' ? 0 : 1;
   return selectedTargetIds.length >= min && selectedTargetIds.length <= max &&
     selectedTargetIds.every((targetId) => targetIds.includes(targetId));
 }
@@ -97,12 +242,30 @@ export function selectableResponseSkills(skillResponses: readonly SkillResponseH
   return skillResponses.map((skill) => ({
     ...skill,
     cardIds: [...skill.cardIds],
-    minCards: 1,
-    maxCards: 1,
+    minCards: skill.minCards ?? 1,
+    maxCards: skill.maxCards ?? 1,
+    cardGroups: skill.cardGroups?.map((group) => [...group]),
     targetMode: 'none',
     targetIds: [],
-    virtualCardKind: skill.responseKind === 'slash' ? 'slash' : undefined,
+    virtualCardKind: skill.responseKind === 'slash' || skill.responseKind === 'peach' || skill.responseKind === 'wine'
+      ? skill.responseKind
+      : undefined,
   }));
+}
+
+export function skillVariantKey(skill: PlayableSkillHint): string {
+  return [skill.skillId, skill.virtualCardKind ?? 'direct', skill.minCards, skill.maxCards, skill.targetMode].join(':');
+}
+
+export function findSkillVariant(
+  skills: readonly PlayableSkillHint[],
+  skillId: ActiveGeneralSkillId | undefined,
+  selectedCardIds: readonly string[],
+  selectedTargetIds: readonly string[],
+  allocations: readonly SkillDamageAllocation[] = [],
+): PlayableSkillHint | undefined {
+  return skills.find((skill) =>
+    skill.skillId === skillId && canSubmitSkillUse(skill, selectedCardIds, selectedTargetIds, allocations));
 }
 
 export function createUseSkillAction(
@@ -110,9 +273,10 @@ export function createUseSkillAction(
   skill: PlayableSkillHint,
   selectedCardIds: readonly string[],
   selectedTargetIds: readonly string[],
+  allocations: readonly SkillDamageAllocation[] = [],
 ): GameAction {
-  if (!canSubmitSkillUse(skill, selectedCardIds, selectedTargetIds)) {
-    throw new Error(`技能「${generalSkillNames[skill.skillId]}」的牌或目标选择不合法。`);
+  if (!canSubmitSkillUse(skill, selectedCardIds, selectedTargetIds, allocations)) {
+    throw new Error(`技能「${generalSkillNames[skill.skillId] ?? skill.skillId}」的牌或目标选择不合法。`);
   }
   if (skill.skillId === 'jijiang') {
     return {
@@ -120,6 +284,16 @@ export function createUseSkillAction(
       playerId,
       skillId: 'jijiang',
       targetId: selectedTargetIds[0]!,
+      ...(selectedTargetIds.length > 1 ? { targetIds: [...selectedTargetIds] } : {}),
+    };
+  }
+  if (skill.skillId === 'yeyan') {
+    return {
+      type: 'use_skill',
+      playerId,
+      skillId: 'yeyan',
+      ...(selectedCardIds.length > 0 ? { cardIds: [...selectedCardIds] } : {}),
+      allocations: allocations.map((allocation) => ({ ...allocation })),
     };
   }
   return {
@@ -127,10 +301,139 @@ export function createUseSkillAction(
     playerId,
     skillId: skill.skillId,
     ...(selectedCardIds.length > 0 ? { cardIds: [...selectedCardIds] } : {}),
-    ...(skill.targetMode === 'single-other'
+    ...(skill.targetMode === 'single-other' || skill.targetMode === 'single-any'
       ? { targetId: selectedTargetIds[0]! }
       : selectedTargetIds.length > 0 ? { targetIds: [...selectedTargetIds] } : {}),
   };
+}
+
+export function createZhangBaSlashAction(
+  playerId: string,
+  cardIds: readonly string[],
+  targetIds: readonly string[],
+  maxTargets = 1,
+): GameAction {
+  if (!Number.isInteger(maxTargets) || maxTargets < 1 || maxTargets > 4 ||
+      cardIds.length !== 2 || new Set(cardIds).size !== 2 || targetIds.length < 1 ||
+      targetIds.length > maxTargets || new Set(targetIds).size !== targetIds.length) {
+    throw new Error('丈八蛇矛的费用牌或目标选择不合法。');
+  }
+  return {
+    type: 'use_zhang_ba_slash',
+    playerId,
+    cardIds: [...cardIds],
+    targetId: targetIds[0]!,
+    ...(targetIds.length > 1 ? { targetIds: [...targetIds] } : {}),
+  };
+}
+
+type StandardSkillAction = Extract<GameAction, { type: 'resolve_standard_skill' }>;
+type StandardSkillPrompt = ActionPrompt;
+
+export interface StandardSkillSelection {
+  activate?: boolean;
+  cardId?: string;
+  cardIds?: readonly string[];
+  targetId?: string;
+  targetIds?: readonly string[];
+  tokens?: readonly string[];
+  topCardIds?: readonly string[];
+  bottomCardIds?: readonly string[];
+  allocations?: readonly { cardId: string; targetId: string }[];
+  viewAsSkillId?: StandardSkillAction['viewAsSkillId'];
+}
+
+export function createStandardSkillAction(
+  playerId: string,
+  prompt: StandardSkillPrompt,
+  selection: StandardSkillSelection = {},
+): StandardSkillAction {
+  if (prompt.kind !== 'standard-skill') throw new Error('当前提示不是标准技能提示。');
+  const activate = selection.activate ?? false;
+  const payloadKeys = Object.keys(selection).filter((key) => key !== 'activate');
+  if (!activate) {
+    if (prompt.optional === false || payloadKeys.length > 0) throw new Error('当前技能必须完成选择后提交。');
+    return { type: 'resolve_standard_skill', playerId, promptId: prompt.id, activate: false };
+  }
+  if (selection.cardId && selection.cardIds) throw new Error('不能同时提交单张牌和多张牌。');
+  if (selection.targetId && selection.targetIds) throw new Error('不能同时提交单个目标和多个目标。');
+
+  const allocations = selection.allocations ?? [];
+  if (allocations.length > 0 && (selection.cardId || selection.cardIds || selection.targetId || selection.targetIds)) {
+    throw new Error('技能分配不能与普通牌或目标字段混用。');
+  }
+  if (new Set(allocations.map(({ cardId }) => cardId)).size !== allocations.length ||
+      allocations.some(({ cardId, targetId }) =>
+        !prompt.allowedCardIds?.includes(cardId) || !prompt.allowedTargetIds?.includes(targetId))) {
+    throw new Error('技能分配不合法。');
+  }
+  const cardIds = allocations.length > 0
+    ? allocations.map(({ cardId }) => cardId)
+    : selection.cardIds ?? (selection.cardId ? [selection.cardId] : []);
+  const targetIds = allocations.length > 0
+    ? [...new Set(allocations.map(({ targetId }) => targetId))]
+    : selection.targetIds ?? (selection.targetId ? [selection.targetId] : []);
+  const tokens = selection.tokens ?? [];
+  const zoneTokenSet = new Set(prompt.zoneChoices?.map(({ token }) => token) ?? []);
+  const optionTokenSet = new Set(prompt.options ?? []);
+  const zoneTokens = tokens.filter((token) => zoneTokenSet.has(token));
+  const optionTokens = tokens.filter((token) => optionTokenSet.has(token));
+  const allowedTokens = new Set([...zoneTokenSet, ...optionTokenSet]);
+  if (new Set(tokens).size !== tokens.length || tokens.some((token) => !allowedTokens.has(token)) ||
+      (prompt.options?.length && optionTokens.length !== 1) ||
+      (zoneTokens.length > 0 && cardIds.length > 0)) {
+    throw new Error('技能选项不合法。');
+  }
+  const minCards = prompt.min ?? 0;
+  const maxCards = prompt.max ?? minCards;
+  const minTargets = prompt.minTargets ?? 0;
+  const maxTargets = prompt.maxTargets ?? minTargets;
+  const selectedCardCount = zoneTokens.length > 0 ? zoneTokens.length : cardIds.length;
+  if (new Set(cardIds).size !== cardIds.length || selectedCardCount < minCards || selectedCardCount > maxCards ||
+      cardIds.some((id) => !prompt.allowedCardIds?.includes(id))) throw new Error('技能牌选择不合法。');
+  if (new Set(targetIds).size !== targetIds.length || targetIds.length < minTargets || targetIds.length > maxTargets ||
+      targetIds.some((id) => !prompt.allowedTargetIds?.includes(id))) throw new Error('技能目标选择不合法。');
+  if (prompt.cardTargetIds && (allocations.length > 0
+    ? allocations.some(({ cardId, targetId }) => !prompt.cardTargetIds?.[cardId]?.includes(targetId))
+    : cardIds.some((cardId) => targetIds.some((targetId) => !prompt.cardTargetIds?.[cardId]?.includes(targetId))))) {
+    throw new Error('技能牌与目标配对不合法。');
+  }
+
+  const reorderedCardIds = [...(selection.topCardIds ?? []), ...(selection.bottomCardIds ?? [])];
+  if (new Set(reorderedCardIds).size !== reorderedCardIds.length ||
+      reorderedCardIds.some((cardId) => !prompt.allowedCardIds?.includes(cardId)) ||
+      (prompt.standardStage === 'guanxing_reorder' && !sameSelection(reorderedCardIds, prompt.allowedCardIds ?? []))) {
+    throw new Error('技能牌序不合法。');
+  }
+
+  return {
+    type: 'resolve_standard_skill',
+    playerId,
+    promptId: prompt.id,
+    activate: true,
+    ...(selection.cardId ? { cardId: selection.cardId } : {}),
+    ...(selection.cardIds ? { cardIds: [...selection.cardIds] } : {}),
+    ...(selection.targetId ? { targetId: selection.targetId } : {}),
+    ...(selection.targetIds ? { targetIds: [...selection.targetIds] } : {}),
+    ...(selection.tokens ? { tokens: [...selection.tokens] } : {}),
+    ...(selection.topCardIds ? { topCardIds: [...selection.topCardIds] } : {}),
+    ...(selection.bottomCardIds ? { bottomCardIds: [...selection.bottomCardIds] } : {}),
+    ...(selection.allocations ? { allocations: selection.allocations.map((allocation) => ({ ...allocation })) } : {}),
+    ...(selection.viewAsSkillId ? { viewAsSkillId: selection.viewAsSkillId } : {}),
+  };
+}
+
+export function canSubmitStandardSkill(
+  playerId: string,
+  prompt: StandardSkillPrompt,
+  selection: StandardSkillSelection = {},
+): boolean {
+  try {
+    createStandardSkillAction(playerId, prompt, selection);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getRoomStartBlockReason(room: RoomDetail, connected: boolean): string | undefined {
@@ -148,7 +451,8 @@ export const surrenderCopy = {
 } as const;
 
 export function cardRequiresTarget(card: GameCard): boolean {
-  if (card.targetMode) return card.targetMode === 'single-other' || card.targetMode === 'up-to-two' || card.targetMode === 'up-to-three' || card.targetMode === 'ordered-two';
+  if (card.targetMode) return card.targetMode === 'single-other' || card.targetMode === 'single-any' ||
+    card.targetMode === 'up-to-two' || card.targetMode === 'up-to-three' || card.targetMode === 'up-to-four' || card.targetMode === 'ordered-two';
   if (!card.kind || !isStandardCardKind(card.kind)) return Boolean(card.allowedTargetIds?.length);
   return cardPresentation(card.kind)?.targetMode === 'single-other';
 }
@@ -160,8 +464,9 @@ export function canSubmitCardPlay(card: GameCard | undefined, selectedTargetIds:
   if (card.targetMode === 'up-to-two') {
     return selectedTargetIds.length <= 2 && selectedTargetIds.every((id) => !card.allowedTargetIds || card.allowedTargetIds.includes(id));
   }
-  if (card.targetMode === 'up-to-three') {
-    return selectedTargetIds.length >= 1 && selectedTargetIds.length <= 3 && selectedTargetIds.every((id) => !card.allowedTargetIds || card.allowedTargetIds.includes(id));
+  if (card.targetMode === 'up-to-three' || card.targetMode === 'up-to-four') {
+    const max = card.targetMode === 'up-to-four' ? 4 : 3;
+    return selectedTargetIds.length >= 1 && selectedTargetIds.length <= max && selectedTargetIds.every((id) => !card.allowedTargetIds || card.allowedTargetIds.includes(id));
   }
   if (card.targetMode === 'ordered-two') {
     if (selectedTargetIds.length !== 2) return false;
@@ -175,6 +480,7 @@ export function cardPlayButtonLabel(card: GameCard | undefined): string {
   if (!card) return '使用此牌';
   if (card.targetMode === 'up-to-two') return `使用／重铸「${card.name}」`;
   if (card.targetMode === 'up-to-three') return `对至多三名目标使用「${card.name}」`;
+  if (card.targetMode === 'up-to-four') return `对至多四名目标使用「${card.name}」`;
   if (card.targetMode === 'ordered-two') return `按顺序指定目标并使用「${card.name}」`;
   return cardRequiresTarget(card) ? `对目标使用「${card.name}」` : `使用「${card.name}」`;
 }

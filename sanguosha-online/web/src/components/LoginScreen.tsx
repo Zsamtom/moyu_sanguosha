@@ -18,15 +18,15 @@ export function LoginScreen({ loading, error, onLogin }: LoginScreenProps) {
       <section className="login-intro" aria-labelledby="login-title">
         <div className="login-intro__content">
           <Brand />
-          <p className="login-eyebrow">谋略 · 判断 · 配合</p>
-          <h1 id="login-title">一席纸上风云，<br />等你入局。</h1>
+          <p className="login-eyebrow">Internal workspace</p>
+          <h1 id="login-title">项目文档与<br />实时协作。</h1>
           <p className="login-description">
-            创建房间，邀请同伴，在实时文字战报中体验身份推理与卡牌博弈。
+            面向受邀成员的内部工作区。房间状态、操作记录与规则结算由服务器统一同步。
           </p>
           <div className="login-features" aria-label="游戏特点">
-            <span>多人实时房间</span>
-            <span>服务端规则裁定</span>
-            <span>账号由管理员分配</span>
+            <span>实时状态同步</span>
+            <span>服务端一致性</span>
+            <span>管理员账号分配</span>
           </div>
         </div>
         <div className="ink-orbit" aria-hidden="true">
@@ -37,9 +37,9 @@ export function LoginScreen({ loading, error, onLogin }: LoginScreenProps) {
       <section className="login-panel" aria-label="登录">
         <div className="paper-card login-card">
           <div className="login-card__heading">
-            <span className="section-kicker">欢迎归席</span>
-            <h2>登录账号</h2>
-            <p>本站不开放自助注册，请使用管理员分配的账号。</p>
+            <span className="section-kicker">Private access</span>
+            <h2>访问工作区</h2>
+            <p>不开放自助注册，请使用管理员分配的账号。</p>
           </div>
           {error && <Alert className="login-alert" type="error" showIcon message={error} />}
           <Form<LoginValues>
@@ -64,7 +64,7 @@ export function LoginScreen({ loading, error, onLogin }: LoginScreenProps) {
               <Input.Password autoComplete="current-password" placeholder="请输入密码" />
             </Form.Item>
             <Button className="primary-ink-button" type="primary" htmlType="submit" block loading={loading}>
-              入局
+              登录
             </Button>
           </Form>
           <p className="login-help">若忘记密码，请联系管理员重置。</p>

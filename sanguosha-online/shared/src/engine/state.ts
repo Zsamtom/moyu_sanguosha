@@ -23,6 +23,7 @@ import {
   createDamageFlowState,
   type DamageFlowState,
 } from "./damage-flow.js";
+import type { LifePlayerState } from "./damage.js";
 import {
   assertDyingStack,
   cloneDyingStack,
@@ -44,9 +45,9 @@ export interface CompleteRulesEngineState {
   lifecycle: SkillLifecycleState;
   /** Persisted live damage-flow state. */
   damageFlow: DamageFlowState;
-  /** Persisted scaffold; strictly empty until live dying cursors are wired. */
+  /** Persisted live dying-stack state. */
   dying: DyingStack;
-  /** Persisted scaffold; strictly empty until live death cursors are wired. */
+  /** Persisted live death-stack state. */
   death: DeathStack;
   nextEventId: number;
   nextMoveBatchId: number;
@@ -59,6 +60,70 @@ export class CompleteRulesStateError extends Error {
     super(message);
     this.name = "CompleteRulesStateError";
   }
+}
+
+const COMPLETE_STATE_KEYS = [
+  "version", "ruleSetVersion", "ruleConfig", "resolution", "lifecycle", "damageFlow", "dying", "death",
+  "nextEventId", "nextMoveBatchId", "nextDamageId", "reshufflesRemaining",
+] as const;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
+}
+
+function assertStrictJson(value: unknown, label: string): void {
+  const ancestors: object[] = [];
+  const visit = (candidate: unknown, path: string, depth: number): void => {
+    if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") return;
+    if (typeof candidate === "number") {
+      if (!Number.isFinite(candidate)) throw new CompleteRulesStateError(`${path} contains a non-finite number`);
+      return;
+    }
+    if (typeof candidate !== "object" || depth > 256) throw new CompleteRulesStateError(`${path} is not strict JSON`);
+    if (ancestors.includes(candidate)) throw new CompleteRulesStateError(`${path} contains a cycle`);
+    ancestors.push(candidate);
+    if (Array.isArray(candidate)) {
+      const keys = Reflect.ownKeys(candidate);
+      if (keys.length !== candidate.length + 1 || keys.some((key) => {
+        if (key === "length") return false;
+        if (typeof key !== "string") return true;
+        const index = Number(key);
+        return !Number.isSafeInteger(index) || index < 0 || index >= candidate.length || String(index) !== key;
+      })) {
+        throw new CompleteRulesStateError(`${path} must be a dense array without custom properties`);
+      }
+      for (let index = 0; index < candidate.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(candidate, String(index));
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          throw new CompleteRulesStateError(`${path}[${index}] must be an enumerable data property`);
+        }
+        visit(descriptor.value, `${path}[${index}]`, depth + 1);
+      }
+    } else {
+      if (!isPlainRecord(candidate)) throw new CompleteRulesStateError(`${path} must be a plain object`);
+      for (const key of Reflect.ownKeys(candidate)) {
+        if (typeof key !== "string") throw new CompleteRulesStateError(`${path} contains a symbol key`);
+        const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          throw new CompleteRulesStateError(`${path}.${key} must be an enumerable data property`);
+        }
+        visit(descriptor.value, `${path}.${key}`, depth + 1);
+      }
+    }
+    ancestors.pop();
+  };
+  visit(value, label, 0);
+}
+
+function assertExactCompleteStateRoot(value: unknown): asserts value is CompleteRulesEngineState {
+  if (!isPlainRecord(value)) throw new CompleteRulesStateError("complete rules state must be an object");
+  const keys = Object.keys(value);
+  const allowed = new Set<string>(COMPLETE_STATE_KEYS);
+  if (COMPLETE_STATE_KEYS.some((key) => !Object.prototype.hasOwnProperty.call(value, key))
+    || keys.some((key) => !allowed.has(key))
+  ) throw new CompleteRulesStateError("complete rules state has missing or unexpected fields");
 }
 
 function positive(value: number, label: string): void {
@@ -136,9 +201,13 @@ export function cloneCompleteRulesEngineState(state: CompleteRulesEngineState): 
   };
 }
 
-export function assertCompleteRulesEngineState(value: unknown): asserts value is CompleteRulesEngineState {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new CompleteRulesStateError("complete rules state must be an object");
-  const state = value as Partial<CompleteRulesEngineState>;
+export function assertCompleteRulesEngineState(
+  value: unknown,
+  players?: readonly LifePlayerState[],
+): asserts value is CompleteRulesEngineState {
+  assertStrictJson(value, "complete rules state");
+  assertExactCompleteStateRoot(value);
+  const state = value;
   if (state.version !== 1 || state.ruleSetVersion !== COMPLETE_RULE_SET_VERSION) throw new CompleteRulesStateError("complete rules state version is invalid");
   if (!state.ruleConfig) throw new CompleteRulesStateError("complete rules config is missing");
   validateRoomRuleConfig(state.ruleConfig);
@@ -154,14 +223,11 @@ export function assertCompleteRulesEngineState(value: unknown): asserts value is
     if (!state.death || state.death.version !== 1 || !Array.isArray(state.death.frames)) {
       throw new CompleteRulesStateError("death stack root is invalid");
     }
-    if (state.dying.frames.length === 0) assertDyingStack([], state.dying);
-    if (state.death.frames.length === 0) assertDeathStack(state.death);
-    if (state.dying.frames.length > 0) {
-      throw new CompleteRulesStateError("dying stack must remain empty until live dying integration");
+    if (state.dying.frames.length > 0 && players === undefined) {
+      throw new CompleteRulesStateError("nonempty dying stack requires a life player snapshot");
     }
-    if (state.death.frames.length > 0) {
-      throw new CompleteRulesStateError("death stack must remain empty until live death integration");
-    }
+    assertDyingStack(players ?? [], state.dying);
+    assertDeathStack(state.death);
   } catch (error) {
     if (error instanceof CompleteRulesStateError) throw error;
     throw new CompleteRulesStateError(error instanceof Error ? error.message : "complete rules nested state is invalid");
@@ -182,10 +248,14 @@ export function assertCompleteRulesEngineState(value: unknown): asserts value is
 }
 
 /** Explicit migration entry for legacy rooms that predate the complete-rules stack. */
-export function migrateCompleteRulesEngineState(value: unknown): CompleteRulesEngineState {
+export function migrateCompleteRulesEngineState(
+  value: unknown,
+  players?: readonly LifePlayerState[],
+): CompleteRulesEngineState {
   if (value === undefined || value === null) return createCompleteRulesEngineState();
+  assertStrictJson(value, "complete rules state");
   if (typeof value !== "object" || Array.isArray(value)) {
-    assertCompleteRulesEngineState(value);
+    assertCompleteRulesEngineState(value, players);
   }
   const migrated = structuredClone(value) as CompleteRulesEngineState;
   if (migrated.lifecycle && !Array.isArray(migrated.lifecycle.skillLosses)) {
@@ -194,6 +264,6 @@ export function migrateCompleteRulesEngineState(value: unknown): CompleteRulesEn
   if (migrated.damageFlow === undefined) migrated.damageFlow = createDamageFlowState();
   if (migrated.dying === undefined) migrated.dying = createDyingStack();
   if (migrated.death === undefined) migrated.death = createDeathStack();
-  assertCompleteRulesEngineState(migrated);
+  assertCompleteRulesEngineState(migrated, players);
   return cloneCompleteRulesEngineState(migrated);
 }

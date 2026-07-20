@@ -834,16 +834,23 @@ describe("Mountain package pure runtime", () => {
       };
     }
 
-    it("installs any hand equipment type in another empty slot and draws one", () => {
+    it("installs any hand equipment type in another slot and draws one", () => {
       for (const slot of ["weapon", "armor", "offensive_horse", "defensive_horse"] as const) {
         const input = { ...zhijian(), equipmentCard: equipment(slot, slot) };
         expect(valueOf(pure(input, () => evaluateZhijian(input)))).toMatchObject({ equipmentSlot: slot, drawCountAfterInstall: 1 });
       }
     });
 
+    it("allows live resolution to replace equipment already in the corresponding slot", () => {
+      const input = { ...zhijian(), occupiedEquipmentSlots: ["armor" as const] };
+      expect(valueOf(pure(input, () => evaluateZhijian(input)))).toMatchObject({
+        equipmentSlot: "armor",
+        drawCountAfterInstall: 1,
+      });
+    });
+
     it.each([
       ["self target", { targetId: "owner" }, "invalid_target"],
-      ["occupied slot", { occupiedEquipmentSlots: ["armor" as const] }, "invalid_target"],
       ["non-equipment card", { equipmentCard: card("basic") }, "invalid_card"],
       ["equipped rather than hand card", { equipmentCard: equipment("armor", "armor", "equipment") }, "invalid_card"],
       ["dead target", { targetAlive: false }, "target_dead"],

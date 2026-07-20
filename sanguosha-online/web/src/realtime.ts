@@ -24,6 +24,36 @@ function roomList(payload: unknown): RoomSummary[] {
 
 export class RealtimeClient {
   private socket: Socket | null = null;
+  private currentRoomId: string | null = null;
+  private gameActionContext: {
+    roomId: string;
+    expectedRevision: number;
+    expectedPromptId: string;
+  } | null = null;
+
+  private setCurrentRoom(room: RoomDetail | null): void {
+    const roomId = room?.id ?? null;
+    if (this.currentRoomId !== roomId) this.gameActionContext = null;
+    this.currentRoomId = roomId;
+  }
+
+  private rememberGameView(game: unknown | null): void {
+    if (!this.currentRoomId || !game || typeof game !== 'object') {
+      this.gameActionContext = null;
+      return;
+    }
+    const { revision, actionPromptId } = game as { revision?: unknown; actionPromptId?: unknown };
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0 ||
+        typeof actionPromptId !== 'string' || actionPromptId.length === 0) {
+      this.gameActionContext = null;
+      return;
+    }
+    this.gameActionContext = {
+      roomId: this.currentRoomId,
+      expectedRevision: revision,
+      expectedPromptId: actionPromptId,
+    };
+  }
 
   connect(handlers: RealtimeHandlers): void {
     this.disconnect();
@@ -34,18 +64,30 @@ export class RealtimeClient {
     });
     this.socket = socket;
 
-    socket.on('connect', () => handlers.onConnectionChange(true));
-    socket.on('disconnect', () => handlers.onConnectionChange(false));
-    socket.on('connect_error', () => handlers.onConnectionChange(false));
+    socket.on('connect', () => {
+      this.gameActionContext = null;
+      handlers.onConnectionChange(true);
+    });
+    socket.on('disconnect', () => {
+      this.gameActionContext = null;
+      handlers.onConnectionChange(false);
+    });
+    socket.on('connect_error', () => {
+      this.gameActionContext = null;
+      handlers.onConnectionChange(false);
+    });
     socket.on('rooms:update', (payload: unknown) => handlers.onRooms(roomList(payload)));
     socket.on('room:update', (payload: unknown) => {
       const data = payloadData(payload as RoomDetail | { room: RoomDetail | null } | null);
       const room = data && typeof data === 'object' && 'room' in data ? data.room : data;
-      handlers.onRoom(room ? normalizeRoomDetail(room as RoomDetail & Record<string, unknown>) : null);
+      const normalized = room ? normalizeRoomDetail(room as RoomDetail & Record<string, unknown>) : null;
+      this.setCurrentRoom(normalized);
+      handlers.onRoom(normalized);
     });
     socket.on('game:view', (payload: unknown) => {
       const data = payloadData(payload as unknown | { game: unknown | null } | null);
       const game = data && typeof data === 'object' && 'game' in data ? data.game : data;
+      this.rememberGameView(game ?? null);
       handlers.onGame(game ?? null);
     });
     socket.on('game:log', (payload: unknown) => {
@@ -56,9 +98,14 @@ export class RealtimeClient {
       const state = payloadData(payload as ServerState);
       if (state.rooms) handlers.onRooms(roomList(state.rooms));
       if ('room' in state) {
-        handlers.onRoom(state.room ? normalizeRoomDetail(state.room as RoomDetail & Record<string, unknown>) : null);
+        const room = state.room ? normalizeRoomDetail(state.room as RoomDetail & Record<string, unknown>) : null;
+        this.setCurrentRoom(room);
+        handlers.onRoom(room);
       }
-      if ('game' in state) handlers.onGame(state.game ?? null);
+      if ('game' in state) {
+        this.rememberGameView(state.game ?? null);
+        handlers.onGame(state.game ?? null);
+      }
     });
     socket.on('server:error', (payload: unknown) => {
       const data = payloadData(payload as { message?: string } | string);
@@ -69,6 +116,8 @@ export class RealtimeClient {
   disconnect(): void {
     this.socket?.disconnect();
     this.socket = null;
+    this.currentRoomId = null;
+    this.gameActionContext = null;
   }
 
   sendGameAction(roomId: string, action: GameAction): Promise<void> {
@@ -77,7 +126,17 @@ export class RealtimeClient {
         reject(new Error('连接已断开，正在尝试重连'));
         return;
       }
-      this.socket.timeout(8_000).emit('game:action', { roomId, action }, (error: Error | null, ack?: unknown) => {
+      const context = this.gameActionContext;
+      if (!context || context.roomId !== roomId) {
+        reject(new Error('当前游戏状态尚未同步，请稍后重试'));
+        return;
+      }
+      this.socket.timeout(8_000).emit('game:action', {
+        roomId,
+        expectedRevision: context.expectedRevision,
+        expectedPromptId: context.expectedPromptId,
+        action,
+      }, (error: Error | null, ack?: unknown) => {
         if (error) {
           reject(new Error('操作超时，请重试'));
           return;

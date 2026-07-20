@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyAction,
   assertCompleteRulesEngineState,
+  assertRestorableSlashResponse,
   createGame,
   forfeitPlayer,
   getCardDefinition,
@@ -46,7 +47,7 @@ function setup(count = 4): { game: GameSession; actor: GamePlayer; others: GameP
   }
   game.pendingResponse = null;
   game.resolvingCards = [];
-  game.afterMove = { queuedTriggers: [], suspendedPhase: null, suspendedResponse: null };
+  game.afterMove = { queuedRecoveries: [], queuedTriggers: [], suspendedPhase: null, suspendedResponse: null };
   game.turn = {
     ...game.turn,
     playerId: actor.id,
@@ -79,6 +80,21 @@ function attachTurnFlowCompletion(
     ...game.pendingResponse,
     completion: { type: "turn_flow", continuationId, playerId: game.currentPlayerId, destination },
   };
+  const slash = game.pendingResponse;
+  if (slash.type !== "slash") throw new Error("Expected an in-flight Slash");
+  const effectIndex = game.completeRules.lifecycle.effects.findIndex((effect) =>
+    effect.kind === "slash_response_progress" && effect.payload.cardId === slash.cardId);
+  const effect = game.completeRules.lifecycle.effects[effectIndex];
+  if (!effect) throw new Error("Expected a Slash response commitment");
+  const commitment = JSON.parse(String(effect.payload.commitment)) as Record<string, unknown>;
+  game.completeRules.lifecycle.effects[effectIndex] = {
+    ...effect,
+    payload: {
+      ...effect.payload,
+      commitment: JSON.stringify({ ...commitment, completion: slash.completion }),
+    },
+  };
+  assertRestorableSlashResponse(game, slash);
   return game;
 }
 
@@ -149,7 +165,10 @@ describe("live lethal DamageFlow integration", () => {
     expect(current.completeRules.nextDamageId).toBe(2);
 
     const restored = jsonClone(current);
-    expect(() => assertCompleteRulesEngineState(restored.completeRules)).not.toThrow();
+    expect(() => assertCompleteRulesEngineState(
+      restored.completeRules,
+      restored.players.map(({ id, hp, maxHp, alive }) => ({ id, hp, maxHp, alive })),
+    )).not.toThrow();
     current = applyAction(restored, {
       type: "respond",
       playerId: target!.id,
@@ -322,7 +341,12 @@ describe("live lethal DamageFlow integration", () => {
     expect(continued.status).toBe("playing");
     expect(continued.players.find((player) => player.id === target.id)).toMatchObject({ alive: false, hp: 0 });
     expect(continued.pendingResponse).toBeNull();
-    expect(continued.afterMove).toEqual({ queuedTriggers: [], suspendedPhase: null, suspendedResponse: null });
+    expect(continued.afterMove).toEqual({
+      queuedRecoveries: [],
+      queuedTriggers: [],
+      suspendedPhase: null,
+      suspendedResponse: null,
+    });
     expect(continued.completeRules.damageFlow.frames).toEqual([]);
     expect(continued.completeRules.damageFlow.completedDamageIds).toEqual([1]);
   });

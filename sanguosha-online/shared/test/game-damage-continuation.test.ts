@@ -49,7 +49,15 @@ function slashPending(): PendingSlashResponse {
     zhuQueChecked: true,
     ciXiongChecked: true,
     liuliCheckedPlayerIds: ["target"],
+    xiangleCheckedPlayerIds: ["target"],
+    jiangProcessedPlayerIds: ["attacker", "target"],
+    liegongChecked: true,
     tieqiChecked: true,
+    useProvenance: {
+      method: "use",
+      turnPlayerId: "attacker",
+      phase: "play",
+    },
     excludedRedirectTargetIds: ["attacker", "target", "next-target"],
     dodgeProhibited: false,
     completion: {
@@ -151,6 +159,9 @@ describe("game DamageFlow caller continuation codec", () => {
         zhuQueChecked: true,
         ciXiongChecked: true,
         liuliCheckedPlayerIds: [],
+        xiangleCheckedPlayerIds: [],
+        jiangProcessedPlayerIds: [],
+        liegongChecked: false,
         tieqiChecked: false,
         excludedRedirectTargetIds: ["attacker", "target"],
         dodgeProhibited: false,
@@ -227,6 +238,18 @@ describe("game DamageFlow caller continuation codec", () => {
       type: "slash_sequence",
       pending: { ...slashPending(), completion: { type: "default", extra: true } },
     })],
+    ["provenance extra field", () => rawContinuation({
+      type: "slash_sequence",
+      pending: { ...slashPending(), useProvenance: { ...slashPending().useProvenance, extra: true } },
+    })],
+    ["invalid provenance method", () => rawContinuation({
+      type: "slash_sequence",
+      pending: { ...slashPending(), useProvenance: { ...slashPending().useProvenance, method: "play" } },
+    })],
+    ["invalid provenance phase", () => rawContinuation({
+      type: "slash_sequence",
+      pending: { ...slashPending(), useProvenance: { ...slashPending().useProvenance, phase: "dying" } },
+    })],
     ["empty player id", () => rawContinuation({ type: "skill", skillId: "kurou", playerId: "" })],
     ["wrong skill id", () => rawContinuation({ type: "skill", skillId: "fanjian", playerId: "owner" })],
     ["unsafe integer", () => rawContinuation({
@@ -260,6 +283,14 @@ describe("game DamageFlow caller continuation codec", () => {
     ["more accepted Dodges than required", () => rawContinuation({
       type: "slash_sequence",
       pending: { ...slashPending(), requiredDodgeCount: 1, dodgesPlayed: 2 },
+    })],
+    ["duplicate Xiangle target", () => rawContinuation({
+      type: "slash_sequence",
+      pending: { ...slashPending(), xiangleCheckedPlayerIds: ["target", "target"] },
+    })],
+    ["duplicate Jiang owner", () => rawContinuation({
+      type: "slash_sequence",
+      pending: { ...slashPending(), jiangProcessedPlayerIds: ["attacker", "attacker"] },
     })],
     ["duplicate declined lord skill", () => rawContinuation({
       type: "mass_attack",

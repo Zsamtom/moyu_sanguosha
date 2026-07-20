@@ -1,10 +1,20 @@
 import type {
+  Card,
+  CardKind,
   DyingResume,
   PendingMassAttackResponse,
+  PendingNullificationResponse,
   PendingSlashResponse,
+  PendingTrickEffect,
+  PlayerId,
   SlashResolutionContinuation,
+  SlashUseProvenance,
+  ShenfenContinuation,
   StandardDamageAftermath,
+  WumouContinuation,
+  YeyanContinuation,
 } from "../types.js";
+import { CARD_DEFINITIONS } from "../cards.js";
 import type {
   DamageFlowCallerContinuation,
   DamageFlowJsonObject,
@@ -47,9 +57,23 @@ const SLASH_KINDS = ["slash", "fire_slash", "thunder_slash"] as const;
 const DAMAGE_NATURES = ["normal", "fire", "thunder"] as const;
 const ELEMENTAL_NATURES = ["fire", "thunder"] as const;
 const CARD_COLORS = ["red", "black", "colorless"] as const;
+const CARD_SUITS = ["spade", "heart", "club", "diamond"] as const;
 const MASS_ATTACK_KINDS = ["barbarian_invasion", "arrow_barrage"] as const;
 const MASS_ATTACK_RESPONSES = ["slash", "dodge"] as const;
-const SLASH_DESTINATIONS = ["play", "discard_or_end"] as const;
+const MASS_ATTACK_SOURCE_SKILL_IDS = ["luanji"] as const;
+const SLASH_DESTINATIONS = ["play", "before_play", "discard_or_end"] as const;
+const SLASH_SOURCE_SKILL_IDS = ["shensu"] as const;
+const CARD_USE_METHODS = ["use", "respond", "recast"] as const;
+const TURN_PHASES = ["prepare", "judgment", "draw", "play", "respond", "discard", "end"] as const;
+const CARD_KINDS = Object.keys(CARD_DEFINITIONS) as CardKind[];
+const ORDINARY_TRICK_KINDS = [
+  "ex_nihilo", "duel", "barbarian_invasion", "arrow_barrage", "peach_garden",
+  "guo_he_chai_qiao", "shun_shou_qian_yang", "fire_attack", "amazing_grace", "borrowed_sword", "iron_chain",
+] as const;
+const NULLIFIABLE_TRICK_KINDS = [
+  ...ORDINARY_TRICK_KINDS,
+  "le_bu_si_shu", "bing_liang_cun_duan", "shan_dian",
+] as const;
 
 function invalid(path: string, message: string): never {
   throw new GameDamageContinuationError(path, message);
@@ -190,8 +214,275 @@ function parseDeclinedLordSkills(value: unknown, path: string): Array<"hujia" | 
     parseEnum(entry, LORD_DISPATCH_SKILL_IDS, entryPath));
 }
 
+function parseCard(value: unknown, path: string): Card {
+  const record = exactRecord(value, path, ["id", "kind", "name", "category", "suit", "rank"]);
+  const kind = parseEnum(record.kind, CARD_KINDS, `${path}.kind`);
+  const definition = CARD_DEFINITIONS[kind];
+  if (record.name !== definition.name) invalid(`${path}.name`, "does not match the card kind");
+  if (record.category !== definition.category) invalid(`${path}.category`, "does not match the card kind");
+  return {
+    id: parseCardId(record.id, `${path}.id`),
+    kind,
+    name: definition.name,
+    category: definition.category,
+    suit: parseEnum(record.suit, CARD_SUITS, `${path}.suit`),
+    rank: parseInteger(record.rank, `${path}.rank`, 1, 13) as Card["rank"],
+  };
+}
+
+function trickEffectSourceId(effect: PendingTrickEffect): string {
+  return effect.type === "mass_attack" ? effect.pending.attackerId : effect.sourceId;
+}
+
+function trickEffectTargetId(effect: PendingTrickEffect): string {
+  return effect.type === "mass_attack" ? effect.pending.targetId : effect.targetId;
+}
+
+function trickEffectCardId(effect: PendingTrickEffect): string {
+  return effect.type === "mass_attack" ? effect.pending.cardId : effect.cardId;
+}
+
+function trickEffectKind(effect: PendingTrickEffect): PendingNullificationResponse["cardKind"] {
+  if (effect.type === "mass_attack") return effect.pending.cardKind;
+  if (effect.type === "delayed_trick" || effect.type === "zone_trick") return effect.cardKind;
+  return effect.type;
+}
+
+function parseTrickEffect(value: unknown, path: string): PendingTrickEffect {
+  if (!isPlainRecord(value) || typeof value.type !== "string") invalid(path, "expected a tagged trick effect");
+  switch (value.type) {
+    case "ex_nihilo":
+    case "duel":
+    case "fire_attack": {
+      const record = exactRecord(value, path, ["type", "sourceId", "targetId", "cardId"]);
+      return {
+        type: value.type,
+        sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+        targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+        cardId: parseCardId(record.cardId, `${path}.cardId`),
+      };
+    }
+    case "mass_attack": {
+      const record = exactRecord(value, path, ["type", "pending"]);
+      return { type: "mass_attack", pending: parseMassAttackPending(record.pending, `${path}.pending`) };
+    }
+    case "peach_garden":
+    case "iron_chain": {
+      const record = exactRecord(value, path, ["type", "sourceId", "targetId", "cardId", "remainingTargetIds"]);
+      return {
+        type: value.type,
+        sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+        targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+        cardId: parseCardId(record.cardId, `${path}.cardId`),
+        remainingTargetIds: parseUniqueArray(record.remainingTargetIds, `${path}.remainingTargetIds`, 0, 9, parsePlayerId),
+      };
+    }
+    case "delayed_trick": {
+      const record = exactRecord(value, path, ["type", "sourceId", "targetId", "cardId", "cardKind"]);
+      return {
+        type: "delayed_trick",
+        sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+        targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+        cardId: parseCardId(record.cardId, `${path}.cardId`),
+        cardKind: parseEnum(record.cardKind, ["le_bu_si_shu", "bing_liang_cun_duan", "shan_dian"] as const, `${path}.cardKind`),
+      };
+    }
+    case "zone_trick": {
+      const record = exactRecord(value, path, ["type", "sourceId", "targetId", "cardId", "cardKind"]);
+      return {
+        type: "zone_trick",
+        sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+        targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+        cardId: parseCardId(record.cardId, `${path}.cardId`),
+        cardKind: parseEnum(record.cardKind, ["guo_he_chai_qiao", "shun_shou_qian_yang"] as const, `${path}.cardKind`),
+      };
+    }
+    case "borrowed_sword": {
+      const record = exactRecord(value, path, ["type", "sourceId", "targetId", "attackTargetId", "cardId"]);
+      return {
+        type: "borrowed_sword",
+        sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+        targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+        attackTargetId: parsePlayerId(record.attackTargetId, `${path}.attackTargetId`),
+        cardId: parseCardId(record.cardId, `${path}.cardId`),
+      };
+    }
+    case "amazing_grace": {
+      const record = exactRecord(value, path, ["type", "sourceId", "targetId", "cardId", "pool", "remainingTargetIds"]);
+      if (!Array.isArray(record.pool) || record.pool.length > 10) invalid(`${path}.pool`, "expected at most ten public cards");
+      const pool = record.pool.map((entry, index) => parseCard(entry, `${path}.pool[${index}]`));
+      if (new Set(pool.map((card) => card.id)).size !== pool.length) invalid(`${path}.pool`, "card ids must be unique");
+      return {
+        type: "amazing_grace",
+        sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+        targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+        cardId: parseCardId(record.cardId, `${path}.cardId`),
+        pool,
+        remainingTargetIds: parseUniqueArray(record.remainingTargetIds, `${path}.remainingTargetIds`, 0, 9, parsePlayerId),
+      };
+    }
+    default:
+      invalid(`${path}.type`, "unsupported trick effect type");
+  }
+}
+
+function parseNullificationPending(value: unknown, path: string): PendingNullificationResponse {
+  const record = exactRecord(value, path, [
+    "type", "attackerId", "targetId", "effectTargetId", "cardId", "cardKind",
+    "remainingResponderIds", "negated", "effect",
+  ]);
+  if (record.type !== "nullification") invalid(`${path}.type`, "expected nullification");
+  const effect = parseTrickEffect(record.effect, `${path}.effect`);
+  const attackerId = parsePlayerId(record.attackerId, `${path}.attackerId`);
+  const effectTargetId = parsePlayerId(record.effectTargetId, `${path}.effectTargetId`);
+  const cardId = parseCardId(record.cardId, `${path}.cardId`);
+  const cardKind = parseEnum(record.cardKind, NULLIFIABLE_TRICK_KINDS, `${path}.cardKind`);
+  if (attackerId !== trickEffectSourceId(effect) || effectTargetId !== trickEffectTargetId(effect) ||
+      cardId !== trickEffectCardId(effect) || cardKind !== trickEffectKind(effect)) {
+    invalid(path, "nullification metadata does not match its trick effect");
+  }
+  return {
+    type: "nullification",
+    attackerId,
+    targetId: parsePlayerId(record.targetId, `${path}.targetId`),
+    effectTargetId,
+    cardId,
+    cardKind,
+    remainingResponderIds: parseUniqueArray(record.remainingResponderIds, `${path}.remainingResponderIds`, 0, 9, parsePlayerId),
+    negated: parseBoolean(record.negated, `${path}.negated`),
+    effect,
+  };
+}
+
+function parseWumouContinuation(value: unknown, path: string): WumouContinuation {
+  if (!isPlainRecord(value) || typeof value.type !== "string") invalid(path, "expected a tagged Wumou continuation");
+  if (value.type === "trick_effect") {
+    const record = exactRecord(value, path, ["type", "cardKind", "effect"]);
+    const cardKind = parseEnum(record.cardKind, ORDINARY_TRICK_KINDS, `${path}.cardKind`);
+    const effect = parseTrickEffect(record.effect, `${path}.effect`);
+    if (effect.type === "delayed_trick" || trickEffectKind(effect) !== cardKind) {
+      invalid(path, "Wumou trick metadata must describe one ordinary trick");
+    }
+    return { type: "trick_effect", cardKind, effect } as WumouContinuation;
+  }
+  if (value.type === "finish_trick") {
+    const record = exactRecord(value, path, ["type", "sourceId", "cardId", "cardKind"]);
+    return {
+      type: "finish_trick",
+      sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+      cardId: parseCardId(record.cardId, `${path}.cardId`),
+      cardKind: parseEnum(record.cardKind, ["peach_garden", "amazing_grace"] as const, `${path}.cardKind`),
+    };
+  }
+  if (value.type === "finish_mass_attack") {
+    const record = exactRecord(value, path, ["type", "sourceId", "cardId", "damageCardIds", "cardKind"], ["sourceSkillId"]);
+    const sourceSkillId = has(record, "sourceSkillId")
+      ? parseEnum(record.sourceSkillId, MASS_ATTACK_SOURCE_SKILL_IDS, `${path}.sourceSkillId`)
+      : undefined;
+    const damageCardIds = parseUniqueArray(
+      record.damageCardIds,
+      `${path}.damageCardIds`,
+      sourceSkillId === "luanji" ? 2 : 1,
+      sourceSkillId === "luanji" ? 2 : 1,
+      parseCardId,
+    );
+    const cardId = parseCardId(record.cardId, `${path}.cardId`);
+    if (!damageCardIds.includes(cardId)) invalid(`${path}.damageCardIds`, "must include cardId");
+    return {
+      type: "finish_mass_attack",
+      sourceId: parsePlayerId(record.sourceId, `${path}.sourceId`),
+      cardId,
+      damageCardIds,
+      ...(sourceSkillId ? { sourceSkillId } : {}),
+      cardKind: parseEnum(record.cardKind, MASS_ATTACK_KINDS, `${path}.cardKind`),
+    };
+  }
+  if (value.type === "nullification") {
+    const record = exactRecord(value, path, ["type", "responderId", "responseCardId", "pending"]);
+    return {
+      type: "nullification",
+      responderId: parsePlayerId(record.responderId, `${path}.responderId`),
+      responseCardId: parseCardId(record.responseCardId, `${path}.responseCardId`),
+      pending: parseNullificationPending(record.pending, `${path}.pending`),
+    };
+  }
+  invalid(`${path}.type`, "unsupported Wumou continuation type");
+}
+
+function parseShenfenContinuation(value: unknown, path: string): ShenfenContinuation {
+  const record = exactRecord(value, path, ["eventId", "ownerId", "targetIds", "stage", "nextTargetIndex"]);
+  const ownerId = parsePlayerId(record.ownerId, `${path}.ownerId`);
+  const targetIds = parseUniqueArray(record.targetIds, `${path}.targetIds`, 0, 9, parsePlayerId);
+  if (targetIds.includes(ownerId)) invalid(`${path}.targetIds`, "must not include the Shenfen owner");
+  const stage = parseEnum(record.stage, ["damage", "equipment", "hand", "turn_over"] as const, `${path}.stage`);
+  const nextTargetIndex = parseInteger(record.nextTargetIndex, `${path}.nextTargetIndex`, 0, targetIds.length);
+  if (stage === "turn_over" && nextTargetIndex !== targetIds.length) {
+    invalid(`${path}.nextTargetIndex`, "turn_over must follow every frozen target");
+  }
+  return {
+    eventId: parseInteger(record.eventId, `${path}.eventId`, 1, Number.MAX_SAFE_INTEGER),
+    ownerId,
+    targetIds,
+    stage,
+    nextTargetIndex,
+  };
+}
+
+function parseYeyanContinuation(value: unknown, path: string): YeyanContinuation {
+  const record = exactRecord(value, path, [
+    "eventId", "ownerId", "greaterYeyan", "costCardIds", "allocations", "stage", "nextAllocationIndex",
+  ]);
+  const ownerId = parsePlayerId(record.ownerId, `${path}.ownerId`);
+  const greaterYeyan = parseBoolean(record.greaterYeyan, `${path}.greaterYeyan`);
+  const costCardIds = parseUniqueArray(record.costCardIds, `${path}.costCardIds`, greaterYeyan ? 4 : 0, greaterYeyan ? 4 : 0, parseCardId);
+  if (!Array.isArray(record.allocations) || record.allocations.length < 1 || record.allocations.length > 3) {
+    invalid(`${path}.allocations`, "must contain one through three allocations");
+  }
+  const seen = new Set<PlayerId>();
+  let totalDamage = 0;
+  const allocations = record.allocations.map((value, index) => {
+    const allocationPath = `${path}.allocations[${index}]`;
+    const allocation = exactRecord(value, allocationPath, ["targetId", "amount"]);
+    const targetId = parsePlayerId(allocation.targetId, `${allocationPath}.targetId`);
+    if (seen.has(targetId)) invalid(`${allocationPath}.targetId`, "duplicates an earlier target");
+    seen.add(targetId);
+    const amount = parseInteger(allocation.amount, `${allocationPath}.amount`, 1, 3);
+    totalDamage += amount;
+    return { targetId, amount };
+  });
+  if (totalDamage > 3) invalid(`${path}.allocations`, "assigns more than three total damage");
+  const hasGreaterAllocation = allocations.some((allocation) => allocation.amount >= 2);
+  if (hasGreaterAllocation !== greaterYeyan) {
+    invalid(`${path}.greaterYeyan`, "must match whether an allocation is at least two damage");
+  }
+  const stage = parseEnum(record.stage, ["after_cost", "damage"] as const, `${path}.stage`);
+  const nextAllocationIndex = parseInteger(
+    record.nextAllocationIndex,
+    `${path}.nextAllocationIndex`,
+    0,
+    allocations.length,
+  );
+  if (stage === "after_cost" && (!greaterYeyan || nextAllocationIndex !== 0)) {
+    invalid(path, "after_cost is valid only for great Yeyan before any allocation");
+  }
+  return {
+    eventId: parseInteger(record.eventId, `${path}.eventId`, 1, Number.MAX_SAFE_INTEGER),
+    ownerId,
+    greaterYeyan,
+    costCardIds,
+    allocations,
+    stage,
+    nextAllocationIndex,
+  };
+}
+
 function parseSlashCompletion(value: unknown, path: string): SlashResolutionContinuation {
-  const record = exactRecord(value, path, ["type"], ["continuationId", "playerId", "destination"]);
+  const record = exactRecord(
+    value,
+    path,
+    ["type"],
+    ["continuationId", "playerId", "destination", "eventId", "ownerId", "processedActorIds", "remainingActorIds"],
+  );
   if (record.type === "default") {
     exactRecord(record, path, ["type"]);
     return { type: "default" };
@@ -205,7 +496,31 @@ function parseSlashCompletion(value: unknown, path: string): SlashResolutionCont
       destination: parseEnum(record.destination, SLASH_DESTINATIONS, `${path}.destination`),
     };
   }
+  if (record.type === "luanwu") {
+    exactRecord(record, path, ["type", "eventId", "ownerId", "processedActorIds", "remainingActorIds"]);
+    const processedActorIds = parseUniqueArray(record.processedActorIds, `${path}.processedActorIds`, 0, 9, parsePlayerId);
+    const remainingActorIds = parseUniqueArray(record.remainingActorIds, `${path}.remainingActorIds`, 0, 9, parsePlayerId);
+    if (new Set([...processedActorIds, ...remainingActorIds]).size !== processedActorIds.length + remainingActorIds.length) {
+      invalid(path, "Luanwu actor partitions must be disjoint");
+    }
+    return {
+      type: "luanwu",
+      eventId: parseInteger(record.eventId, `${path}.eventId`, 1, Number.MAX_SAFE_INTEGER),
+      ownerId: parsePlayerId(record.ownerId, `${path}.ownerId`),
+      processedActorIds,
+      remainingActorIds,
+    };
+  }
   invalid(`${path}.type`, "unsupported Slash completion type");
+}
+
+function parseSlashUseProvenance(value: unknown, path: string): SlashUseProvenance {
+  const record = exactRecord(value, path, ["method", "turnPlayerId", "phase"]);
+  return {
+    method: parseEnum(record.method, CARD_USE_METHODS, `${path}.method`),
+    turnPlayerId: parsePlayerId(record.turnPlayerId, `${path}.turnPlayerId`),
+    phase: parseEnum(record.phase, TURN_PHASES, `${path}.phase`),
+  };
 }
 
 function parseMassAttackPending(value: unknown, path: string): PendingMassAttackResponse {
@@ -213,16 +528,49 @@ function parseMassAttackPending(value: unknown, path: string): PendingMassAttack
     value,
     path,
     ["type", "attackerId", "targetId", "cardId", "cardKind", "responseKind", "remainingTargetIds"],
-    ["armorAttempted", "declinedLordSkillIds"],
+    ["damageCardIds", "sourceSkillId", "effectiveSuit", "huoshouSourceId", "armorAttempted", "declinedLordSkillIds"],
   );
   if (record.type !== "mass_attack") invalid(`${path}.type`, "expected mass_attack");
+  const cardId = parseCardId(record.cardId, `${path}.cardId`, 80);
+  const sourceSkillId = has(record, "sourceSkillId")
+    ? parseEnum(record.sourceSkillId, MASS_ATTACK_SOURCE_SKILL_IDS, `${path}.sourceSkillId`)
+    : null;
+  const damageCardIds = has(record, "damageCardIds")
+    ? parseUniqueArray(
+        record.damageCardIds,
+        `${path}.damageCardIds`,
+        sourceSkillId === "luanji" ? 2 : 1,
+        sourceSkillId === "luanji" ? 2 : 1,
+        parseCardId,
+      )
+    : null;
+  if (sourceSkillId === "luanji" && damageCardIds === null) {
+    invalid(`${path}.damageCardIds`, "Luanji requires exactly two physical card ids");
+  }
+  if (damageCardIds !== null && !damageCardIds.includes(cardId)) {
+    invalid(`${path}.damageCardIds`, "must include the primary cardId");
+  }
+  const cardKind = parseEnum(record.cardKind, MASS_ATTACK_KINDS, `${path}.cardKind`);
+  if (cardKind !== "barbarian_invasion" && has(record, "huoshouSourceId")) {
+    invalid(`${path}.huoshouSourceId`, "is valid only for Nanman Invasion");
+  }
   const result: PendingMassAttackResponse = {
     type: "mass_attack",
     attackerId: parsePlayerId(record.attackerId, `${path}.attackerId`),
     targetId: parsePlayerId(record.targetId, `${path}.targetId`),
-    cardId: parseCardId(record.cardId, `${path}.cardId`, 80),
-    cardKind: parseEnum(record.cardKind, MASS_ATTACK_KINDS, `${path}.cardKind`),
+    cardId,
+    ...(damageCardIds ? { damageCardIds } : {}),
+    ...(sourceSkillId ? { sourceSkillId } : {}),
+    cardKind,
     responseKind: parseEnum(record.responseKind, MASS_ATTACK_RESPONSES, `${path}.responseKind`),
+    ...(has(record, "effectiveSuit")
+      ? { effectiveSuit: parseEnum(record.effectiveSuit, CARD_SUITS, `${path}.effectiveSuit`) }
+      : {}),
+    ...(has(record, "huoshouSourceId")
+      ? { huoshouSourceId: record.huoshouSourceId === null
+          ? null
+          : parsePlayerId(record.huoshouSourceId, `${path}.huoshouSourceId`) }
+      : {}),
     remainingTargetIds: parseUniqueArray(record.remainingTargetIds, `${path}.remainingTargetIds`, 0, 9, parsePlayerId),
     declinedLordSkillIds: has(record, "declinedLordSkillIds")
       ? parseDeclinedLordSkills(record.declinedLordSkillIds, `${path}.declinedLordSkillIds`)
@@ -248,9 +596,11 @@ function parseSlashPending(value: unknown, path: string): PendingSlashResponse {
     path,
     ["type", "attackerId", "targetId", "cardId"],
     [
-      "damageCardIds", "slashKind", "damage", "nature", "color", "armorAttempted", "armorIgnored",
+      "damageCardIds", "sourceSkillId", "slashKind", "damage", "nature", "color", "armorAttempted", "armorIgnored",
       "requiredDodgeCount", "dodgesPlayed", "remainingTargetIds", "zhuQueChecked", "ciXiongChecked",
-      "liuliCheckedPlayerIds", "tieqiChecked", "excludedRedirectTargetIds", "dodgeProhibited", "completion",
+      "liuliCheckedPlayerIds", "xiangleCheckedPlayerIds", "jiangProcessedPlayerIds",
+      "liegongChecked", "tieqiChecked", "useProvenance",
+      "excludedRedirectTargetIds", "dodgeProhibited", "completion",
       "declinedLordSkillIds",
     ],
   );
@@ -259,6 +609,9 @@ function parseSlashPending(value: unknown, path: string): PendingSlashResponse {
   const attackerId = parsePlayerId(record.attackerId, `${path}.attackerId`);
   const targetId = parsePlayerId(record.targetId, `${path}.targetId`);
   const cardId = parseCardId(record.cardId, `${path}.cardId`);
+  const sourceSkillId = has(record, "sourceSkillId")
+    ? parseEnum(record.sourceSkillId, SLASH_SOURCE_SKILL_IDS, `${path}.sourceSkillId`)
+    : undefined;
   const remainingTargetIds = has(record, "remainingTargetIds")
     ? parseUniqueArray(record.remainingTargetIds, `${path}.remainingTargetIds`, 0, 2, parsePlayerId)
     : [];
@@ -278,8 +631,9 @@ function parseSlashPending(value: unknown, path: string): PendingSlashResponse {
     targetId,
     cardId,
     damageCardIds: has(record, "damageCardIds")
-      ? parseUniqueArray(record.damageCardIds, `${path}.damageCardIds`, 1, 2, parseCardId)
-      : [cardId],
+      ? parseUniqueArray(record.damageCardIds, `${path}.damageCardIds`, sourceSkillId === "shensu" ? 0 : 1, sourceSkillId === "shensu" ? 0 : 2, parseCardId)
+      : sourceSkillId === "shensu" ? [] : [cardId],
+    ...(sourceSkillId ? { sourceSkillId } : {}),
     slashKind: has(record, "slashKind")
       ? parseEnum(record.slashKind, SLASH_KINDS, `${path}.slashKind`)
       : "slash",
@@ -310,9 +664,21 @@ function parseSlashPending(value: unknown, path: string): PendingSlashResponse {
     liuliCheckedPlayerIds: has(record, "liuliCheckedPlayerIds")
       ? parseUniqueArray(record.liuliCheckedPlayerIds, `${path}.liuliCheckedPlayerIds`, 0, 10, parsePlayerId)
       : [],
+    xiangleCheckedPlayerIds: has(record, "xiangleCheckedPlayerIds")
+      ? parseUniqueArray(record.xiangleCheckedPlayerIds, `${path}.xiangleCheckedPlayerIds`, 0, 10, parsePlayerId)
+      : [],
+    jiangProcessedPlayerIds: has(record, "jiangProcessedPlayerIds")
+      ? parseUniqueArray(record.jiangProcessedPlayerIds, `${path}.jiangProcessedPlayerIds`, 0, 10, parsePlayerId)
+      : [],
+    liegongChecked: has(record, "liegongChecked")
+      ? parseBoolean(record.liegongChecked, `${path}.liegongChecked`)
+      : false,
     tieqiChecked: has(record, "tieqiChecked")
       ? parseBoolean(record.tieqiChecked, `${path}.tieqiChecked`)
       : false,
+    ...(has(record, "useProvenance")
+      ? { useProvenance: parseSlashUseProvenance(record.useProvenance, `${path}.useProvenance`) }
+      : {}),
     excludedRedirectTargetIds: has(record, "excludedRedirectTargetIds")
       ? parseUniqueArray(record.excludedRedirectTargetIds, `${path}.excludedRedirectTargetIds`, 0, 10, parsePlayerId)
       : defaultExcludedSlashTargets(attackerId, targetId, remainingTargetIds),
@@ -380,6 +746,17 @@ function parseDyingResume(value: unknown, path: string, depth: number): GameDama
       const record = exactRecord(value, path, ["type", "pending"]);
       return { type: "slash_sequence", pending: parseSlashPending(record.pending, `${path}.pending`) };
     }
+    case "leiji": {
+      const record = exactRecord(value, path, ["type", "resume"]);
+      const leiji = exactRecord(record.resume, `${path}.resume`, ["type", "pending"]);
+      if (leiji.type === "slash") {
+        return { type: "leiji", resume: { type: "slash", pending: parseSlashPending(leiji.pending, `${path}.resume.pending`) } };
+      }
+      if (leiji.type === "mass_attack") {
+        return { type: "leiji", resume: { type: "mass_attack", pending: parseMassAttackPending(leiji.pending, `${path}.resume.pending`) } };
+      }
+      invalid(`${path}.resume.type`, "expected slash or mass_attack");
+    }
     case "chain_damage": {
       const record = exactRecord(
         value,
@@ -408,6 +785,49 @@ function parseDyingResume(value: unknown, path: string, depth: number): GameDama
       return {
         type: "standard_damage",
         aftermath: parseStandardDamageAftermath(record.aftermath, `${path}.aftermath`, depth),
+      };
+    }
+    case "wumou": {
+      const record = exactRecord(value, path, ["type", "ownerId", "eventId", "continuation"]);
+      const ownerId = parsePlayerId(record.ownerId, `${path}.ownerId`);
+      const continuation = parseWumouContinuation(record.continuation, `${path}.continuation`);
+      const boundOwnerId = continuation.type === "trick_effect"
+        ? trickEffectSourceId(continuation.effect)
+        : continuation.type === "nullification"
+          ? continuation.responderId
+          : continuation.sourceId;
+      if (boundOwnerId !== ownerId ||
+          continuation.type === "nullification" && continuation.pending.targetId !== ownerId) {
+        invalid(`${path}.continuation`, "is not bound to the Wumou owner");
+      }
+      return {
+        type: "wumou",
+        ownerId,
+        eventId: parseInteger(record.eventId, `${path}.eventId`, 1, Number.MAX_SAFE_INTEGER),
+        continuation,
+      };
+    }
+    case "shenfen": {
+      const record = exactRecord(value, path, ["type", "continuation"]);
+      return { type: "shenfen", continuation: parseShenfenContinuation(record.continuation, `${path}.continuation`) };
+    }
+    case "yeyan": {
+      const record = exactRecord(value, path, ["type", "continuation"]);
+      return { type: "yeyan", continuation: parseYeyanContinuation(record.continuation, `${path}.continuation`) };
+    }
+    case "luanwu": {
+      const record = exactRecord(value, path, ["type", "eventId", "ownerId", "processedActorIds", "remainingActorIds"]);
+      const processedActorIds = parseUniqueArray(record.processedActorIds, `${path}.processedActorIds`, 0, 9, parsePlayerId);
+      const remainingActorIds = parseUniqueArray(record.remainingActorIds, `${path}.remainingActorIds`, 0, 9, parsePlayerId);
+      if (new Set([...processedActorIds, ...remainingActorIds]).size !== processedActorIds.length + remainingActorIds.length) {
+        invalid(path, "Luanwu actor partitions must be disjoint");
+      }
+      return {
+        type: "luanwu",
+        eventId: parseInteger(record.eventId, `${path}.eventId`, 1, Number.MAX_SAFE_INTEGER),
+        ownerId: parsePlayerId(record.ownerId, `${path}.ownerId`),
+        processedActorIds,
+        remainingActorIds,
       };
     }
     default:

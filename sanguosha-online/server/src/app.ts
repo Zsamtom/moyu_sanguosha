@@ -57,8 +57,8 @@ export function createApplication(options: {
     });
   });
 
-  app.use("/api/auth", createAuthRouter(users, securityEvents));
-  app.use("/api/admin", createAdminRouter(users, securityEvents));
+  app.use("/api/auth", createAuthRouter(users, securityEvents, rooms));
+  app.use("/api/admin", createAdminRouter(users, securityEvents, rooms));
   app.use("/api/rooms", requireAuth(users), requirePasswordChangeComplete, createRoomsRouter(users, rooms));
 
   const webDist = fileURLToPath(new URL("../../web/dist/", import.meta.url));

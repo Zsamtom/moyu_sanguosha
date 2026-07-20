@@ -795,7 +795,10 @@ export function assertAuthoritativeEngineState(
     throw new AuthoritativeEngineError("commitVersion must be a nonnegative integer");
   }
   try {
-    assertCompleteRulesEngineState(candidate.completeRules);
+    assertCompleteRulesEngineState(
+      candidate.completeRules,
+      Array.isArray(candidate.lifePlayers) ? candidate.lifePlayers : undefined,
+    );
     if (!candidate.zones || !Array.isArray(candidate.zones.players)) {
       throw new AuthoritativeEngineError("authoritative zones are missing");
     }

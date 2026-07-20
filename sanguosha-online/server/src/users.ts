@@ -41,7 +41,7 @@ export interface UserStore {
   list(): Promise<PublicUser[]>;
   create(input: CreateUserInput): Promise<PublicUser>;
   setDisabled(id: string, disabled: boolean): Promise<PublicUser | undefined>;
-  resetPassword(id: string, password: string, mustChangePassword?: boolean): Promise<PublicUser | undefined>;
+  resetPassword(id: string, password: string): Promise<PublicUser | undefined>;
   changePassword(id: string, password: string): Promise<SessionUser | undefined>;
   recordAudit(actorId: string, action: string, targetUserId: string, details?: object): Promise<void>;
 }
@@ -163,14 +163,13 @@ export class PostgresUserStore implements UserStore {
   async resetPassword(
     id: string,
     password: string,
-    mustChangePassword = true,
   ): Promise<PublicUser | undefined> {
     const passwordHash = await bcrypt.hash(password, PASSWORD_ROUNDS);
     const result = await this.pool.query<UserRow>(
-      `UPDATE users SET password_hash = $2, must_change_password = $3,
+      `UPDATE users SET password_hash = $2, must_change_password = TRUE,
          session_version = session_version + 1, updated_at = NOW()
        WHERE id = $1 RETURNING *`,
-      [id, passwordHash, mustChangePassword],
+      [id, passwordHash],
     );
     const row = result.rows[0];
     return row ? toPublicUser(row) : undefined;

@@ -13,6 +13,7 @@ import {
   getGameView,
   getGeneralDefinition,
   getEffectiveGeneralSkillIds,
+  grantSkill,
   recordSkillLoss,
   type Card,
   type CardKind,
@@ -145,7 +146,7 @@ describe("lord dispatch skills and SP Yuan Shu", () => {
 
   it("lets active Jijiang use the provider's physical Slash with the requester as source and requester Wushuang count", () => {
     const { session, actor, targets: [provider, victim] } = setup(3);
-    actor.generalId = "shen_lv_bu";
+    actor.generalId = "lv_bu";
     actor.role = "lord";
     provider!.generalId = "guan_yu";
     provider!.hand = [makeCard("jijiang-fire-slash", "fire_slash", "heart")];
@@ -549,6 +550,33 @@ describe("Jizhi serializable card-use events", () => {
       activate: true,
       promptId: prompt.promptId,
     };
+    if (offered.pendingResponse?.type !== "skill_choice" || offered.pendingResponse.resume.type !== "card_use") {
+      throw new Error("Expected committed Jizhi card-use continuation");
+    }
+    const commitment = offered.completeRules.lifecycle.effects.find((effect) =>
+      effect.kind === "card_use_commitment");
+    if (!commitment) throw new Error("Expected card-use commitment");
+    expect(JSON.parse(String(commitment.payload.cursor))).toEqual({
+      stage: offered.pendingResponse.resume.stage,
+      eventId: offered.pendingResponse.resume.eventId,
+      remainingTriggers: [],
+    });
+    const forgedCursor = JSON.parse(JSON.stringify(offered)) as GameSession;
+    const commitmentIndex = forgedCursor.completeRules.lifecycle.effects.findIndex((effect) =>
+      effect.effectId === commitment.effectId);
+    forgedCursor.completeRules.lifecycle.effects[commitmentIndex] = {
+      ...forgedCursor.completeRules.lifecycle.effects[commitmentIndex]!,
+      payload: {
+        ...forgedCursor.completeRules.lifecycle.effects[commitmentIndex]!.payload,
+        cursor: JSON.stringify({
+          stage: "targets_confirmed",
+          eventId: offered.pendingResponse.resume.eventId,
+          remainingTriggers: [],
+        }),
+      },
+    };
+    expect(() => applyAction(forgedCursor, action)).toThrow(/阶段游标/);
+
     const resolved = applyAction(JSON.parse(JSON.stringify(offered)) as GameSession, action);
     expect(resolved.pendingResponse).toBeNull();
     expect(resolved.players.find((player) => player.id === actor.id)?.hand.map((card) => card.id)).toEqual([
@@ -556,6 +584,7 @@ describe("Jizhi serializable card-use events", () => {
     ]);
     expect(resolved.discardPile.filter((card) => card.id === "jizhi-ex")).toHaveLength(1);
     expect(resolved.logs.filter((log) => log.message.includes("发动集智，摸了"))).toHaveLength(1);
+    expect(resolved.completeRules.lifecycle.effects.some((effect) => effect.kind === "card_use_commitment")).toBe(false);
     expect(ruleCode(() => applyAction(resolved, action))).toBe("INVALID_PHASE");
   });
 
@@ -681,42 +710,31 @@ describe("Jizhi serializable card-use events", () => {
     actor.equipment.armor = makeCard("continued-qixi-armor", "bai_yin_shi_zi", "club");
     target!.hand = [makeCard("continued-qixi-victim", "dodge")];
     session.deck = [makeCard("continued-jizhi-draw", "slash", "heart")];
-    session.turn.phase = "respond";
-    session.nextUseId = 2;
-    session.nextEventId = 2;
-    const triggerId = `1:jizhi:${actor.id}:0`;
-    session.pendingResponse = {
-      type: "skill_choice",
-      targetId: actor.id,
-      skillId: "jizhi",
-      promptId: `skill:${triggerId}`,
-      triggerId,
-      resume: {
-        type: "card_use",
-        stage: "card_use_declared",
-        eventId: 1,
-        remainingTriggers: [],
-        intent: {
-          useId: 1,
-          sourceId: actor.id,
-          physicalCardId: "continued-qixi-armor",
-          physicalKind: "bai_yin_shi_zi",
-          effectiveKind: "guo_he_chai_qiao",
-          suit: "club",
-          rank: 1,
-          targetIds: [target!.id],
-          method: "use",
-          viaSkill: "qixi",
-        },
-      },
-    };
+    grantSkill(session.completeRules.lifecycle, {
+      ownerId: actor.id,
+      skillId: "qixi",
+      sourcePlayerId: actor.id,
+      sourceSkillId: "test:qixi",
+      expiry: { type: "permanent" },
+    });
+    const offered = applyAction(session, {
+      type: "use_skill",
+      playerId: actor.id,
+      skillId: "qixi",
+      cardIds: ["continued-qixi-armor"],
+      targetId: target!.id,
+    });
+    if (offered.pendingResponse?.type !== "skill_choice" || !offered.pendingResponse.promptId) {
+      throw new Error("Qixi did not pause at the Jizhi continuation");
+    }
+    const promptId = offered.pendingResponse.promptId;
 
-    let game = applyAction(JSON.parse(JSON.stringify(session)) as GameSession, {
+    let game = applyAction(JSON.parse(JSON.stringify(offered)) as GameSession, {
       type: "resolve_skill",
       playerId: actor.id,
       skillId: "jizhi",
       activate: true,
-      promptId: `skill:${triggerId}`,
+      promptId,
     });
     expect(game.players.find((player) => player.id === actor.id)).toMatchObject({ hp: 3 });
     expect(game.players.find((player) => player.id === actor.id)?.equipment.armor).toBeUndefined();
@@ -782,7 +800,12 @@ describe("unified after-move skills", () => {
     ]);
     expect(resumed.pendingResponse).toMatchObject({ type: "slash", targetId: target!.id });
     expect(resumed.turn.phase).toBe("respond");
-    expect(resumed.afterMove).toEqual({ queuedTriggers: [], suspendedPhase: null, suspendedResponse: null });
+    expect(resumed.afterMove).toEqual({
+      queuedRecoveries: [],
+      queuedTriggers: [],
+      suspendedPhase: null,
+      suspendedResponse: null,
+    });
   });
 
   it("covers last-hand loss through response, another player's zone trick, and multi-card discard", () => {
@@ -901,7 +924,12 @@ describe("unified after-move skills", () => {
     game = applyAction(game, {
       type: "resolve_skill", playerId: actor.id, skillId: "xiaoji", activate: false, promptId: second.promptId,
     });
-    expect(game.afterMove).toEqual({ queuedTriggers: [], suspendedPhase: null, suspendedResponse: null });
+    expect(game.afterMove).toEqual({
+      queuedRecoveries: [],
+      queuedTriggers: [],
+      suspendedPhase: null,
+      suspendedResponse: null,
+    });
     expect(game.discardPile.map((card) => card.id)).toEqual(expect.arrayContaining([
       "xiaoji-cost-armor", "xiaoji-cost-horse",
     ]));
@@ -1354,8 +1382,10 @@ describe("Fanjian and Lijian", () => {
     other!.role = "rebel";
     actor.equipment.armor = makeCard("lijian-cost", "ren_wang_dun", "club");
     actor.hand = [makeCard("second-lijian-cost", "dodge")];
+    initiator!.hp = 3;
     initiator!.hand = [makeCard("lord-kept-card", "dodge")];
     initiator!.equipment.weapon = makeCard("lord-kept-weapon", "zhu_ge_lian_nu", "club");
+    initiator!.equipment.armor = makeCard("lord-silver-lion", "bai_yin_shi_zi", "club");
     initiator!.judgment = [makeCard("lord-kept-judgment", "le_bu_si_shu", "spade")];
     victim!.hand = [];
     victim!.hp = 1;
@@ -1411,9 +1441,11 @@ describe("Fanjian and Lijian", () => {
     expect(game.players.find((player) => player.id === victim!.id)?.alive).toBe(false);
     expect(game.players.find((player) => player.id === initiator!.id)?.hand).toHaveLength(0);
     expect(game.players.find((player) => player.id === initiator!.id)?.equipment).toEqual({});
+    expect(game.players.find((player) => player.id === initiator!.id)?.hp).toBe(4);
     expect(game.players.find((player) => player.id === initiator!.id)?.judgment.map((card) => card.id)).toEqual(["lord-kept-judgment"]);
     expect(game.discardPile.map((card) => card.id)).toContain("lord-kept-card");
     expect(game.discardPile.map((card) => card.id)).toContain("lord-kept-weapon");
+    expect(game.discardPile.map((card) => card.id)).toContain("lord-silver-lion");
     expect(game.discardPile.map((card) => card.id)).not.toContain("lord-kept-judgment");
     expect(game.currentPlayerId).toBe(actor.id);
     expect(game.turn).toMatchObject({ phase: "play", skillUseCounts: { lijian: 1 } });

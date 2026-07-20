@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeGameView, normalizeRoomDetail } from './types';
+import { RealtimeClient } from './realtime';
+import { normalizeGameView, normalizeRoomDetail, type GameAction } from './types';
 
 describe('server payload adapters', () => {
   it('normalizes the server room view and identifies the owner', () => {
@@ -23,9 +24,63 @@ describe('server payload adapters', () => {
     expect(room.members[1]).toMatchObject({ userId: 'user-2', isHost: false, online: false });
   });
 
+  it('preserves the caller-private general draft without deriving other candidates', () => {
+    const room = normalizeRoomDetail({
+      id: 'room-draft',
+      name: '风火选将',
+      ownerId: 'user-1',
+      ownerName: '玄德',
+      status: 'drafting',
+      playerCount: 2,
+      maxPlayers: 5,
+      players: [
+        { id: 'user-1', username: 'liubei', displayName: '玄德', ready: true, connected: true, seat: 0 },
+        { id: 'user-2', username: 'guanyu', displayName: '云长', ready: true, connected: true, seat: 1 },
+      ],
+      ruleConfig: {
+        ruleSetVersion: 'original-66-v1',
+        enabledGeneralPacks: ['standard', 'sp', 'wind'],
+        generalSelection: { mode: 'choice', candidatesPerPlayer: 2, allowDuplicateGenerals: false },
+        deckProfile: 'original-160',
+        maximumReshuffles: 5,
+        lordBonusMinimumPlayers: 5,
+        godFactionChoice: true,
+      },
+      draft: {
+        stage: 'selecting_generals',
+        currentPlayerId: 'user-1',
+        playerIds: ['user-1', 'user-2'],
+        candidates: ['cao_cao', 'liu_bei'],
+        players: [
+          {
+            playerId: 'user-1', role: 'lord', selected: false, generalId: null, needsFaction: false, faction: null,
+          },
+          {
+            playerId: 'user-2', role: 'rebel', selected: true, generalId: null, needsFaction: false, faction: null,
+          },
+        ],
+      },
+    });
+
+    expect(room.status).toBe('drafting');
+    expect(room.ruleConfig).toMatchObject({
+      enabledGeneralPacks: ['standard', 'sp', 'wind'],
+      generalSelection: { mode: 'choice', candidatesPerPlayer: 2, allowDuplicateGenerals: false },
+    });
+    expect(room.draft?.candidates).toEqual(['cao_cao', 'liu_bei']);
+    expect(room.draft?.currentPlayerId).toBe('user-1');
+    expect(room.draft?.players).toEqual([
+      { playerId: 'user-1', role: 'lord', selected: false, generalId: null, needsFaction: false, faction: null },
+      { playerId: 'user-2', role: 'rebel', selected: true, generalId: null, needsFaction: false, faction: null },
+    ]);
+    expect(JSON.stringify(room.draft)).not.toContain('guan_yu');
+  });
+
   it('turns a private engine view into playable UI state', () => {
     const game = normalizeGameView({
       version: 1,
+      revision: 3,
+      actionPromptId: 'game:3',
       status: 'playing',
       players: [
         { id: 'user-1', seat: 0, alive: true, hp: 4, maxHp: 4, handCount: 2, equipment: [
@@ -35,7 +90,9 @@ describe('server payload adapters', () => {
         ], hand: [
           { id: 'card-1', kind: 'slash' },
           { id: 'card-2', kind: 'peach' },
-        ], role: 'lord' },
+        ], role: 'lord', effectiveSkillIds: ['rende'], effectiveSkills: [
+          { id: 'rende', name: '仁德', description: '出牌阶段，你可以将任意张手牌交给一名其他角色。' },
+        ] },
         { id: 'user-2', seat: 1, alive: true, hp: 3, maxHp: 4, handCount: 1, hand: null, role: null },
       ],
       currentPlayerId: 'user-1',
@@ -53,7 +110,9 @@ describe('server payload adapters', () => {
       },
     }, { userId: 'user-1', roomId: 'room-1' });
 
-    expect(game).toMatchObject({ roomId: 'room-1', round: 2, canAct: true, selfPlayerId: 'user-1' });
+    expect(game).toMatchObject({
+      roomId: 'room-1', revision: 3, actionPromptId: 'game:3', round: 2, canAct: true, selfPlayerId: 'user-1',
+    });
     expect(game.hand[0]).toMatchObject({ id: 'card-1', name: '杀', playable: true, allowedTargetIds: ['user-2'] });
     expect(game.hand[1]).toMatchObject({ id: 'card-2', name: '桃', playable: true, targetMode: 'self' });
     expect(game.players[0]).toMatchObject({ isSelf: true, identity: '主公' });
@@ -61,7 +120,44 @@ describe('server payload adapters', () => {
       id: 'horse-1', kind: 'chi_tu', slot: '进攻坐骑', name: '赤兔', suit: 'heart', rank: '5', category: 'equipment',
     });
     expect(game.players[0]?.judgment?.[0]).toMatchObject({ id: 'lebu-1', slot: '判定区', name: '乐不思蜀' });
+    expect(game.players[0]?.effectiveSkills).toEqual([
+      { id: 'rende', name: '仁德', description: '出牌阶段，你可以将任意张手牌交给一名其他角色。' },
+    ]);
     expect(game.logs[0]?.text).toBe('玩家 1 的回合开始');
+  });
+
+  it('caches raw game action tokens and sends a strict envelope', async () => {
+    const sent: unknown[] = [];
+    const socket = {
+      connected: true,
+      timeout: () => ({
+        emit: (_event: string, payload: unknown, ack: (error: Error | null, result: unknown) => void) => {
+          sent.push(payload);
+          ack(null, { ok: true });
+        },
+      }),
+    };
+    const client = new RealtimeClient();
+    const internals = client as unknown as {
+      socket: unknown;
+      currentRoomId: string | null;
+      rememberGameView: (game: unknown | null) => void;
+    };
+    internals.socket = socket;
+    internals.currentRoomId = 'room-1';
+    internals.rememberGameView({ revision: 9, actionPromptId: 'game:9' });
+
+    const action = { type: 'end_play', playerId: 'user-1' } as const;
+    await client.sendGameAction('room-1', action);
+    expect(sent).toEqual([{
+      roomId: 'room-1',
+      expectedRevision: 9,
+      expectedPromptId: 'game:9',
+      action,
+    }]);
+
+    internals.rememberGameView(null);
+    await expect(client.sendGameAction('room-1', action)).rejects.toThrow('尚未同步');
   });
 
   it('normalizes a dodge response prompt', () => {
@@ -418,6 +514,89 @@ describe('server payload adapters', () => {
     expect(game.players[0]?.equipment?.[0]).toMatchObject({ id: 'red-horse', suit: 'diamond', category: 'equipment' });
   });
 
+  it('normalizes the authoritative Niepan dying choice', () => {
+    const game = normalizeGameView({
+      version: 1,
+      status: 'playing',
+      players: [
+        { id: 'pang-tong', seat: 0, alive: true, hp: 0, maxHp: 3, handCount: 0, hand: [], role: 'rebel' },
+        { id: 'lord', seat: 1, alive: true, hp: 4, maxHp: 4, handCount: 0, hand: null, role: 'lord' },
+      ],
+      currentPlayerId: 'lord',
+      turn: { number: 6, playerId: 'lord', phase: 'respond' },
+      winner: null,
+      logs: [],
+      prompt: {
+        type: 'skill_choice', playerId: 'pang-tong', skillId: 'niepan',
+        promptId: 'dying:17:niepan', canPass: true,
+      },
+    }, { userId: 'pang-tong' });
+
+    expect(game.prompt).toMatchObject({
+      id: 'dying:17:niepan', kind: 'skill-choice', skillId: 'niepan', optional: true,
+    });
+    expect(game.prompt?.message).toContain('涅槃');
+  });
+
+  it('normalizes the optional Buqu entry-save choice', () => {
+    const game = normalizeGameView({
+      version: 1,
+      status: 'playing',
+      players: [
+        { id: 'zhou-tai', seat: 0, alive: true, hp: 0, maxHp: 4, handCount: 0, hand: [], role: 'rebel' },
+        { id: 'lord', seat: 1, alive: true, hp: 4, maxHp: 4, handCount: 0, hand: null, role: 'lord' },
+      ],
+      currentPlayerId: 'lord',
+      turn: { number: 7, playerId: 'lord', phase: 'respond' },
+      winner: null,
+      logs: [],
+      prompt: {
+        type: 'skill_choice', playerId: 'zhou-tai', skillId: 'buqu',
+        promptId: 'dying:23:buqu-entry', canPass: true,
+      },
+    }, { userId: 'zhou-tai' });
+
+    expect(game.prompt).toMatchObject({
+      id: 'dying:23:buqu-entry', kind: 'skill-choice', skillId: 'buqu', optional: true,
+    });
+    expect(game.prompt?.message).toContain('点数均不重复');
+  });
+
+  it('exposes only public Buqu wounds and normalizes the required recovery choice', () => {
+    const wound = { id: 'buqu-wound', kind: 'slash', name: '杀', suit: 'spade', rank: 7, category: 'basic' };
+    const game = normalizeGameView({
+      version: 1,
+      status: 'playing',
+      players: [{
+        id: 'zhou-tai', seat: 0, alive: true, hp: 0, maxHp: 4, handCount: 0, hand: [], role: 'rebel',
+        publicPiles: { buqu: [wound] },
+        privatePiles: { yiji: [{ ...wound, id: 'hidden-card' }] },
+      }],
+      currentPlayerId: 'zhou-tai',
+      turn: { number: 7, playerId: 'zhou-tai', phase: 'respond' },
+      winner: null,
+      logs: [],
+      prompt: {
+        type: 'standard_skill', playerId: 'zhou-tai', skillId: 'buqu', stage: 'buqu_recovery',
+        promptId: 'recovery:23:buqu:zhou-tai', canPass: false,
+        cards: [wound], allowedCardIds: ['buqu-wound'], targetIds: [],
+        minCards: 1, maxCards: 1, minTargets: 0, maxTargets: 0,
+      },
+    }, { userId: 'zhou-tai' });
+
+    expect(game.players[0]?.publicPiles).toEqual({
+      buqu: [expect.objectContaining({ id: 'buqu-wound', rank: '7', suit: 'spade' })],
+    });
+    expect(game.players[0]?.privatePiles).toEqual({
+      yiji: [expect.objectContaining({ id: 'hidden-card' })],
+    });
+    expect(game.prompt).toMatchObject({
+      id: 'recovery:23:buqu:zhou-tai', kind: 'standard-skill', skillId: 'buqu',
+      standardStage: 'buqu_recovery', optional: false, allowedCardIds: ['buqu-wound'],
+      cardChoices: [expect.objectContaining({ id: 'buqu-wound' })],
+    });
+  });
+
   it('normalizes weapon decisions and ZhangBa virtual Slash controls', () => {
     const base = {
       version: 1 as const,
@@ -438,10 +617,10 @@ describe('server payload adapters', () => {
       ...base,
       prompt: {
         type: 'play', playerId: 'user-1', cards: [],
-        zhangBaSlash: { allowedCardIds: ['cost-1', 'cost-2'], targetIds: ['user-2'] },
+        zhangBaSlash: { allowedCardIds: ['cost-1', 'cost-2'], targetIds: ['user-2'], maxTargets: 3 },
       },
     }, { userId: 'user-1' });
-    expect(play.zhangBaSlash).toEqual({ allowedCardIds: ['cost-1', 'cost-2'], targetIds: ['user-2'] });
+    expect(play.zhangBaSlash).toEqual({ allowedCardIds: ['cost-1', 'cost-2'], targetIds: ['user-2'], maxTargets: 3 });
     expect(play.players[0]?.equipment?.[0]).toMatchObject({ id: 'zhangba', kind: 'zhang_ba_she_mao', slot: '武器', name: '丈八蛇矛' });
 
     const weapon = normalizeGameView({
@@ -449,12 +628,12 @@ describe('server payload adapters', () => {
       turn: { ...base.turn, phase: 'respond' as const },
       prompt: {
         type: 'weapon_action', playerId: 'user-1', weaponKind: 'guan_shi_fu',
-        stage: 'guanshi_force_hit', victimId: 'user-2', allowedCardIds: ['cost-1', 'cost-2'],
+        stage: 'guanshi_force_hit', victimId: 'user-2', promptId: 'damage:41', allowedCardIds: ['cost-1', 'cost-2'],
         minCards: 2, maxCards: 2, canPass: true,
       },
     }, { userId: 'user-1' });
     expect(weapon.prompt).toMatchObject({
-      kind: 'weapon-action', weaponStage: 'guanshi_force_hit', min: 2, max: 2,
+      id: 'damage:41', promptId: 'damage:41', kind: 'weapon-action', weaponStage: 'guanshi_force_hit', min: 2, max: 2,
       allowedCardIds: ['cost-1', 'cost-2'], optional: true,
     });
   });
@@ -828,5 +1007,280 @@ describe('server payload adapters', () => {
       ],
     });
     expect(tuxi.prompt?.zoneChoices?.every((choice) => choice.label.includes('暗牌'))).toBe(true);
+
+    const liegong = normalizeGameView({
+      ...base,
+      prompt: {
+        type: 'standard_skill' as const,
+        playerId: 'self',
+        skillId: 'liegong' as const,
+        stage: 'invoke',
+        promptId: 'standard:11:liegong:self:invoke',
+        canPass: true,
+        cards: [],
+        allowedCardIds: [],
+        targetIds: [],
+        minCards: 0,
+        maxCards: 0,
+        minTargets: 0,
+        maxTargets: 0,
+      },
+    }, { userId: 'self' });
+    expect(liegong.prompt).toMatchObject({
+      id: 'standard:11:liegong:self:invoke',
+      kind: 'standard-skill',
+      skillId: 'liegong',
+      standardStage: 'invoke',
+      optional: true,
+    });
+    expect(liegong.prompt?.message).toContain('不能使用「闪」');
+
+    const tianxiang = normalizeGameView({
+      ...base,
+      players: [
+        {
+          ...base.players[0],
+          handCount: 3,
+          hand: [
+            ...(base.players[0]?.hand ?? []),
+            { id: 'hongyan-spade', kind: 'slash' as const, name: '杀', suit: 'spade' as const, rank: 7, category: 'basic' as const },
+          ],
+        },
+        base.players[1],
+      ],
+      prompt: {
+        type: 'standard_skill' as const,
+        playerId: 'self',
+        skillId: 'tianxiang' as const,
+        stage: 'tianxiang_redirect',
+        promptId: 'damage:41',
+        canPass: true,
+        cards: [],
+        allowedCardIds: ['hongyan-spade'],
+        targetIds: ['other'],
+        minCards: 1,
+        maxCards: 1,
+        minTargets: 1,
+        maxTargets: 1,
+      },
+    }, { userId: 'self' });
+    expect(tianxiang.prompt).toMatchObject({
+      id: 'damage:41',
+      kind: 'standard-skill',
+      skillId: 'tianxiang',
+      standardStage: 'tianxiang_redirect',
+      allowedCardIds: ['hongyan-spade'],
+      allowedTargetIds: ['other'],
+      min: 1,
+      max: 1,
+      minTargets: 1,
+      maxTargets: 1,
+      optional: true,
+    });
+    expect(tianxiang.prompt?.message).toContain('服务器判定');
+    expect(tianxiang.hand.find((card) => card.id === 'hongyan-spade')).toMatchObject({ playable: true, suit: 'spade' });
+    expect(tianxiang.hand.find((card) => card.id === 'kept-card')).toMatchObject({ playable: false });
+  });
+
+  it('preserves the complete shared play hints and public/private lifecycle projection', () => {
+    const game = normalizeGameView({
+      version: 1,
+      status: 'playing',
+      players: [
+        {
+          id: 'self', seat: 0, alive: true, faceUp: true, hp: 2, maxHp: 4, handCount: 4, role: 'lord',
+          hand: [
+            { id: 'spade-1', kind: 'slash', suit: 'spade', rank: 1, category: 'basic' },
+            { id: 'spade-2', kind: 'dodge', suit: 'spade', rank: 2, category: 'basic' },
+            { id: 'heart-1', kind: 'peach', suit: 'heart', rank: 3, category: 'basic' },
+            { id: 'club-1', kind: 'wine', suit: 'club', rank: 4, category: 'basic' },
+          ],
+          publicPiles: { field: [{ id: 'field-1', kind: 'slash', suit: 'diamond', rank: 5, category: 'basic' }] },
+          publicPileCounts: { stars: 7 },
+          privatePiles: { stars: [{ id: 'star-1', kind: 'dodge', suit: 'heart', rank: 6, category: 'basic' }] },
+          publicMarks: { rage: 2, ren: 1 },
+          publicEffects: [{ effectId: 9, kind: 'kuangfeng', targetPlayerId: 'other', sourcePlayerId: 'self' }],
+        },
+        { id: 'other', seat: 1, alive: true, faceUp: true, hp: 4, maxHp: 4, handCount: 0, hand: null, role: 'rebel' },
+      ],
+      currentPlayerId: 'self',
+      turn: { number: 20, playerId: 'self', phase: 'play' },
+      winner: null,
+      logs: [],
+      prompt: {
+        type: 'play', playerId: 'self',
+        cards: [{ cardId: 'spade-1', kind: 'slash', targetMode: 'up-to-four', targetIds: ['other'] }],
+        skills: [{
+          skillId: 'longhun', cardIds: ['spade-1', 'spade-2', 'heart-1', 'club-1'],
+          minCards: 2, maxCards: 2, targetMode: 'single-any', targetIds: ['self', 'other'],
+          cardPairs: [['spade-1', 'spade-2']],
+          cardGroups: [['spade-1', 'spade-2'], ['heart-1', 'club-1']],
+          cardGroupTargets: [{ cardIds: ['spade-1', 'spade-2'], targetIds: ['other'], maxTargets: 4 }],
+          virtualCardKind: 'fire_slash',
+        }],
+        zhangBaSlash: { allowedCardIds: ['spade-1', 'spade-2'], targetIds: ['other'], maxTargets: 4 },
+      },
+    }, { userId: 'self' });
+
+    expect(game.hand[0]).toMatchObject({ targetMode: 'up-to-four', allowedTargetIds: ['other'] });
+    expect(game.skills[0]).toMatchObject({
+      skillId: 'longhun', targetMode: 'single-any',
+      cardPairs: [['spade-1', 'spade-2']],
+      cardGroups: [['spade-1', 'spade-2'], ['heart-1', 'club-1']],
+      cardGroupTargets: [{ cardIds: ['spade-1', 'spade-2'], targetIds: ['other'], maxTargets: 4 }],
+      virtualCardKind: 'fire_slash',
+    });
+    expect(game.zhangBaSlash).toEqual({ allowedCardIds: ['spade-1', 'spade-2'], targetIds: ['other'], maxTargets: 4 });
+    expect(game.players[0]).toMatchObject({
+      publicPileCounts: { stars: 7 }, publicMarks: { rage: 2, ren: 1 },
+      publicEffects: [{ effectId: 9, kind: 'kuangfeng', targetPlayerId: 'other', sourcePlayerId: 'self' }],
+      publicPiles: { field: [expect.objectContaining({ id: 'field-1' })] },
+      privatePiles: { stars: [expect.objectContaining({ id: 'star-1' })] },
+    });
+  });
+
+  it('normalizes authoritative Guhuo and Pindian prompts', () => {
+    const base = {
+      version: 1 as const,
+      status: 'playing' as const,
+      players: [
+        { id: 'source', seat: 0, alive: true, hp: 3, maxHp: 3, handCount: 1, hand: null, role: 'rebel' as const },
+        {
+          id: 'self', seat: 1, alive: true, hp: 4, maxHp: 4, handCount: 2, role: 'lord' as const,
+          hand: [{ id: 'pindian-1', kind: 'slash' as const }, { id: 'pindian-2', kind: 'peach' as const }],
+        },
+      ],
+      currentPlayerId: 'source',
+      turn: { number: 21, playerId: 'source', phase: 'respond' as const },
+      winner: null,
+      logs: [],
+    };
+    const guhuo = normalizeGameView({
+      ...base,
+      prompt: {
+        type: 'guhuo_challenge' as const, playerId: 'self', sourceId: 'source', declaredKind: 'peach' as const,
+        promptId: 'guhuo:21:self', canChallenge: true as const,
+      },
+    }, { userId: 'self' });
+    expect(guhuo.prompt).toMatchObject({
+      id: 'guhuo:21:self', promptId: 'guhuo:21:self', kind: 'guhuo-challenge',
+      sourceId: 'source', declaredKind: 'peach', canChallenge: true, optional: true,
+    });
+
+    const pindian = normalizeGameView({
+      ...base,
+      prompt: {
+        type: 'choose_pindian_card' as const, playerId: 'self', opponentId: 'source', skillId: 'tianyi' as const,
+        promptId: 'pindian:22:self', allowedCardIds: ['pindian-1', 'pindian-2'],
+      },
+    }, { userId: 'self' });
+    expect(pindian.prompt).toMatchObject({
+      id: 'pindian:22:self', promptId: 'pindian:22:self', kind: 'choose-pindian-card',
+      opponentId: 'source', skillId: 'tianyi', min: 1, max: 1, allowedCardIds: ['pindian-1', 'pindian-2'],
+    });
+    expect(pindian.hand.every((card) => card.playable)).toBe(true);
+  });
+
+  it('preserves Kanpo, Longhun and grouped response contracts', () => {
+    const base = {
+      version: 1 as const,
+      status: 'playing' as const,
+      players: [
+        { id: 'source', seat: 0, alive: true, hp: 4, maxHp: 4, handCount: 0, hand: null, role: 'lord' as const },
+        {
+          id: 'self', seat: 1, alive: true, hp: 2, maxHp: 4, handCount: 3, role: 'rebel' as const,
+          hand: [
+            { id: 'black-1', kind: 'slash' as const, suit: 'spade' as const },
+            { id: 'black-2', kind: 'dodge' as const, suit: 'spade' as const },
+            { id: 'club-1', kind: 'wine' as const, suit: 'club' as const },
+          ],
+        },
+      ],
+      currentPlayerId: 'source',
+      turn: { number: 22, playerId: 'source', phase: 'respond' as const },
+      winner: null,
+      logs: [],
+    };
+    const nullification = normalizeGameView({
+      ...base,
+      prompt: {
+        type: 'nullification' as const, playerId: 'self', sourceId: 'source', effectTargetId: 'self',
+        cardKind: 'duel' as const, allowedCardIds: [], kanpoCardIds: ['club-1'],
+        longhunCardGroups: [['black-1', 'black-2']], canPass: true as const,
+      },
+    }, { userId: 'self' });
+    expect(nullification.prompt).toMatchObject({
+      kind: 'respond-nullification', kanpoCardIds: ['club-1'], longhunCardGroups: [['black-1', 'black-2']],
+    });
+
+    const response = normalizeGameView({
+      ...base,
+      prompt: {
+        type: 'respond' as const, playerId: 'self', attackerId: 'source', targetId: 'self',
+        context: 'duel' as const, responseKind: 'slash' as const, allowedCardIds: [], dodgeCardIds: [], slashCardIds: [],
+        requiredCount: 1, respondedCount: 0, canPass: true as const, lordSkills: [],
+        skillResponses: [
+          { skillId: 'wushen' as const, cardIds: ['black-1'], responseKind: 'slash' as const, minCards: 1, maxCards: 1 },
+          {
+            skillId: 'longhun' as const, cardIds: ['black-1', 'black-2'], responseKind: 'slash' as const,
+            minCards: 2, maxCards: 2, cardGroups: [['black-1', 'black-2']],
+          },
+          { skillId: 'jiuchi' as const, cardIds: ['club-1'], responseKind: 'wine' as const, minCards: 1, maxCards: 1 },
+        ],
+      },
+    }, { userId: 'self' });
+    expect(response.prompt?.skillResponses).toEqual([
+      expect.objectContaining({ skillId: 'wushen', minCards: 1, maxCards: 1 }),
+      expect.objectContaining({ skillId: 'longhun', minCards: 2, maxCards: 2, cardGroups: [['black-1', 'black-2']] }),
+      expect.objectContaining({ skillId: 'jiuchi', responseKind: 'wine', minCards: 1, maxCards: 1 }),
+    ]);
+  });
+
+  it('preserves standard options, judgment choices and complete action payloads', () => {
+    const judgment = { id: 'lightning-1', kind: 'shan_dian', suit: 'spade', rank: 1, category: 'trick' };
+    const game = normalizeGameView({
+      version: 1,
+      status: 'playing',
+      players: [
+        { id: 'self', seat: 0, alive: true, hp: 3, maxHp: 4, handCount: 0, hand: [], role: 'lord' },
+        { id: 'other', seat: 1, alive: true, hp: 4, maxHp: 4, handCount: 0, hand: null, role: 'rebel' },
+      ],
+      currentPlayerId: 'self',
+      turn: { number: 23, playerId: 'self', phase: 'respond' },
+      winner: null,
+      logs: [],
+      prompt: {
+        type: 'standard_skill', playerId: 'self', skillId: 'qiaobian', stage: 'invoke',
+        promptId: 'standard:23:qiaobian', canPass: true, cards: [], allowedCardIds: [],
+        targetIds: ['other'], minCards: 0, maxCards: 0, minTargets: 0, maxTargets: 1,
+        options: ['skip_draw', 'skip_play'],
+        choices: [{ token: 'judgment:lightning-1', ownerId: 'other', zone: 'judgment', card: judgment }],
+      },
+    }, { userId: 'self' });
+    expect(game.prompt).toMatchObject({
+      id: 'standard:23:qiaobian', options: ['skip_draw', 'skip_play'], allowedTargetIds: ['other'],
+      zoneChoices: [{ token: 'judgment:lightning-1', ownerId: 'other', zone: 'judgment' }],
+    });
+    expect(game.prompt?.zoneChoices?.[0]?.label).toContain('判定区');
+
+    const actions = [
+      { type: 'declare_guhuo', playerId: 'self', cardId: 'hidden-1', declaredKind: 'slash', targetIds: ['other'] },
+      { type: 'resolve_guhuo', playerId: 'self', promptId: 'guhuo:1', challenge: true },
+      { type: 'choose_pindian_card', playerId: 'self', promptId: 'pindian:1', cardId: 'hand-1' },
+      { type: 'use_zhang_ba_slash', playerId: 'self', cardIds: ['hand-1', 'hand-2'], targetId: 'other', targetIds: ['other', 'third'] },
+      {
+        type: 'use_skill', playerId: 'self', skillId: 'yeyan', targetIds: ['other', 'third'],
+        allocations: [{ targetId: 'other', damage: 2 }, { targetId: 'third', damage: 1 }],
+      },
+      {
+        type: 'resolve_standard_skill', playerId: 'self', promptId: 'standard:1', activate: true,
+        targetIds: ['other', 'third'], allocations: [{ cardId: 'viewed-1', targetId: 'other' }], viewAsSkillId: 'longhun',
+      },
+      { type: 'invoke_lord_skill', playerId: 'self', skillId: 'jijiang', targetId: 'other', targetIds: ['other', 'third'] },
+    ] satisfies GameAction[];
+    expect(actions.map((action) => action.type)).toEqual([
+      'declare_guhuo', 'resolve_guhuo', 'choose_pindian_card', 'use_zhang_ba_slash',
+      'use_skill', 'resolve_standard_skill', 'invoke_lord_skill',
+    ]);
   });
 });

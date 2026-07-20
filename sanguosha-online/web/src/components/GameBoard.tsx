@@ -69,6 +69,14 @@ function cardStamp(card: GameCard): string {
   return '令';
 }
 
+function skillName(skillId: string): string {
+  return generalSkillNames[skillId] ?? skillId;
+}
+
+function skillDescription(skillId: string): string {
+  return activeSkillDescriptions[skillId] ?? '按当前提示选择费用与目标，提交后由服务器校验并结算。';
+}
+
 function GameCardTile({
   card,
   selected,
@@ -114,7 +122,30 @@ function PlayerPanel({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const details = (
+    <div className="player-detail">
+      <strong>{player.general ?? '未知武将'}</strong>
+      <section>
+        <b>武将技能</b>
+        {player.effectiveSkills?.length
+          ? player.effectiveSkills.map((skill) => (
+              <p key={skill.id}><span>{skill.name}</span>{skill.description}</p>
+            ))
+          : <p>当前没有生效中的武将技能。</p>}
+      </section>
+      <section>
+        <b>当前装备</b>
+        {player.equipment?.length
+          ? player.equipment.map((item) => (
+              <p key={`${item.slot}-${item.id}`}><span>{item.name}</span>{item.description ?? '暂无效果说明。'}</p>
+            ))
+          : <p>当前没有装备。</p>}
+      </section>
+    </div>
+  );
+
   return (
+    <Tooltip title={details} placement="right" mouseEnterDelay={0.25} overlayClassName="player-detail-tooltip">
     <button
       type="button"
       className={`battle-player${player.isSelf ? ' battle-player--self' : ''}${player.isCurrent ? ' battle-player--current' : ''}${!player.alive ? ' battle-player--dead' : ''}${selectable ? ' battle-player--selectable' : ''}${selected ? ' battle-player--selected' : ''}`}
@@ -156,11 +187,17 @@ function PlayerPanel({
           {player.judgment.map((item) => <span key={`${item.slot}-${item.name}`}>判 · {item.name}</span>)}
         </div>
       )}
+      {player.publicPiles?.buqu && player.publicPiles.buqu.length > 0 && (
+        <div className="equipment-row">
+          {player.publicPiles.buqu.map((card) => <span key={card.id}>不屈 · {card.rank}{suitSymbols[card.suit]}</span>)}
+        </div>
+      )}
       {player.chained && <Tag color="volcano">连环</Tag>}
       {!player.faceUp && <Tag color="purple">背面</Tag>}
       {player.isCurrent && <span className="turn-ribbon">当前回合</span>}
       {!player.alive && <span className="dead-stamp">阵亡</span>}
     </button>
+    </Tooltip>
   );
 }
 
@@ -410,6 +447,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
     new Set([...standardTopIds, ...standardBottomIds]).size === standardViewedIds.length;
   const standardAllocationComplete = standardViewedIds.length > 0 &&
     standardViewedIds.every((cardId) => Boolean(standardAllocations[cardId]));
+  const waitingForOtherPlayer = game.status === 'playing' && !game.prompt && !game.canAct;
 
   const assignStandardReorder = (cardId: string, destination: 'top' | 'bottom') => {
     setStandardTopIds((current) => destination === 'top'
@@ -460,6 +498,9 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
       </section>
 
       {!connected && <Alert banner type="warning" message="连接中断：当前操作已锁定，状态会在重连后自动同步。" />}
+      {connected && waitingForOtherPlayer && (
+        <Alert className="other-player-notice" banner showIcon type="info" message="其他玩家正在操作，请稍候……" />
+      )}
 
       <div className="game-layout">
         <section className="battlefield">
@@ -493,7 +534,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 <span className="section-kicker">你的手牌</span>
                 <h2>{game.hand.length} 张</h2>
               </div>
-              <p>{selectedSkill ? activeSkillDescriptions[selectedSkill.skillId] : selectedCard?.targetMode === 'ordered-two' ? '先选择持有武器者，再选择其攻击范围内的目标。' : selectedCard?.targetMode === 'up-to-two' ? '可选择一至两名角色；不选目标即重铸摸一张牌。' : selectedCard?.targetMode === 'up-to-three' ? '方天画戟：这张杀可指定一至三名角色。' : requiresTarget ? '请选择一名高亮目标，再确认出牌。' : isDiscardPrompt ? `请选择 ${discardMin === discardMax ? discardMin : `${discardMin}–${discardMax}`} 张牌弃置。` : '点击卡牌查看牌面说明和可用操作。'}</p>
+              <p>{selectedSkill ? skillDescription(selectedSkill.skillId) : selectedCard?.targetMode === 'ordered-two' ? '先选择持有武器者，再选择其攻击范围内的目标。' : selectedCard?.targetMode === 'up-to-two' ? '可选择一至两名角色；不选目标即重铸摸一张牌。' : selectedCard?.targetMode === 'up-to-three' ? '方天画戟：这张杀可指定一至三名角色。' : requiresTarget ? '请选择一名高亮目标，再确认出牌。' : isDiscardPrompt ? `请选择 ${discardMin === discardMax ? discardMin : `${discardMin}–${discardMax}`} 张牌弃置。` : '点击卡牌查看牌面说明和可用操作。'}</p>
             </div>
             {availableSkills.length > 0 && (
               <section className="general-skill-zone" aria-label="武将技能">
@@ -509,7 +550,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                         type={selectedSkillId === skill.skillId ? 'primary' : 'default'}
                         onClick={() => selectSkill(skill.skillId)}
                       >
-                        {generalSkillNames[skill.skillId]}
+                        {skillName(skill.skillId)}
                       </Button>
                     ))}
                   </div>
@@ -517,7 +558,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 {selectedSkill && (
                   <div className="general-skill-zone__selection" role="status">
                     <p>
-                      {activeSkillDescriptions[selectedSkill.skillId]}
+                      {skillDescription(selectedSkill.skillId)}
                       {selectedSkill.minCards > 0 && ` 请从下方手牌或自己的可用装备中选择${selectedSkill.minCards === selectedSkill.maxCards
                         ? ` ${selectedSkill.minCards} 张`
                         : ` ${selectedSkill.minCards} 至 ${selectedSkill.maxCards} 张`}技能成本。`}
@@ -537,7 +578,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                         <span>可用装备</span>
                         <div className="hand-cards">
                           {self.equipment.filter((card) => selectedSkill.cardIds.includes(card.id)).map((card) => (
-                            <Tooltip key={`skill-cost-${card.id}`} title={`${card.slot} · ${activeSkillDescriptions[selectedSkill.skillId]}`}>
+                            <Tooltip key={`skill-cost-${card.id}`} title={`${card.slot} · ${skillDescription(selectedSkill.skillId)}`}>
                               <span>
                                 <GameCardTile
                                   card={card}
@@ -671,7 +712,15 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                   ))}
                 </div>
               ) : isStandardPrompt && standardPrompt?.skillId ? (
-                standardPrompt.standardStage === 'guanxing_reorder' ? (
+                standardPrompt.standardStage === 'buqu_recovery' ? (
+                  <div className="zone-choice-actions">
+                    {standardPrompt.cardChoices?.map((card) => (
+                      <Button key={card.id} type="primary" size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(true, { cardId: card.id })}>
+                        移除 {card.rank}{suitSymbols[card.suit]}
+                      </Button>
+                    ))}
+                  </div>
+                ) : standardPrompt.standardStage === 'guanxing_reorder' ? (
                   <Button
                     type="primary"
                     size="large"
@@ -731,6 +780,13 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                     </Button>
                     <Button size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(false)}>不发动流离</Button>
                   </>
+                ) : standardPrompt.standardStage === 'tianxiang_redirect' ? (
+                  <>
+                    <Button type="primary" size="large" disabled={!connected || selectedCardIds.length !== 1 || selectedTargetIds.length !== 1} loading={sending} onClick={() => sendStandard(true, { cardId: selectedCardIds[0], targetId: selectedTargetIds[0] })}>
+                      弃牌并转移此伤害
+                    </Button>
+                    <Button size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(false)}>不发动天香</Button>
+                  </>
                 ) : standardPrompt.standardStage === 'judgment_retrial' ? (
                   <>
                     <Button type="primary" size="large" disabled={!connected || selectedCardIds.length !== 1} loading={sending} onClick={() => sendStandard(true, { cardId: selectedCardIds[0] })}>以所选手牌发动鬼才</Button>
@@ -739,7 +795,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 ) : (
                   <>
                     <Button type="primary" size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(true)}>
-                      {standardPrompt.standardStage === 'judgment_post' ? '发动天妒' : `发动「${generalSkillNames[standardPrompt.skillId]}」`}
+                      {standardPrompt.standardStage === 'judgment_post' ? '发动天妒' : `发动「${skillName(standardPrompt.skillId)}」`}
                     </Button>
                     {standardPrompt.optional !== false && (
                       <Button size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(false)}>不发动</Button>
@@ -761,7 +817,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                       promptId: game.prompt!.id,
                     })}
                   >
-                    发动「{generalSkillNames[game.prompt.skillId]}」
+                    发动「{skillName(game.prompt.skillId)}」
                   </Button>
                   <Button
                     size="large"
@@ -838,7 +894,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                         size="large"
                         disabled={!connected}
                         loading={sending}
-                        onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, activate: true, tokens: [choice.token] })}
+                        onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, promptId: game.prompt?.promptId, activate: true, tokens: [choice.token] })}
                       >
                         选择 {choice.label}
                       </Button>
@@ -848,7 +904,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                         size="large"
                         disabled={!connected}
                         loading={sending}
-                        onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, activate: false })}
+                        onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, promptId: game.prompt?.promptId, activate: false })}
                       >
                         不发动／结束选择
                       </Button>
@@ -861,7 +917,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                       size="large"
                       disabled={!weaponSelectionValid || !connected}
                       loading={sending}
-                      onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, activate: true, cardIds: selectedCardIds })}
+                      onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, promptId: game.prompt?.promptId, activate: true, cardIds: selectedCardIds })}
                     >
                       发动武器效果
                     </Button>
@@ -869,7 +925,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                       size="large"
                       disabled={!connected}
                       loading={sending}
-                      onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, activate: false })}
+                      onClick={() => void send({ type: 'resolve_weapon', playerId: game.selfPlayerId, promptId: game.prompt?.promptId, activate: false })}
                     >
                       不发动
                     </Button>
@@ -945,7 +1001,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                       loading={sending}
                       onClick={() => void useSelectedSkill()}
                     >
-                      发动「{generalSkillNames[selectedSkill.skillId]}」响应
+                      发动「{skillName(selectedSkill.skillId)}」响应
                     </Button>
                   )}
                   {game.prompt?.zhangBaAllowedCardIds && game.prompt.zhangBaAllowedCardIds.length >= 2 && (
@@ -1025,7 +1081,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                         loading={sending}
                         onClick={() => void useSelectedSkill()}
                       >
-                        发动「{generalSkillNames[selectedSkill.skillId]}」
+                        发动「{skillName(selectedSkill.skillId)}」
                       </Button>
                     )}
                     <Button size="large" onClick={() => selectSkill(selectedSkill.skillId)}>取消技能</Button>

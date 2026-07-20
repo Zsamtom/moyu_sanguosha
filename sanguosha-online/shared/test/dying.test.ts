@@ -49,7 +49,11 @@ function zones(): AtomicZoneState {
     players: [
       {
         id: "current",
-        hand: [card("peach-1", "peach"), card("peach-2", "peach"), card("jijiu-red", "slash", "diamond"), card("jijiu-black", "slash", "spade")],
+        hand: [
+          card("peach-1", "peach"), card("peach-2", "peach"),
+          card("jijiu-red", "slash", "diamond"), card("jijiu-black", "slash", "spade"),
+          card("guhuo-fake", "slash", "club"),
+        ],
         equipment: {},
         judgment: [],
         extraPiles: {},
@@ -83,16 +87,23 @@ function play(
   pending: ReturnType<typeof frame>,
   input: {
     responderId: string;
-    cardKind: "peach" | "wine" | "view_as_peach";
+    cardKind: "peach" | "wine" | "view_as_peach" | "view_as_wine";
     physicalCardId: string;
     from?: ZoneRef;
     eventId: number;
     useId: number;
     childFrameId: number;
     batchId: number;
-    viewAsSkillId?: "jijiu" | null;
+    viewAsSkillId?: "jijiu" | "guhuo" | null;
+    effectiveSuit?: Card["suit"];
+    suitModifierSkillId?: "hongyan" | null;
   },
 ) {
+  const physical = state.players.flatMap((player) => [
+    ...player.hand,
+    ...Object.values(player.equipment),
+  ]).find((candidate) => candidate.id === input.physicalCardId);
+  if (!physical) throw new Error(`Missing rescue fixture ${input.physicalCardId}`);
   return playDyingRescueCard(players, state, pending, {
     eventId: input.eventId,
     responderId: input.responderId,
@@ -103,6 +114,8 @@ function play(
     physicalCardId: input.physicalCardId,
     from: input.from ?? { kind: "hand", playerId: input.responderId },
     viewAsSkillId: input.viewAsSkillId ?? null,
+    effectiveSuit: input.effectiveSuit ?? physical.suit,
+    suitModifierSkillId: input.suitModifierSkillId ?? null,
   });
 }
 
@@ -197,8 +210,32 @@ describe("recoverable dying frame", () => {
       childFrameId: 8,
       batchId: 9,
       viewAsSkillId: "jijiu",
-    })).toThrow(/red physical card/);
+    })).toThrow(/effective-red card/);
     expect(blackState.players[0]?.hand.some((entry) => entry.id === "jijiu-black")).toBe(true);
+    play(blackPlayers, blackState, blackFrame, {
+      responderId: "current",
+      cardKind: "view_as_peach",
+      physicalCardId: "jijiu-black",
+      eventId: 8,
+      useId: 8,
+      childFrameId: 9,
+      batchId: 10,
+      viewAsSkillId: "jijiu",
+      effectiveSuit: "heart",
+      suitModifierSkillId: "hongyan",
+    });
+    expect(blackFrame.rescues[0]).toMatchObject({
+      effectiveSuit: "heart",
+      suitModifierSkillId: "hongyan",
+    });
+    expect(blackState.processing["9"]?.[0]).toMatchObject({ id: "jijiu-black", suit: "spade" });
+    expect(() => assertDyingFrame(blackPlayers, JSON.parse(JSON.stringify(blackFrame)) as typeof blackFrame)).not.toThrow();
+    const forgedSuit = cloneDyingFrame(blackFrame);
+    forgedSuit.rescues[0] = { ...forgedSuit.rescues[0]!, effectiveSuit: "club" };
+    expect(() => assertDyingFrame(blackPlayers, forgedSuit)).toThrow(/Hongyan rescue provenance/);
+    const forgedModifier = cloneDyingFrame(blackFrame);
+    forgedModifier.rescues[0] = { ...forgedModifier.rescues[0]!, suitModifierSkillId: null };
+    expect(() => assertDyingFrame(blackPlayers, forgedModifier)).toThrow(/unmodified rescue effective suit/);
 
     const winePlayers = life(0);
     const wineState = zones();
@@ -214,6 +251,34 @@ describe("recoverable dying frame", () => {
       batchId: 12,
     });
     expect(wineFrame.stage).toBe("rescued");
+  });
+
+  it("keeps Guhuo Peach rescue provenance bound to the original fake physical card", () => {
+    const players = life(0);
+    const state = zones();
+    const pending = frame(players);
+    play(players, state, pending, {
+      responderId: "current",
+      cardKind: "view_as_peach",
+      physicalCardId: "guhuo-fake",
+      eventId: 13,
+      useId: 14,
+      childFrameId: 15,
+      batchId: 16,
+      viewAsSkillId: "guhuo",
+    });
+
+    expect(pending.rescues[0]).toMatchObject({
+      cardKind: "view_as_peach",
+      viewAsSkillId: "guhuo",
+      physicalCardIds: ["guhuo-fake"],
+      moveRecords: [{ cards: [expect.objectContaining({ id: "guhuo-fake", kind: "slash" })] }],
+    });
+    expect(state.processing["15"]?.[0]).toMatchObject({ id: "guhuo-fake", kind: "slash" });
+    const restored = JSON.parse(JSON.stringify(pending)) as typeof pending;
+    expect(() => assertDyingFrame(players, restored)).not.toThrow();
+    restored.rescues[0] = { ...restored.rescues[0]!, viewAsSkillId: null };
+    expect(() => assertDyingFrame(players, restored)).toThrow(/view-as provenance|view-as Peach rescue/);
   });
 
   it("runs Buqu at life deduction and Niepan only at the victim response point", () => {
@@ -247,10 +312,15 @@ describe("recoverable dying frame", () => {
   });
 
   it("requires every timed response before confirming death exactly once", () => {
-    const players = life(0);
+    const players = life(-2);
     const pending = frame(players, { ownerResponseSaveSkillIds: ["niepan"] });
     passDyingRescue(players, pending, "current");
-    declineDyingOwnerResponseSave(pending, "niepan");
+    declineDyingOwnerResponseSave(pending, "niepan", players[1]!.hp);
+    expect(pending.skillResolutions.at(-1)).toMatchObject({
+      skillId: "niepan",
+      succeeded: false,
+      hpAfter: -2,
+    });
     passDyingRescue(players, pending, "victim");
     passDyingRescue(players, pending, "helper");
     expect(canConfirmDeath(pending)).toBe(true);
@@ -334,5 +404,49 @@ describe("recoverable dying frame", () => {
     const restored = cloneDyingStack(JSON.parse(JSON.stringify(stack)) as typeof stack);
     expect(restored).toEqual(stack);
     expect(restored.frames[0]).not.toBe(stack.frames[0]);
+  });
+
+  it("accepts JSON round-trips and rejects non-JSON or unexpected persisted fields", () => {
+    const players = life(0);
+    const legal = frame(players);
+    const restored = JSON.parse(JSON.stringify(legal)) as typeof legal;
+    expect(() => assertDyingFrame(players, restored)).not.toThrow();
+
+    const extraFrame = structuredClone(restored) as typeof restored & { forged?: boolean };
+    extraFrame.forged = true;
+    expect(() => assertDyingFrame(players, extraFrame)).toThrow(/missing or unexpected fields/);
+
+    const extraReason = structuredClone(restored);
+    (extraReason.reason as unknown as Record<string, unknown>).forged = true;
+    expect(() => assertDyingFrame(players, extraReason)).toThrow(/missing or unexpected fields/);
+
+    const sparse = structuredClone(restored);
+    delete (sparse.responderOrder as string[])[0];
+    expect(() => assertDyingFrame(players, sparse)).toThrow(/dense array/);
+
+    const undefinedField = structuredClone(restored) as unknown as Record<string, unknown>;
+    undefinedField.survivalSkillId = undefined;
+    expect(() => assertDyingFrame(players, undefinedField as never)).toThrow(/not strict JSON/);
+
+    const stack = createDyingStack();
+    pushDyingFrame(stack, restored);
+    const extraStack = structuredClone(stack) as typeof stack & { forged?: boolean };
+    extraStack.forged = true;
+    expect(() => assertDyingStack(players, extraStack)).toThrow(/missing or unexpected fields/);
+
+    const rescuePlayers = life(0);
+    const rescue = frame(rescuePlayers);
+    play(rescuePlayers, zones(), rescue, {
+      responderId: "current",
+      cardKind: "peach",
+      physicalCardId: "peach-1",
+      eventId: 40,
+      useId: 41,
+      childFrameId: 42,
+      batchId: 43,
+    });
+    const extraMove = JSON.parse(JSON.stringify(rescue)) as typeof rescue;
+    (extraMove.rescues[0]!.moveRecords[0] as unknown as Record<string, unknown>).forged = true;
+    expect(() => assertDyingFrame(rescuePlayers, extraMove)).toThrow(/missing or unexpected fields/);
   });
 });

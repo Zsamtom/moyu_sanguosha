@@ -146,7 +146,7 @@ describe("complete rules engine state", () => {
     expect(() => assertCompleteRulesEngineState(badResolution)).toThrow(CompleteRulesStateError);
   });
 
-  it("rejects malformed or nonempty dying and death scaffold stacks", () => {
+  it("rejects malformed stack roots and restores legal nonempty dying/death stacks", () => {
     const badDyingVersion = createCompleteRulesEngineState();
     (badDyingVersion.dying as { version: number }).version = 2;
     expect(() => assertCompleteRulesEngineState(badDyingVersion)).toThrow(/dying stack root/);
@@ -174,8 +174,15 @@ describe("complete rules engine state", () => {
       reason: { type: "damage", eventId: 1, sourceId: "rescuer" },
       responderOrder: ["victim", "rescuer"],
     }));
-    expect(() => assertCompleteRulesEngineState(nonemptyDying)).toThrow(/dying stack must remain empty/);
-    expect(() => migrateCompleteRulesEngineState(nonemptyDying)).toThrow(/dying stack must remain empty/);
+    expect(() => assertCompleteRulesEngineState(nonemptyDying)).toThrow(/requires a life player snapshot/);
+    expect(() => migrateCompleteRulesEngineState(nonemptyDying)).toThrow(/requires a life player snapshot/);
+    expect(() => assertCompleteRulesEngineState(nonemptyDying, life)).not.toThrow();
+    const restoredDying = migrateCompleteRulesEngineState(JSON.parse(JSON.stringify(nonemptyDying)), life);
+    expect(restoredDying).toEqual(nonemptyDying);
+    expect(restoredDying.dying.frames[0]).not.toBe(nonemptyDying.dying.frames[0]);
+    expect(() => assertCompleteRulesEngineState(nonemptyDying, [
+      { id: "other", hp: 0, maxHp: 4, alive: true },
+    ])).toThrow(/unknown player/);
 
     const nonemptyDeath = createCompleteRulesEngineState();
     pushDeathFrame(nonemptyDeath.death, createDeathFrame({
@@ -188,7 +195,24 @@ describe("complete rules engine state", () => {
         reason: { type: "damage", eventId: 1, sourceId: "killer" },
       },
     }));
-    expect(() => assertCompleteRulesEngineState(nonemptyDeath)).toThrow(/death stack must remain empty/);
-    expect(() => migrateCompleteRulesEngineState(nonemptyDeath)).toThrow(/death stack must remain empty/);
+    expect(() => assertCompleteRulesEngineState(nonemptyDeath)).not.toThrow();
+    const restoredDeath = migrateCompleteRulesEngineState(JSON.parse(JSON.stringify(nonemptyDeath)));
+    expect(restoredDeath).toEqual(nonemptyDeath);
+    expect(restoredDeath.death.frames[0]).not.toBe(nonemptyDeath.death.frames[0]);
+  });
+
+  it("requires strict JSON and exact complete-state keys", () => {
+    const extra = createCompleteRulesEngineState() as unknown as Record<string, unknown>;
+    extra.debug = true;
+    expect(() => assertCompleteRulesEngineState(extra)).toThrow(/missing or unexpected fields/);
+    expect(() => migrateCompleteRulesEngineState(extra)).toThrow(/missing or unexpected fields/);
+
+    const undefinedValue = createCompleteRulesEngineState() as unknown as Record<string, unknown>;
+    undefinedValue.debug = undefined;
+    expect(() => assertCompleteRulesEngineState(undefinedValue)).toThrow(/not strict JSON/);
+
+    const sparse = createCompleteRulesEngineState();
+    sparse.death.frames.length = 1;
+    expect(() => assertCompleteRulesEngineState(sparse)).toThrow(/dense array/);
   });
 });

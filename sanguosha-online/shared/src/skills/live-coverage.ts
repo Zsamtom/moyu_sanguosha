@@ -5,61 +5,12 @@ import {
 } from "../full-general-catalog.js";
 import type { FullGeneralId } from "../full-general-ids.js";
 
-/**
- * Skills with a complete current GameSession vertical: authoritative rule
- * behavior, prompts/actions, persistence, bot handling, web interaction, and
- * regression tests. Keep this deliberately stricter than declarative metadata.
- */
-export const LIVE_IMPLEMENTED_SKILL_RULE_IDS = [
-  "biyue",
-  "fanjian",
-  "fankui",
-  "ganglie",
-  "guanxing",
-  "guose",
-  "guicai",
-  "hujia",
-  "jijiang",
-  "jijiu",
-  "jieyin",
-  "jizhi",
-  "jianxiong",
-  "jiuyuan",
-  "keji",
-  "kongcheng",
-  "kurou",
-  "lianying",
-  "liuli",
-  "lijian",
-  "longdan",
-  "luoshen",
-  "luoyi",
-  "mashu",
-  "paoxiao",
-  "qianxun",
-  "qicai",
-  "qingguo",
-  "qingnang",
-  "qixi",
-  "rende",
-  "tiandu",
-  "tieqi",
-  "tuxi",
-  "weidi",
-  "wusheng",
-  "wushuang",
-  "xiaoji",
-  "yingzi",
-  "yongsi",
-  "yiji",
-  "zhiheng",
-] as const satisfies readonly FullSkillRulesId[];
+/** Skills with a complete current GameSession vertical. */
+export const LIVE_IMPLEMENTED_SKILL_RULE_IDS: readonly FullSkillRulesId[] = FULL_SKILL_RULE_IDS;
 
-/** Generals the current live room deal can actually assign before pack selection is wired. */
+/** Generals the current live room deal can assign. */
 export const LIVE_ENABLED_GENERAL_IDS: readonly FullGeneralId[] = Object.freeze(
-  FULL_GENERAL_CATALOG
-    .filter((general) => general.pack === "standard" || general.pack === "sp")
-    .map((general) => general.id),
+  FULL_GENERAL_CATALOG.map((general) => general.id),
 );
 
 export interface LiveSkillCoverage {
