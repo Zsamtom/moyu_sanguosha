@@ -1,5 +1,6 @@
 import { Alert, Button, Divider, Empty, Modal, Popconfirm, Tag, Tooltip } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import {
   activeSkillDescriptions,
   canSubmitSkillUse,
@@ -233,23 +234,34 @@ function PlayerPanel({
   );
 }
 
-function ActivityNotice({ logs }: { logs: GameLogEntry[] }) {
+function ActivityNotice({ logs, turnLabel }: { logs: GameLogEntry[]; turnLabel: string }) {
   const latest = logs.at(-1);
-  const [visible, setVisible] = useState<GameLogEntry>();
+  const previous = logs.slice(-3, -1).reverse();
 
-  useEffect(() => {
-    if (!latest) return;
-    setVisible(latest);
-    const timeout = window.setTimeout(() => setVisible(undefined), 4000);
-    return () => window.clearTimeout(timeout);
-  }, [latest]);
+  return (
+    <aside className={`activity-notice activity-notice--${latest?.tone ?? 'normal'}`} role="status" aria-live="polite">
+      <div className="activity-notice__heading">
+        <strong><span className="live-pulse" />战报提示</strong>
+        <small>座次顺时针</small>
+      </div>
+      <p className="activity-notice__turn">{turnLabel}</p>
+      <p className="activity-notice__latest">{latest?.text ?? '对局开始后，关键操作会显示在这里。'}</p>
+      {previous.length > 0 && (
+        <ol className="activity-notice__history" aria-label="更早的战报">
+          {previous.map((entry) => <li key={entry.id}>{entry.text}</li>)}
+        </ol>
+      )}
+    </aside>
+  );
+}
 
-  return visible ? (
-    <div className={`activity-notice activity-notice--${visible.tone ?? 'normal'}`} role="status">
-      <span>最近操作</span>
-      <p>{visible.text}</p>
-    </div>
-  ) : null;
+function tableSeatStyle(index: number, playerCount: number): CSSProperties {
+  if (playerCount <= 1) return { left: '50%', top: '50%' };
+  const angle = Math.PI / 2 + (index * Math.PI * 2) / playerCount;
+  return {
+    left: `${50 + Math.cos(angle) * 40}%`,
+    top: `${50 + Math.sin(angle) * 33}%`,
+  };
 }
 
 function BattleLog({ logs }: { logs: GameLogEntry[] }) {
@@ -306,6 +318,11 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
 
   const self = game.players.find((player) => player.isSelf || player.id === game.selfPlayerId);
   const currentPlayer = game.players.find((player) => player.id === game.turnPlayerId || player.isCurrent);
+  const clockwisePlayers = useMemo(() => {
+    const players = [...game.players].sort((left, right) => left.seat - right.seat);
+    const selfIndex = players.findIndex((player) => player.id === game.selfPlayerId || player.isSelf);
+    return selfIndex > 0 ? [...players.slice(selfIndex), ...players.slice(0, selfIndex)] : players;
+  }, [game.players, game.selfPlayerId]);
   const selectedCard = game.hand.find((card) => card.id === selectedCardIds[0]) ??
     self?.equipment?.find((card) => card.id === selectedCardIds[0]);
   const isDiscardPrompt = game.prompt?.kind === 'discard';
@@ -656,21 +673,26 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
       <div className="game-layout">
         <section className="battlefield">
           <div className="players-stage">
-            <ActivityNotice logs={game.logs ?? []} />
             <div
               className="players-grid"
               role="group"
               aria-label={selectableTargetIds.size > 0 ? '请选择目标角色' : '场上角色'}
+              data-player-count={clockwisePlayers.length}
             >
-              {game.players.map((player) => (
-                <PlayerPanel
-                  key={player.id}
-                  player={player}
-                  acting={game.status === 'playing' && player.id === game.actingPlayerId}
-                  selectable={connected && selectableTargetIds.has(player.id)}
-                  selected={selectedTargetIds.includes(player.id)}
-                  onSelect={() => toggleTarget(player)}
-                />
+              <ActivityNotice
+                logs={game.logs ?? []}
+                turnLabel={`第 ${game.round} 轮 · ${currentPlayer ? `${currentPlayer.displayName} · ${phaseNames[game.phase] ?? game.phase}` : '等待服务器推进'}`}
+              />
+              {clockwisePlayers.map((player, index) => (
+                <div className="table-seat" style={tableSeatStyle(index, clockwisePlayers.length)} key={player.id}>
+                  <PlayerPanel
+                    player={player}
+                    acting={game.status === 'playing' && player.id === game.actingPlayerId}
+                    selectable={connected && selectableTargetIds.has(player.id)}
+                    selected={selectedTargetIds.includes(player.id)}
+                    onSelect={() => toggleTarget(player)}
+                  />
+                </div>
               ))}
             </div>
           </div>
