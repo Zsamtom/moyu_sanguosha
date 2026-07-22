@@ -181,6 +181,32 @@ describe("lord dispatch skills and SP Yuan Shu", () => {
     ]));
   });
 
+  it("does not offer active Jijiang again after every provider declined in the same play phase", () => {
+    const { session, actor, targets: [provider, victim] } = setup(3);
+    actor.role = "lord";
+    actor.generalId = "liu_bei";
+    provider!.generalId = "guan_yu";
+    provider!.hand = [];
+    victim!.generalId = "cao_cao";
+
+    let game = applyAction(session, {
+      type: "invoke_lord_skill", playerId: actor.id, skillId: "jijiang", targetId: victim!.id,
+    });
+    const dispatch = getGameView(game, provider!.id).prompt;
+    if (dispatch.type !== "lord_dispatch") throw new Error("Expected Jijiang provider prompt");
+    game = applyAction(game, {
+      type: "resolve_lord_dispatch", playerId: provider!.id, promptId: dispatch.promptId, cardId: null,
+    });
+
+    expect(game.turn).toMatchObject({ phase: "play", skillUseCounts: { jijiang: 1 } });
+    const play = getGameView(game, actor.id).prompt;
+    if (play.type !== "play") throw new Error("Expected play prompt after failed Jijiang");
+    expect(play.skills.some((skill) => skill.skillId === "jijiang")).toBe(false);
+    expect(ruleCode(() => applyAction(game, {
+      type: "invoke_lord_skill", playerId: actor.id, skillId: "jijiang", targetId: victim!.id,
+    }))).toBe("INVALID_SKILL");
+  });
+
   it("refreshes Weidi from only the living lord's current lord skills without recursion", () => {
     const { session, actor, targets: [yuanShu] } = setup(3);
     actor.role = "lord";

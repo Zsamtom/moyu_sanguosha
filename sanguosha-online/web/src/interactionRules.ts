@@ -343,6 +343,63 @@ export interface StandardSkillSelection {
   viewAsSkillId?: StandardSkillAction['viewAsSkillId'];
 }
 
+export interface StandardSkillUiSelection {
+  readonly cardIds?: readonly string[];
+  readonly targetIds?: readonly string[];
+  readonly zoneTokens?: readonly string[];
+  readonly option?: string;
+}
+
+const standardViewAsOptions = new Set<NonNullable<StandardSkillAction['viewAsSkillId']>>([
+  'wusheng',
+  'longdan',
+  'wushen',
+  'longhun',
+  'zhang_ba_she_mao',
+]);
+
+const standardArrayCardStages = new Set([
+  'qixing_initial',
+  'qixing_exchange',
+  'shelie_select',
+  'shenfen_discard_hand',
+  'yinghun_discard',
+  'beige_source_discard',
+  'dawu_choice',
+]);
+
+const standardArrayTargetStages = new Set(['dawu_choice']);
+const standardSlashChoiceStages = new Set(['luanwu_slash', 'tiaoxin_response']);
+
+export const standardSkillOptionLabels: Readonly<Record<string, string>> = {
+  all_recover_one: '令所有角色各回复 1 点体力',
+  all_lose_one_hp: '令所有角色各失去 1 点体力',
+  take_extra_turn: '获得一个额外回合',
+  remove_rage: '移去 1 枚暴怒标记',
+  lose_hp: '失去 1 点体力',
+  discard: '弃置此牌',
+  put_on_draw_pile_top: '置于牌堆顶',
+  physical_slash: '使用实体「杀」',
+  wusheng: '发动「武圣」当「杀」',
+  longdan: '发动「龙胆」当「杀」',
+  wushen: '发动「武神」视为「杀」',
+  longhun: '发动「龙魂」当「杀」',
+  zhang_ba_she_mao: '发动「丈八蛇矛」两牌当「杀」',
+  jijiang: '发动「激将」请求协助',
+  decline: '不修改／不响应',
+  plus_three: '拼点点数 +3',
+  minus_three: '拼点点数 -3',
+  recover_one: '回复 1 点体力',
+  draw_two: '摸两张牌',
+  lose_max_hp: '失去 1 点体力上限',
+  draw_x_discard_one: '摸 X 张牌，然后弃置一张牌',
+  draw_one_discard_x: '摸一张牌，然后弃置 X 张牌',
+};
+
+export function standardSkillOptionLabel(option: string): string {
+  return standardSkillOptionLabels[option] ?? option;
+}
+
 export function createStandardSkillAction(
   playerId: string,
   prompt: StandardSkillPrompt,
@@ -379,8 +436,9 @@ export function createStandardSkillAction(
   const zoneTokens = tokens.filter((token) => zoneTokenSet.has(token));
   const optionTokens = tokens.filter((token) => optionTokenSet.has(token));
   const allowedTokens = new Set([...zoneTokenSet, ...optionTokenSet]);
+  const optionIsEncodedBySlashFields = standardSlashChoiceStages.has(prompt.standardStage ?? '');
   if (new Set(tokens).size !== tokens.length || tokens.some((token) => !allowedTokens.has(token)) ||
-      (prompt.options?.length && optionTokens.length !== 1) ||
+      (prompt.options?.length && !optionIsEncodedBySlashFields && optionTokens.length !== 1) ||
       (zoneTokens.length > 0 && cardIds.length > 0)) {
     throw new Error('技能选项不合法。');
   }
@@ -421,6 +479,70 @@ export function createStandardSkillAction(
     ...(selection.allocations ? { allocations: selection.allocations.map((allocation) => ({ ...allocation })) } : {}),
     ...(selection.viewAsSkillId ? { viewAsSkillId: selection.viewAsSkillId } : {}),
   };
+}
+
+/**
+ * Converts the generic Web selection state into the exact tagged payload used
+ * by the engine. A few Slash-choice prompts advertise human-readable options
+ * while encoding the choice through viewAsSkillId or a declined activation.
+ */
+export function createStandardSkillActionFromUi(
+  playerId: string,
+  prompt: StandardSkillPrompt,
+  selection: StandardSkillUiSelection = {},
+): StandardSkillAction {
+  if (prompt.kind !== 'standard-skill') throw new Error('当前提示不是标准技能提示。');
+  const stage = prompt.standardStage ?? '';
+  const option = selection.option;
+  if (prompt.options?.length && !option) throw new Error('请选择一个技能选项。');
+  if (option && !prompt.options?.includes(option)) throw new Error('技能选项不合法。');
+
+  if ((stage === 'luanwu_slash' && option === 'lose_hp') ||
+      (stage === 'tiaoxin_response' && option === 'decline')) {
+    return createStandardSkillAction(playerId, prompt, { activate: false });
+  }
+
+  const cardIds = [...(selection.cardIds ?? [])];
+  const targetIds = [...(selection.targetIds ?? [])];
+  const zoneTokens = [...(selection.zoneTokens ?? [])];
+  let viewAsSkillId: StandardSkillAction['viewAsSkillId'];
+  const tokens = [...zoneTokens];
+
+  if (option) {
+    if (standardViewAsOptions.has(option as NonNullable<StandardSkillAction['viewAsSkillId']>)) {
+      viewAsSkillId = option as NonNullable<StandardSkillAction['viewAsSkillId']>;
+    } else if (!(standardSlashChoiceStages.has(stage) &&
+        (option === 'physical_slash' || option === 'decline' || option === 'lose_hp'))) {
+      tokens.push(option);
+    }
+  }
+
+  if (standardSlashChoiceStages.has(stage)) {
+    if (option === 'jijiang') {
+      if (cardIds.length > 0) throw new Error('发动激将时不需要选择牌。');
+    } else if (option === 'zhang_ba_she_mao') {
+      if (cardIds.length !== 2) throw new Error('丈八蛇矛必须选择两张牌。');
+    } else if (option !== 'decline' && option !== 'lose_hp' && cardIds.length !== 1) {
+      throw new Error('请选择一张用于响应的牌。');
+    }
+  }
+  if (stage === 'dawu_choice' && cardIds.length !== targetIds.length) {
+    throw new Error('大雾选择的星数必须与目标数相同。');
+  }
+
+  const useCardArray = standardArrayCardStages.has(stage) || cardIds.length !== 1;
+  const useTargetArray = standardArrayTargetStages.has(stage) || targetIds.length !== 1;
+  return createStandardSkillAction(playerId, prompt, {
+    activate: true,
+    ...(cardIds.length > 0 || standardArrayCardStages.has(stage)
+      ? useCardArray ? { cardIds } : { cardId: cardIds[0] }
+      : {}),
+    ...(targetIds.length > 0
+      ? useTargetArray ? { targetIds } : { targetId: targetIds[0] }
+      : {}),
+    ...(tokens.length > 0 ? { tokens } : {}),
+    ...(viewAsSkillId ? { viewAsSkillId } : {}),
+  });
 }
 
 export function canSubmitStandardSkill(

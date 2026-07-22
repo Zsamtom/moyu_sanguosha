@@ -2992,13 +2992,14 @@ body {
   overflow-y: auto;
 }
 
-/* Stable game workspace: overlays never change the document height. */
+/* Stable game workspace with a fixed player-card geometry. */
 .game-layout {
   display: block;
 }
 
 .players-stage {
-  position: relative;
+  display: grid;
+  gap: 8px;
 }
 
 .players-grid {
@@ -3168,35 +3169,31 @@ body {
   margin-block: 10px;
 }
 
-.activity-overlay {
-  position: absolute;
-  z-index: 12;
-  right: 12px;
-  bottom: 26px;
-  width: min(360px, calc(100% - 24px));
+.activity-notice {
+  box-sizing: border-box;
+  width: 100%;
   padding: 10px 12px;
   border: 1px solid #bfbfbf;
   border-left: 3px solid #333333;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  background: #ffffff;
   pointer-events: none;
 }
 
-.activity-overlay > span {
+.activity-notice > span {
   color: #777777;
   font-size: 10px;
 }
 
-.activity-overlay p {
+.activity-notice p {
   margin: 3px 0 0;
   color: #222222;
   font-size: 12px;
   line-height: 1.5;
 }
 
-.activity-overlay--damage,
-.activity-overlay--important {
+.activity-notice--damage,
+.activity-notice--important {
   border-left-color: #111111;
 }
 
@@ -3305,6 +3302,48 @@ body {
   padding-block: 11px;
 }
 
+/* The expanded log stays in document flow, so an eight-seat second row always
+   retains its full width and can never sit underneath a right-side overlay. */
+.game-page > .battle-log {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  margin-top: 12px;
+}
+
+.selection-error {
+  margin: 8px 0 0;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.standard-skill-modal .ant-modal-content {
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+}
+
+.standard-skill-modal__message {
+  margin: 0 0 18px;
+  color: #444444;
+  line-height: 1.7;
+}
+
+.standard-skill-modal__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.standard-skill-modal__choices .ant-btn {
+  min-height: 42px;
+  height: auto;
+  white-space: normal;
+}
+
 .player-detail-tooltip {
   max-width: min(360px, calc(100vw - 32px));
 }
@@ -3329,12 +3368,6 @@ body {
   .general-option > .ant-btn {
     grid-column: 2;
     justify-self: start;
-  }
-
-  .activity-overlay {
-    right: 8px;
-    bottom: 22px;
-    width: calc(100% - 16px);
   }
 
   .battle-log__heading {

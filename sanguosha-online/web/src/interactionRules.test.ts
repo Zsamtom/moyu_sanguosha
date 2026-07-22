@@ -8,6 +8,7 @@ import {
   cardRequiresTarget,
   createUseSkillAction,
   createStandardSkillAction,
+  createStandardSkillActionFromUi,
   createZhangBaSlashAction,
   findSkillVariant,
   getRoomStartBlockReason,
@@ -17,6 +18,7 @@ import {
   responseCardName,
   selectableResponseSkills,
   skillVariantKey,
+  standardSkillOptionLabel,
   surrenderCopy,
 } from './interactionRules';
 import type { ActionPrompt, GameCard, PlayableSkillHint, RoomDetail } from './types';
@@ -534,6 +536,87 @@ describe('generic standard-skill action rules', () => {
       activate: true, tokens: ['hand:0'],
     })).toMatchObject({ activate: true, tokens: ['hand:0'] });
     expect(() => createStandardSkillAction('self', mandatoryZoneChoice, { activate: true })).toThrow('技能牌');
+  });
+
+  it('submits pure mandatory choices used by Benghuai, Zhiji, Qinyin and Wumou', () => {
+    const choice = prompt({
+      optional: false,
+      standardStage: 'benghuai_choice',
+      skillId: 'benghuai',
+      options: ['lose_hp', 'lose_max_hp'],
+    });
+    expect(createStandardSkillActionFromUi('self', choice, { option: 'lose_max_hp' })).toEqual({
+      type: 'resolve_standard_skill', playerId: 'self', promptId: 'standard:1', activate: true,
+      tokens: ['lose_max_hp'],
+    });
+    expect(standardSkillOptionLabel('lose_max_hp')).toContain('体力上限');
+    expect(() => createStandardSkillActionFromUi('self', choice)).toThrow('选择');
+  });
+
+  it('combines advertised modes with targets or cards for Yinghun and Gongxin', () => {
+    const yinghun = prompt({
+      standardStage: 'yinghun_select', skillId: 'yinghun',
+      options: ['draw_x_discard_one', 'draw_one_discard_x'],
+      allowedTargetIds: ['target'], minTargets: 1, maxTargets: 1,
+    });
+    expect(createStandardSkillActionFromUi('self', yinghun, {
+      option: 'draw_x_discard_one', targetIds: ['target'],
+    })).toMatchObject({ activate: true, targetId: 'target', tokens: ['draw_x_discard_one'] });
+
+    const gongxin = prompt({
+      standardStage: 'gongxin_choose', skillId: 'gongxin', options: ['discard', 'put_on_draw_pile_top'],
+      allowedCardIds: ['heart'], min: 0, max: 1,
+    });
+    expect(createStandardSkillActionFromUi('self', gongxin, {
+      option: 'discard', cardIds: ['heart'],
+    })).toMatchObject({ activate: true, cardId: 'heart', tokens: ['discard'] });
+  });
+
+  it('encodes Luanwu and Tiaoxin Slash variants through viewAs fields instead of option tokens', () => {
+    const luanwu = prompt({
+      standardStage: 'luanwu_slash', skillId: 'luanwu',
+      options: ['physical_slash', 'wusheng', 'zhang_ba_she_mao', 'lose_hp'],
+      allowedCardIds: ['slash', 'red', 'cost-a', 'cost-b'], min: 1, max: 2,
+      allowedTargetIds: ['nearest'], minTargets: 1, maxTargets: 1,
+    });
+    expect(createStandardSkillActionFromUi('self', luanwu, {
+      option: 'wusheng', cardIds: ['red'], targetIds: ['nearest'],
+    })).toMatchObject({ activate: true, cardId: 'red', targetId: 'nearest', viewAsSkillId: 'wusheng' });
+    expect(createStandardSkillActionFromUi('self', luanwu, { option: 'lose_hp' })).toMatchObject({ activate: false });
+    expect(() => createStandardSkillActionFromUi('self', luanwu, {
+      option: 'zhang_ba_she_mao', cardIds: ['cost-a'], targetIds: ['nearest'],
+    })).toThrow('两张');
+
+    const tiaoxin = prompt({
+      standardStage: 'tiaoxin_response', skillId: 'tiaoxin',
+      options: ['jijiang', 'decline'], min: 0, max: 0,
+    });
+    expect(createStandardSkillActionFromUi('self', tiaoxin, { option: 'jijiang' })).toMatchObject({
+      activate: true, tokens: ['jijiang'],
+    });
+    expect(createStandardSkillActionFromUi('self', tiaoxin, { option: 'decline' })).toMatchObject({ activate: false });
+  });
+
+  it('submits generic region choices and keeps Dawu cards paired with targets', () => {
+    const region = prompt({
+      optional: false, standardStage: 'guixin_select', skillId: 'guixin', min: 1, max: 1,
+      zoneChoices: [{ token: 'equipment:weapon', ownerId: 'other', zone: 'equipment', label: '武器' }],
+    });
+    expect(createStandardSkillActionFromUi('self', region, { zoneTokens: ['equipment:weapon'] })).toMatchObject({
+      activate: true, tokens: ['equipment:weapon'],
+    });
+
+    const dawu = prompt({
+      standardStage: 'dawu_choice', skillId: 'dawu',
+      allowedCardIds: ['star-a', 'star-b'], min: 1, max: 2,
+      allowedTargetIds: ['one', 'two'], minTargets: 1, maxTargets: 2,
+    });
+    expect(createStandardSkillActionFromUi('self', dawu, {
+      cardIds: ['star-a', 'star-b'], targetIds: ['one', 'two'],
+    })).toMatchObject({ cardIds: ['star-a', 'star-b'], targetIds: ['one', 'two'] });
+    expect(() => createStandardSkillActionFromUi('self', dawu, {
+      cardIds: ['star-a'], targetIds: ['one', 'two'],
+    })).toThrow('相同');
   });
 
   it('preserves view-as, multi-target and allocation payloads after boundary validation', () => {

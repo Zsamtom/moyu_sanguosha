@@ -6,12 +6,14 @@ import {
   canSubmitCardPlay,
   cardPlayButtonLabel,
   cardRequiresTarget,
+  createStandardSkillActionFromUi,
   createUseSkillAction,
   generalSkillNames,
   isCardAllowedByPrompt,
   isCardResponsePrompt,
   responseCardName,
   selectableResponseSkills,
+  standardSkillOptionLabel,
   surrenderCopy,
 } from '../interactionRules';
 import type {
@@ -231,7 +233,7 @@ function PlayerPanel({
   );
 }
 
-function ActivityOverlay({ logs }: { logs: GameLogEntry[] }) {
+function ActivityNotice({ logs }: { logs: GameLogEntry[] }) {
   const latest = logs.at(-1);
   const [visible, setVisible] = useState<GameLogEntry>();
 
@@ -243,7 +245,7 @@ function ActivityOverlay({ logs }: { logs: GameLogEntry[] }) {
   }, [latest]);
 
   return visible ? (
-    <div className={`activity-overlay activity-overlay--${visible.tone ?? 'normal'}`} role="status">
+    <div className={`activity-notice activity-notice--${visible.tone ?? 'normal'}`} role="status">
       <span>最近操作</span>
       <p>{visible.text}</p>
     </div>
@@ -287,6 +289,8 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
   const [standardTopIds, setStandardTopIds] = useState<string[]>([]);
   const [standardBottomIds, setStandardBottomIds] = useState<string[]>([]);
   const [standardAllocations, setStandardAllocations] = useState<Record<string, string>>({});
+  const [selectedStandardOption, setSelectedStandardOption] = useState<string>();
+  const [selectedStandardTokens, setSelectedStandardTokens] = useState<string[]>([]);
 
   useEffect(() => {
     setSelectedCardIds([]);
@@ -296,6 +300,8 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
     setStandardTopIds([]);
     setStandardBottomIds([]);
     setStandardAllocations({});
+    setSelectedStandardOption(undefined);
+    setSelectedStandardTokens([]);
   }, [game.prompt?.id, game.phase, game.turnPlayerId]);
 
   const self = game.players.find((player) => player.isSelf || player.id === game.selfPlayerId);
@@ -496,6 +502,54 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
     new Set([...standardTopIds, ...standardBottomIds]).size === standardViewedIds.length;
   const standardAllocationComplete = standardViewedIds.length > 0 &&
     standardViewedIds.every((cardId) => Boolean(standardAllocations[cardId]));
+  const ownedVisibleCardIds = new Set([
+    ...game.hand.map((card) => card.id),
+    ...(self?.equipment ?? []).map((card) => card.id),
+  ]);
+  const standardSupplementalCards = standardPrompt?.cardChoices?.filter((card) =>
+    !ownedVisibleCardIds.has(card.id) &&
+    standardPrompt.standardStage !== 'guanxing_reorder' &&
+    standardPrompt.standardStage !== 'yiji_distribute' &&
+    standardPrompt.standardStage !== 'buqu_recovery') ?? [];
+  const standardChoiceModal = Boolean(
+    standardPrompt?.options?.length &&
+    standardPrompt.standardStage !== 'gongxin_choose' &&
+    (standardPrompt.max ?? 0) === 0 &&
+    (standardPrompt.maxTargets ?? 0) === 0 &&
+    !standardPrompt.zoneChoices?.length,
+  );
+  const qixingStarIds = new Set(self?.privatePiles?.qixing?.map((card) => card.id) ?? []);
+  const qixingSelectionBalanced = standardPrompt?.standardStage !== 'qixing_initial' &&
+    standardPrompt?.standardStage !== 'qixing_exchange' ||
+    selectedCardIds.filter((cardId) => qixingStarIds.has(cardId)).length ===
+      selectedCardIds.filter((cardId) => !qixingStarIds.has(cardId)).length;
+  const shelieSelectionValid = standardPrompt?.standardStage !== 'shelie_select' ||
+    new Set((standardPrompt.cardChoices ?? [])
+      .filter((card) => selectedCardIds.includes(card.id))
+      .map((card) => card.suit)).size === selectedCardIds.length;
+  const gongxinSelectionValid = standardPrompt?.standardStage !== 'gongxin_choose' ||
+    selectedCardIds.length === 1;
+  const optionalPaymentSelectionValid = standardPrompt?.standardStage !== 'xiangle_payment' ||
+    selectedCardIds.length === 1;
+  const qiaobianDrawSelectionValid = standardPrompt?.standardStage !== 'qiaobian_draw' ||
+    selectedStandardTokens.length > 0;
+  let standardSelectionAction: Extract<GameAction, { type: 'resolve_standard_skill' }> | undefined;
+  if (standardPrompt && !standardChoiceModal) {
+    try {
+      standardSelectionAction = createStandardSkillActionFromUi(game.selfPlayerId, standardPrompt, {
+        cardIds: selectedCardIds,
+        targetIds: selectedTargetIds,
+        zoneTokens: selectedStandardTokens,
+        option: selectedStandardOption,
+      });
+    } catch {
+      standardSelectionAction = undefined;
+    }
+  }
+  const standardSelectionValid = Boolean(
+    standardSelectionAction && qixingSelectionBalanced && shelieSelectionValid && gongxinSelectionValid &&
+      optionalPaymentSelectionValid && qiaobianDrawSelectionValid,
+  );
   const assignStandardReorder = (cardId: string, destination: 'top' | 'bottom') => {
     setStandardTopIds((current) => destination === 'top'
       ? [...current.filter((id) => id !== cardId), cardId]
@@ -503,6 +557,19 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
     setStandardBottomIds((current) => destination === 'bottom'
       ? [...current.filter((id) => id !== cardId), cardId]
       : current.filter((id) => id !== cardId));
+  };
+
+  const toggleStandardToken = (token: string) => {
+    if (!standardPrompt) return;
+    setSelectedStandardTokens((current) => {
+      if (current.includes(token)) return current.filter((entry) => entry !== token);
+      const choice = standardPrompt.zoneChoices?.find((entry) => entry.token === token);
+      const withoutSameOwner = choice?.ownerId && standardPrompt.standardStage === 'qiaobian_draw'
+        ? current.filter((entry) => standardPrompt.zoneChoices?.find((candidate) => candidate.token === entry)?.ownerId !== choice.ownerId)
+        : current;
+      const max = standardPrompt.max ?? 1;
+      return withoutSameOwner.length < max ? [...withoutSameOwner, token] : withoutSameOwner;
+    });
   };
 
   const sendStandard = (activate: boolean, extra: Partial<Extract<GameAction, { type: 'resolve_standard_skill' }>> = {}) => {
@@ -514,6 +581,11 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
       activate,
       ...extra,
     });
+  };
+
+  const submitPureStandardOption = (option: string) => {
+    if (!standardPrompt) return;
+    void send(createStandardSkillActionFromUi(game.selfPlayerId, standardPrompt, { option }));
   };
 
   return (
@@ -584,7 +656,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
       <div className="game-layout">
         <section className="battlefield">
           <div className="players-stage">
-            <ActivityOverlay logs={game.logs ?? []} />
+            <ActivityNotice logs={game.logs ?? []} />
             <div
               className="players-grid"
               role="group"
@@ -719,6 +791,80 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                 </div>
               </section>
             )}
+            {isStandardPrompt && !standardChoiceModal && standardPrompt?.options?.length && (
+              <section className="general-skill-zone" aria-label="技能选项">
+                <div className="general-skill-zone__heading">
+                  <div><span className="section-kicker">技能选项</span><strong>请选择一种结算方式</strong></div>
+                </div>
+                <div className="zone-choice-actions">
+                  {standardPrompt.options.map((option) => (
+                    <Button
+                      key={option}
+                      type={selectedStandardOption === option ? 'primary' : 'default'}
+                      disabled={!connected}
+                      onClick={() => {
+                        setSelectedStandardOption((current) => current === option ? undefined : option);
+                        setSelectedCardIds([]);
+                      }}
+                    >
+                      {standardSkillOptionLabel(option)}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+            )}
+            {isStandardPrompt && standardPrompt?.zoneChoices?.length && standardPrompt.standardStage !== 'fankui_select' && (
+              <section className="general-skill-zone" aria-label="技能区域牌选择">
+                <div className="general-skill-zone__heading">
+                  <div><span className="section-kicker">区域牌</span><strong>选择当前技能要处理的牌</strong></div>
+                  <Tag color={selectedStandardTokens.length >= (standardPrompt.min ?? 0) ? 'green' : 'volcano'}>
+                    已选 {selectedStandardTokens.length} / {(standardPrompt.min ?? 0) === (standardPrompt.max ?? 0)
+                      ? standardPrompt.min ?? 0
+                      : `${standardPrompt.min ?? 0}-${standardPrompt.max ?? 0}`}
+                  </Tag>
+                </div>
+                <div className="zone-choice-actions">
+                  {standardPrompt.zoneChoices.map((choice) => (
+                    <Button
+                      key={`${choice.ownerId ?? 'unknown'}-${choice.token}`}
+                      type={selectedStandardTokens.includes(choice.token) ? 'primary' : 'default'}
+                      disabled={!connected}
+                      onClick={() => toggleStandardToken(choice.token)}
+                    >
+                      {choice.label}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+            )}
+            {isStandardPrompt && standardSupplementalCards.length > 0 && (
+              <section className="general-skill-zone" aria-label="技能展示牌选择">
+                <div className="general-skill-zone__heading">
+                  <div>
+                    <span className="section-kicker">技能牌</span>
+                    <strong>{standardPrompt?.standardStage === 'qixing_initial' || standardPrompt?.standardStage === 'qixing_exchange'
+                      ? '选择等量手牌与星进行交换'
+                      : '选择当前技能要处理的牌'}</strong>
+                  </div>
+                  <Tag color={qixingSelectionBalanced && shelieSelectionValid ? 'green' : 'volcano'}>
+                    已选 {selectedCardIds.length}
+                  </Tag>
+                </div>
+                <div className="hand-cards">
+                  {standardSupplementalCards.map((card) => (
+                    <GameCardTile
+                      key={`standard-choice-${card.id}`}
+                      card={card}
+                      selected={selectedCardIds.includes(card.id)}
+                      disabled={!connected || !standardPrompt?.allowedCardIds?.includes(card.id)}
+                      onClick={() => toggleCard(card)}
+                    />
+                  ))}
+                </div>
+                {!qixingSelectionBalanced && <p className="selection-error">七星交换必须选择等量的手牌与星。</p>}
+                {!shelieSelectionValid && <p className="selection-error">涉猎只能选择花色各不相同的牌。</p>}
+              </section>
+            )}
             {isStandardPrompt && game.prompt?.allowedCardIds && self?.equipment?.some((card) => game.prompt?.allowedCardIds?.includes(card.id)) && (
               <section className="general-skill-zone" aria-label="技能可用装备">
                 <span className="section-kicker">可作为技能选择的装备</span>
@@ -765,7 +911,9 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                   ))}
                 </div>
               ) : isStandardPrompt && standardPrompt?.skillId ? (
-                standardPrompt.skillId === 'huashen' && standardPrompt.options?.length ? (
+                standardChoiceModal ? (
+                  <span className="action-hint">请在技能选择弹窗中完成本次操作</span>
+                ) : standardPrompt.skillId === 'huashen' && standardPrompt.options?.length ? (
                   <div className="zone-choice-actions">
                     {standardPrompt.options.map((option) => (
                       <Button key={option} type="primary" size="large" disabled={!connected} loading={sending} onClick={() => void send(huashenChoiceAction(game.selfPlayerId, standardPrompt.id, option))}>
@@ -858,8 +1006,18 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                   </>
                 ) : (
                   <>
-                    <Button type="primary" size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(true)}>
-                      {standardPrompt.standardStage === 'judgment_post' ? '发动天妒' : `发动「${skillName(standardPrompt.skillId)}」`}
+                    <Button
+                      type="primary"
+                      size="large"
+                      disabled={!connected || !standardSelectionValid}
+                      loading={sending}
+                      onClick={() => standardSelectionAction && void send(standardSelectionAction)}
+                    >
+                      {standardPrompt.standardStage === 'judgment_post'
+                        ? '发动天妒'
+                        : standardPrompt.standardStage === 'invoke'
+                          ? `发动「${skillName(standardPrompt.skillId)}」`
+                          : '确认技能选择'}
                     </Button>
                     {standardPrompt.optional !== false && (
                       <Button size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(false)}>不发动</Button>
@@ -1204,6 +1362,39 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
       </div>
 
       <BattleLog logs={game.logs ?? []} />
+
+      <Modal
+        className="standard-skill-modal"
+        open={standardChoiceModal}
+        centered
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+        footer={null}
+        width={520}
+        title={standardPrompt?.skillId ? `处理「${skillName(standardPrompt.skillId)}」` : '处理武将技能'}
+      >
+        <p className="standard-skill-modal__message">{standardPrompt?.message}</p>
+        <div className="standard-skill-modal__choices">
+          {standardPrompt?.options?.map((option) => (
+            <Button
+              key={option}
+              type="primary"
+              size="large"
+              disabled={!connected}
+              loading={sending}
+              onClick={() => submitPureStandardOption(option)}
+            >
+              {option.startsWith('huashen:') ? huashenChoiceLabel(option) : standardSkillOptionLabel(option)}
+            </Button>
+          ))}
+          {standardPrompt?.optional !== false && (
+            <Button size="large" disabled={!connected} loading={sending} onClick={() => sendStandard(false)}>
+              不发动
+            </Button>
+          )}
+        </div>
+      </Modal>
 
       <Modal
         className="game-result-modal"

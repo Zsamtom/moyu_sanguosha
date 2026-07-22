@@ -5900,6 +5900,9 @@ function applyInvokeLordSkill(
   if (session.turn.phase === "play") {
     assertPlayTurn(session, requester.id);
     if (action.skillId !== "jijiang") ruleError("INVALID_PHASE", "护驾不能在出牌阶段主动使用。");
+    if (skillUseCount(session, "jijiang") > 0) {
+      ruleError("INVALID_SKILL", "本出牌阶段的激将请求已经无人响应，不能重复发起。");
+    }
     if (!canUseAnotherSlash(session, requester)) ruleError("SLASH_ALREADY_USED", "本出牌阶段不能再次通过激将使用杀。");
     const requestedTargetIds = action.targetIds ?? (action.targetId ? [action.targetId] : []);
     const maxTargets = activeSlashTargetLimit(session, requester, false);
@@ -5960,6 +5963,7 @@ function advanceOrFailLordDispatch(session: GameSession, pending: PendingLordDis
     session.turn.phase = "respond";
     session.pendingResponse = clonePendingResponse(pending.resume.failureResume);
   } else {
+    if (pending.skillId === "jijiang") markSkillUsed(session, "jijiang");
     session.turn.phase = "play";
     session.pendingResponse = null;
   }
@@ -19848,6 +19852,7 @@ function playableSkills(session: GameSession, viewer: GamePlayer): PlayableSkill
 
   if (
     hasEffectiveSkill(session, viewer, "jijiang") &&
+    skillUseCount(session, "jijiang") === 0 &&
     canUseAnotherSlash(session, viewer) &&
     lordDispatchProviders(session, viewer, "jijiang").length > 0
   ) {
