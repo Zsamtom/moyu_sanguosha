@@ -93,13 +93,13 @@ function NumberGrid({
 
   if (!board) {
     return (
-      <div className="number-connect-grid number-connect-grid--hidden" aria-label={`${label}，对局结束后公开`}>
+      <div className="number-connect-grid number-connect-grid--hidden" aria-label={`${label}，仅本人可见`}>
         {Array.from({ length: BOARD_SIZE ** 2 }, (_, index) => (
           <span key={index}><i aria-hidden="true" /></span>
         ))}
         <div>
           <strong>排列已隐藏</strong>
-          <small>FINISH TO REVEAL</small>
+          <small>PRIVATE BOARD</small>
         </div>
       </div>
     );
@@ -223,31 +223,29 @@ export function NumberConnectBoard({
             <h2>{resultTitle}</h2>
             <p>
               {game.winner?.reason === 'forfeit'
-                ? '一方退出，本局提前结束；双方最终棋盘现已公开。'
+                ? '一方退出，本局提前结束；双方棋盘仍各自保密。'
                 : game.winner?.playerIds.length === 2
                   ? `最后叫出的 ${game.lastNumber} 同时令双方达到五线，本局并列获胜。`
-                  : `最后叫出的数字是 ${game.lastNumber}，双方最终棋盘现已公开。`}
+                  : `最后叫出的数字是 ${game.lastNumber}；对方的数字排列不会公开。`}
             </p>
           </section>
-          <section className="number-connect-reveal" aria-label="双方最终棋盘">
-            {game.players.map((player) => (
-              <article key={player.id} className={winners.has(player.id) ? 'is-winner' : ''}>
-                <header>
-                  <div>
-                    <span>{player.id === userId ? '你的棋盘' : '对手棋盘'}</span>
-                    <strong>{player.name}</strong>
-                  </div>
-                  <b>{player.lineCount}<small>条线</small></b>
-                </header>
-                <NumberGrid
-                  board={player.board}
-                  calledNumbers={game.calledNumbers}
-                  lastNumber={game.lastNumber}
-                  interactive={false}
-                  label={`${player.name} 的最终棋盘`}
-                />
-              </article>
-            ))}
+          <section className="number-connect-reveal" aria-label="你的最终棋盘">
+            <article className={winners.has(self.id) ? 'is-winner' : ''}>
+              <header>
+                <div>
+                  <span>你的棋盘</span>
+                  <strong>{self.name}</strong>
+                </div>
+                <b>{self.lineCount}<small>条线</small></b>
+              </header>
+              <NumberGrid
+                board={self.board}
+                calledNumbers={game.calledNumbers}
+                lastNumber={game.lastNumber}
+                interactive={false}
+                label="你的最终棋盘"
+              />
+            </article>
           </section>
           <div className="number-connect-final-action">
             <Button type="primary" size="large" onClick={() => void onExit()}>返回游戏大厅</Button>
@@ -295,23 +293,6 @@ export function NumberConnectBoard({
               {busy && <small>正在提交选择……</small>}
             </section>
 
-            <section className="number-connect-opponent-preview">
-              <header>
-                <div>
-                  <span>OPPONENT FIELD</span>
-                  <strong>{opponent.name}</strong>
-                </div>
-                <b>{opponent.lineCount}<small>条线</small></b>
-              </header>
-              <NumberGrid
-                calledNumbers={game.calledNumbers}
-                lastNumber={game.lastNumber}
-                interactive={false}
-                label={`${opponent.name} 的隐藏棋盘`}
-              />
-              <p>对手的随机排列会在胜负确定后公开。</p>
-            </section>
-
             <section className="number-connect-rules">
               <span>得分说明</span>
               <ul>
@@ -320,6 +301,7 @@ export function NumberConnectBoard({
                 <li><i />任一斜向 5 格全部打叉</li>
               </ul>
               <strong>先完成 {TARGET_LINES} 条线获胜</strong>
+              <small>双方棋盘始终独立保密，只展示连线分数。</small>
             </section>
           </aside>
         </section>

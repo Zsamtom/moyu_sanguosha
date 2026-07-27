@@ -58,7 +58,7 @@ export interface NumberConnectPlayerView {
   readonly name: string;
   readonly botTitle?: string;
   readonly lineCount: number;
-  /** Only the viewer's board is present until the match finishes. */
+  /** Only the viewer's board is ever present in a private game view. */
   readonly board?: number[];
 }
 
@@ -164,6 +164,31 @@ function shuffleBoard(
   return { board, state };
 }
 
+function ensurePositionallyDistinctBoards(
+  firstBoard: readonly number[],
+  secondBoard: number[],
+): void {
+  const matchingIndexes = firstBoard
+    .map((number, index) => secondBoard[index] === number ? index : -1)
+    .filter((index) => index >= 0);
+  if (matchingIndexes.length === 0) return;
+
+  if (matchingIndexes.length === 1) {
+    const matchingIndex = matchingIndexes[0]!;
+    const swapIndex = matchingIndex === 0 ? 1 : 0;
+    [secondBoard[matchingIndex], secondBoard[swapIndex]] = [
+      secondBoard[swapIndex]!,
+      secondBoard[matchingIndex]!,
+    ];
+    return;
+  }
+
+  const matchingValues = matchingIndexes.map((index) => secondBoard[index]!);
+  matchingIndexes.forEach((index, position) => {
+    secondBoard[index] = matchingValues[(position + 1) % matchingValues.length]!;
+  });
+}
+
 function rankings(game: NumberConnectGameState): NumberConnectRanking[] {
   return [...game.players]
     .sort((left, right) => right.lineCount - left.lineCount || left.seat - right.seat)
@@ -214,14 +239,7 @@ export function createNumberConnectGame(input: {
   rng = firstBoard.state;
   const secondBoard = shuffleBoard(rng);
   rng = secondBoard.state;
-  // A shared layout is vanishingly unlikely, but the game contract promises
-  // different boards, so make that invariant explicit.
-  if (firstBoard.board.every((number, index) => secondBoard.board[index] === number)) {
-    [secondBoard.board[0], secondBoard.board[1]] = [
-      secondBoard.board[1]!,
-      secondBoard.board[0]!,
-    ];
-  }
+  ensurePositionallyDistinctBoards(firstBoard.board, secondBoard.board);
   const firstPlayer = randomInteger(rng, 2).value;
   const players = input.players.map((player, seat): NumberConnectPlayerState => ({
     ...player,
@@ -301,7 +319,6 @@ export function getNumberConnectGameView(
   if (viewerId !== null && !game.players.some((player) => player.id === viewerId)) {
     throw new NumberConnectRuleError("NUMBER_CONNECT_UNKNOWN_PLAYER", "玩家不在本局中");
   }
-  const revealAll = game.status === "finished";
   const prompt: NumberConnectPrompt = game.status === "finished"
     ? { type: "finished", playerId: null }
     : viewerId === game.currentPlayerId
@@ -324,7 +341,7 @@ export function getNumberConnectGameView(
       name: player.name,
       ...(player.botTitle ? { botTitle: player.botTitle } : {}),
       lineCount: player.lineCount,
-      ...(revealAll || player.id === viewerId
+      ...(player.id === viewerId
         ? { board: [...player.board] }
         : {}),
     })),
@@ -462,8 +479,8 @@ export function assertRestorableNumberConnectGameState(
     playerIds.add(rawPlayer.id);
   }
   const players = value.players as unknown as NumberConnectPlayerState[];
-  if (players[0]!.board.every((number, index) => players[1]!.board[index] === number)) {
-    throw new Error("数字连连看双方棋盘不能相同");
+  if (players[0]!.board.some((number, index) => players[1]!.board[index] === number)) {
+    throw new Error("数字连连看双方棋盘同一位置不能出现相同数字");
   }
   if (
     value.lastNumber !== (calledNumbers.at(-1) ?? null) ||

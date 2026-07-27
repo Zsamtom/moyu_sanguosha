@@ -112,7 +112,7 @@ describe("Number Connect rooms", () => {
     })).toThrow(/该房间正在进行数字连连看/);
   });
 
-  it("finishes at five lines, reveals both boards, and restores the snapshot", () => {
+  it("finishes at five lines, keeps boards private, and restores the snapshot", () => {
     const { rooms, roomId } = startHumanRoom();
     for (let number = 1; number <= 25; number += 1) {
       const before = view(rooms, roomId, owner.id);
@@ -129,7 +129,11 @@ describe("Number Connect rooms", () => {
       prompt: { type: "finished" },
       winner: { reason: "lines" },
     });
-    expect(finished.players.every((player) => player.board?.length === 25)).toBe(true);
+    expect(finished.players.find((player) => player.id === owner.id)?.board).toHaveLength(25);
+    expect(finished.players.find((player) => player.id === guest.id)?.board).toBeUndefined();
+    const guestFinished = view(rooms, roomId, guest.id);
+    expect(guestFinished.players.find((player) => player.id === guest.id)?.board).toHaveLength(25);
+    expect(guestFinished.players.find((player) => player.id === owner.id)?.board).toBeUndefined();
     expect(Math.max(...finished.players.map((player) => player.lineCount))).toBeGreaterThanOrEqual(5);
 
     const restored = new RoomService();

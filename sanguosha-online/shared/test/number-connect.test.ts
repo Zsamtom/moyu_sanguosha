@@ -31,7 +31,7 @@ function play(
 }
 
 describe("Number Connect authoritative engine", () => {
-  it("creates deterministic, distinct 5x5 permutations", () => {
+  it("creates deterministic 5x5 permutations with no matching positions", () => {
     const first = createNumberConnectGame({ players, seed });
     const second = createNumberConnectGame({ players, seed });
     expect(first).toEqual(second);
@@ -43,7 +43,19 @@ describe("Number Connect authoritative engine", () => {
         Array.from({ length: NUMBER_CONNECT_CELL_COUNT }, (_, index) => index + 1),
       );
     }
-    expect(first.players[0]!.board).not.toEqual(first.players[1]!.board);
+    first.players[0]!.board.forEach((number, index) => {
+      expect(first.players[1]!.board[index]).not.toBe(number);
+    });
+    const invalid = structuredClone(first);
+    const matchingNumber = invalid.players[0]!.board[0]!;
+    const matchingIndex = invalid.players[1]!.board.indexOf(matchingNumber);
+    [invalid.players[1]!.board[0], invalid.players[1]!.board[matchingIndex]] = [
+      invalid.players[1]!.board[matchingIndex]!,
+      invalid.players[1]!.board[0]!,
+    ];
+    expect(() => assertRestorableNumberConnectGameState(invalid)).toThrow(
+      /同一位置不能出现相同数字/,
+    );
     expect(() => createNumberConnectGame({ players: players.slice(0, 1), seed })).toThrow();
   });
 
@@ -70,7 +82,7 @@ describe("Number Connect authoritative engine", () => {
     })).toThrow(NumberConnectRuleError);
   });
 
-  it("hides the opponent board until someone reaches five lines", () => {
+  it("keeps the opponent board private after someone reaches five lines", () => {
     let game = createNumberConnectGame({ players, seed });
     const ownView = getNumberConnectGameView(game, players[0]!.id);
     expect(ownView.players[0]!.board).toEqual(game.players[0]!.board);
@@ -85,7 +97,8 @@ describe("Number Connect authoritative engine", () => {
     expect(Math.max(...game.players.map((player) => player.lineCount)))
       .toBeGreaterThanOrEqual(NUMBER_CONNECT_TARGET_LINES);
     const finalView = getNumberConnectGameView(game, players[0]!.id);
-    expect(finalView.players.every((player) => player.board?.length === 25)).toBe(true);
+    expect(finalView.players[0]!.board).toEqual(game.players[0]!.board);
+    expect(finalView.players[1]!.board).toBeUndefined();
     expect(() => assertRestorableNumberConnectGameState(game)).not.toThrow();
   });
 
