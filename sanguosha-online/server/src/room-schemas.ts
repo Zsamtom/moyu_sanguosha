@@ -60,11 +60,11 @@ export const createRoomSchema = z.object({
       message: "斗地主固定为 3 人",
     });
   }
-  if (input.botMode === "llm" && input.gameType !== "doudizhu") {
+  if (input.botMode === "llm" && input.gameType === "gouji") {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["botMode"],
-      message: "LLM bot mode is currently available only for Dou Dizhu rooms",
+      message: "LLM bot mode is not available for Gouji rooms",
     });
   }
 });

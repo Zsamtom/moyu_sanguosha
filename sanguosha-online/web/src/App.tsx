@@ -518,7 +518,7 @@ export default function App() {
             onExit={leaveRoom}
           />
         ) : game ? (
-          <GameBoard game={game} connected={connected} onAction={sendAction} onExit={leaveRoom} />
+          <GameBoard game={game} room={room} connected={connected} onAction={sendAction} onExit={leaveRoom} />
         ) : room ? (
           <RoomScreen
             room={room}

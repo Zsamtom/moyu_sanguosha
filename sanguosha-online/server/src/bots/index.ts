@@ -1,20 +1,21 @@
 import type { AppConfig } from "../config.js";
 import { BotDecisionRegistry } from "./decision-registry.js";
 import { OpenAiCompatibleDoudizhuProvider } from "./doudizhu-llm.js";
+import { OpenAiCompatibleSanguoshaProvider } from "./sanguosha-llm.js";
 
 export function createBotDecisionRegistry(config?: AppConfig): BotDecisionRegistry {
   const registry = new BotDecisionRegistry();
   if (config?.doudizhuLlm) {
-    registry.register(
-      "doudizhu",
-      new OpenAiCompatibleDoudizhuProvider({
-        endpoint: config.doudizhuLlm.endpoint,
-        apiKey: config.doudizhuLlm.apiKey,
-        model: config.doudizhuLlm.model,
-        timeoutMs: config.doudizhuLlm.timeoutMs,
-        maximumOutputTokens: config.doudizhuLlm.maximumOutputTokens,
-      }),
-    );
+    const providerConfig = {
+      endpoint: config.doudizhuLlm.endpoint,
+      apiKey: config.doudizhuLlm.apiKey,
+      model: config.doudizhuLlm.model,
+      timeoutMs: config.doudizhuLlm.timeoutMs,
+      maximumOutputTokens: config.doudizhuLlm.maximumOutputTokens,
+    };
+    registry
+      .register("doudizhu", new OpenAiCompatibleDoudizhuProvider(providerConfig))
+      .register("sanguosha", new OpenAiCompatibleSanguoshaProvider(providerConfig));
   }
   return registry;
 }

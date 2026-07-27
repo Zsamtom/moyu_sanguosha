@@ -3450,10 +3450,7 @@ body {
   overflow: hidden;
   border: 1px solid #d8d8d8;
   border-radius: 8px;
-  background:
-    radial-gradient(ellipse at center, #ffffff 0 31%, transparent 31.5%),
-    radial-gradient(ellipse at center, transparent 0 48%, rgba(0, 0, 0, 0.045) 48.5%, transparent 49%),
-    #f6f6f6;
+  background: #ffffff;
 }
 
 .players-grid::before {

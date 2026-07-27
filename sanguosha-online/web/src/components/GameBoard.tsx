@@ -25,12 +25,14 @@ import type {
   GamePlayerView,
   GameView,
   PlayableSkillHint,
+  RoomDetail,
   SkillChoiceId,
 } from '../types';
 import { generalNames } from './RoomScreen';
 
 interface GameBoardProps {
   game: GameView;
+  room: RoomDetail | null;
   connected: boolean;
   onAction: (action: GameAction) => Promise<void>;
   onExit: () => Promise<void>;
@@ -141,12 +143,14 @@ function GameCardTile({
 function PlayerPanel({
   player,
   acting,
+  thinking,
   selectable,
   selected,
   onSelect,
 }: {
   player: GamePlayerView;
   acting: boolean;
+  thinking: boolean;
   selectable: boolean;
   selected: boolean;
   onSelect: () => void;
@@ -222,10 +226,11 @@ function PlayerPanel({
         {player.chained && <span>连环</span>}
         {!player.faceUp && <span>翻面</span>}
       </div>
-      {(player.isCurrent || acting) && (
+      {(player.isCurrent || acting || thinking) && (
         <span className="player-state-flags">
           {player.isCurrent && <span className="turn-ribbon">当前回合</span>}
           {acting && <span className="player-action-bubble" role="status">操作中</span>}
+          {thinking && <span className="player-action-bubble" role="status">{player.displayName} 思考中...</span>}
         </span>
       )}
       {!player.alive && <span className="dead-stamp">阵亡</span>}
@@ -291,7 +296,7 @@ function BattleLog({ logs }: { logs: GameLogEntry[] }) {
   );
 }
 
-export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps) {
+export function GameBoard({ game, room, connected, onAction, onExit }: GameBoardProps) {
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
@@ -688,6 +693,7 @@ export function GameBoard({ game, connected, onAction, onExit }: GameBoardProps)
                   <PlayerPanel
                     player={player}
                     acting={game.status === 'playing' && player.id === game.actingPlayerId}
+                    thinking={room?.llmBot.thinkingPlayerId === player.id}
                     selectable={connected && selectableTargetIds.has(player.id)}
                     selected={selectedTargetIds.includes(player.id)}
                     onSelect={() => toggleTarget(player)}

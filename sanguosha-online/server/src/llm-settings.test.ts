@@ -44,6 +44,7 @@ describe("LLM settings service", () => {
       apiKeyConfigured: false,
     });
     expect(registry.supports("doudizhu")).toBe(false);
+    expect(registry.supports("sanguosha")).toBe(false);
   });
 
   it("encrypts API keys at rest and restores the active provider", async () => {
@@ -66,6 +67,7 @@ describe("LLM settings service", () => {
     }, "11111111-1111-4111-8111-111111111111");
 
     expect(registry.supports("doudizhu")).toBe(true);
+    expect(registry.supports("sanguosha")).toBe(true);
     expect(JSON.stringify(store.loaded)).not.toContain("sk-secret-value");
     expect(store.loaded?.settings.encryptedApiKey).toMatchObject({
       algorithm: "aes-256-gcm",
@@ -85,6 +87,7 @@ describe("LLM settings service", () => {
       apiKeyConfigured: true,
     });
     expect(restoredRegistry.supports("doudizhu")).toBe(true);
+    expect(restoredRegistry.supports("sanguosha")).toBe(true);
   });
 
   it("tests the selected DeepSeek model with the model-list endpoint and no inference call", async () => {

@@ -54,6 +54,7 @@ import {
   createDoudizhuDecision,
   type DoudizhuLlmUsage,
 } from "./bots/doudizhu-llm.js";
+import { createSanguoshaDecision } from "./bots/sanguosha-llm.js";
 import type { PublicUser } from "./users.js";
 
 export type RoomStatus = "waiting" | "drafting" | "playing" | "finished";
@@ -358,7 +359,7 @@ export class RoomService {
       const room = structuredClone(saved) as Room;
       room.gameType = saved.gameType ?? "sanguosha";
       room.botIntelligence = saved.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE;
-      room.botMode = room.gameType === "doudizhu" ? saved.botMode ?? "rules" : "rules";
+      room.botMode = room.gameType === "gouji" ? "rules" : saved.botMode ?? "rules";
       room.doudizhuLlmUsage = {
         ...EMPTY_DOUDIZHU_LLM_USAGE,
         ...saved.doudizhuLlmUsage,
@@ -465,7 +466,7 @@ export class RoomService {
       players: [this.toPlayer(owner, 0)],
       ruleConfig,
       botIntelligence: input.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE,
-      botMode: gameType === "doudizhu" ? input.botMode ?? "rules" : "rules",
+      botMode: gameType === "gouji" ? "rules" : input.botMode ?? "rules",
       doudizhuLlmUsage: { ...EMPTY_DOUDIZHU_LLM_USAGE },
       chatMessages: [],
     };
@@ -1046,7 +1047,11 @@ export class RoomService {
       botIntelligence: room.botIntelligence,
       botMode: room.botMode,
       llmBot: {
-        available: this.botDecisions.supports("doudizhu"),
+        available: room.gameType === "sanguosha"
+          ? this.botDecisions.supports("sanguosha")
+          : room.gameType === "doudizhu"
+            ? this.botDecisions.supports("doudizhu")
+            : false,
         thinkingPlayerId:
           this.llmBotRuns.get(room.id)?.playerId ??
           this.llmRecommendationRuns.get(room.id)?.playerId ??
@@ -1114,6 +1119,14 @@ export class RoomService {
         const bot = this.actingBot(room);
         if (!bot) break;
         steps += 1;
+        if (
+          !isGoujiGame(room.game) &&
+          !isDoudizhuGame(room.game) &&
+          room.botMode === "llm" &&
+          this.startSanguoshaLlmDecision(room, room.game, bot)
+        ) {
+          break;
+        }
         if (
           isDoudizhuGame(room.game) &&
           room.botMode === "llm" &&
@@ -1271,6 +1284,123 @@ export class RoomService {
             fallbackError,
           );
           currentRoom.game = forfeitDoudizhuPlayer(currentRoom.game, bot.id);
+        }
+        this.finishRoomIfNeeded(currentRoom);
+        this.changed();
+      })
+      .finally(() => {
+        if (this.llmBotRuns.get(room.id) !== request) return;
+        this.llmBotRuns.delete(room.id);
+        const currentRoom = this.rooms.get(room.id);
+        if (currentRoom) {
+          this.runBots(currentRoom, true);
+          this.changed();
+        }
+      });
+    return true;
+  }
+
+  private startSanguoshaLlmDecision(
+    room: Room,
+    game: GameSession,
+    bot: RoomPlayer,
+  ): boolean {
+    if (!this.botDecisions.supports("sanguosha")) return false;
+    let fallback: GameAction;
+    let candidates: GameAction[];
+    try {
+      fallback = this.actionForBot(game, bot, room.botIntelligence);
+      const seen = new Set<string>();
+      candidates = ([3, 5, 6, 7] as const)
+        .map((intelligence) => this.actionForBot(game, bot, intelligence))
+        .filter((action) => {
+          const key = JSON.stringify(action);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+    } catch {
+      return false;
+    }
+    const decision = createSanguoshaDecision(
+      room.id,
+      game,
+      bot.id,
+      room.botIntelligence,
+      candidates,
+      fallback,
+    );
+    if (!decision) return false;
+    const request = { revision: game.revision, playerId: bot.id };
+    room.doudizhuLlmUsage.calls += 1;
+    room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
+    this.llmBotRuns.set(room.id, request);
+    this.changed();
+
+    const isCurrentRequest = (currentRoom: Room | undefined): currentRoom is Room =>
+      currentRoom === room &&
+      this.llmBotRuns.get(room.id) === request &&
+      Boolean(
+        currentRoom.game &&
+        !isGoujiGame(currentRoom.game) &&
+        !isDoudizhuGame(currentRoom.game) &&
+        currentRoom.game.revision === request.revision &&
+        this.actingBot(currentRoom)?.id === request.playerId,
+      );
+
+    void this.botDecisions.decide("sanguosha", decision.input)
+      .then((result) => {
+        const currentRoom = this.rooms.get(room.id);
+        if (!isCurrentRequest(currentRoom)) return;
+        if (result) {
+          currentRoom.doudizhuLlmUsage.promptTokens += Math.max(
+            0,
+            result.usage.promptTokens - decision.estimatedPromptTokens,
+          );
+          currentRoom.doudizhuLlmUsage.completionTokens += result.usage.completionTokens;
+        }
+        const selected = result?.candidateIndex === null || result?.candidateIndex === undefined
+          ? undefined
+          : decision.input.candidates[result.candidateIndex];
+        const action = selected ?? decision.fallback;
+        if (!selected) currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        try {
+          currentRoom.game = applyAction(currentRoom.game as GameSession, action);
+        } catch (error) {
+          currentRoom.doudizhuLlmUsage.fallbacks += 1;
+          console.error(
+            `LLM-selected Sanguosha bot action failed in room ${currentRoom.id}; using rule fallback`,
+            error,
+          );
+          try {
+            currentRoom.game = applyAction(currentRoom.game as GameSession, decision.fallback);
+          } catch (fallbackError) {
+            console.error(
+              `Rule fallback failed for bot ${bot.id} in room ${currentRoom.id}; eliminating it`,
+              fallbackError,
+            );
+            currentRoom.game = forfeitPlayer(currentRoom.game as GameSession, bot.id);
+          }
+        }
+        this.finishRoomIfNeeded(currentRoom);
+        this.changed();
+      })
+      .catch((error) => {
+        const currentRoom = this.rooms.get(room.id);
+        if (!isCurrentRequest(currentRoom)) return;
+        currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        console.error(
+          `Sanguosha LLM bot request failed in room ${currentRoom.id}; using rule fallback`,
+          error,
+        );
+        try {
+          currentRoom.game = applyAction(currentRoom.game as GameSession, decision.fallback);
+        } catch (fallbackError) {
+          console.error(
+            `Rule fallback failed for bot ${bot.id} in room ${currentRoom.id}; eliminating it`,
+            fallbackError,
+          );
+          currentRoom.game = forfeitPlayer(currentRoom.game as GameSession, bot.id);
         }
         this.finishRoomIfNeeded(currentRoom);
         this.changed();

@@ -52,6 +52,7 @@ describe('room draft API', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ room: roomPayload('waiting') }))
       .mockResolvedValueOnce(jsonResponse({ room: roomPayload('waiting') }))
+      .mockResolvedValueOnce(jsonResponse({ room: roomPayload('waiting') }))
       .mockResolvedValueOnce(jsonResponse({
         room: { ...roomPayload('waiting'), gameType: 'gouji', maxPlayers: 6 },
       }))
@@ -62,6 +63,7 @@ describe('room draft API', () => {
 
     await api.createRoom('默认规则', 5);
     const configured = await api.createRoom('风火选将', 5, ruleConfig, 7);
+    await api.createRoom('三国杀大模型', 5, ruleConfig, 6, 'sanguosha', 'llm');
     // The lobby can still hold preserved Sanguosha fields after switching the
     // game selector. Gouji requests must never forward that unrelated config.
     const gouji = await api.createRoom('够级房', 6, ruleConfig, 5, 'gouji');
@@ -70,12 +72,19 @@ describe('room draft API', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5, botIntelligence: 3 });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, botIntelligence: 7, ruleConfig });
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      name: '三国杀大模型',
+      maxPlayers: 5,
+      botIntelligence: 6,
+      botMode: 'llm',
+      ruleConfig,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
       name: '够级房',
       maxPlayers: 6,
       botIntelligence: 5,
       gameType: 'gouji',
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body))).toEqual({
       name: '斗地主房',
       maxPlayers: 3,
       botIntelligence: 4,

@@ -4631,8 +4631,8 @@ const roomSchema = z.object({
   if (room.players.length > room.maxPlayers) issue("Room exceeds maxPlayers");
   if (room.gameType === "gouji" && room.maxPlayers !== 6) issue("Gouji room must have exactly 6 seats");
   if (room.gameType === "doudizhu" && room.maxPlayers !== 3) issue("Doudizhu room must have exactly 3 seats");
-  if (room.botMode === "llm" && room.gameType !== "doudizhu") {
-    issue("LLM bot mode is currently available only for Dou Dizhu rooms");
+  if (room.botMode === "llm" && room.gameType === "gouji") {
+    issue("LLM bot mode is not available for Gouji rooms");
   }
   if (room.gameType !== "sanguosha" && room.status === "drafting") issue("Only Sanguosha rooms may draft generals");
   if (room.status === "waiting" && (room.draft || room.game)) {

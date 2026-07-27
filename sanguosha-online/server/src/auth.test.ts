@@ -289,6 +289,7 @@ describe("account allocation and authorization", () => {
       maximumOutputTokens: 16,
     });
     expect(botDecisions.supports("doudizhu")).toBe(false);
+    expect(botDecisions.supports("sanguosha")).toBe(false);
 
     await adminAgent.put("/api/admin/llm-settings")
       .send({
@@ -330,6 +331,7 @@ describe("account allocation and authorization", () => {
     });
     expect(saved.text).not.toContain("sk-private-deepseek-key");
     expect(botDecisions.supports("doudizhu")).toBe(true);
+    expect(botDecisions.supports("sanguosha")).toBe(true);
 
     const reloaded = await adminAgent.get("/api/admin/llm-settings").expect(200);
     expect(reloaded.text).not.toContain("sk-private-deepseek-key");
@@ -365,6 +367,7 @@ describe("account allocation and authorization", () => {
       .expect(200);
     expect(cleared.body.settings.apiKeyConfigured).toBe(false);
     expect(botDecisions.supports("doudizhu")).toBe(false);
+    expect(botDecisions.supports("sanguosha")).toBe(false);
   });
 
   it("lets an admin rename and delete another account but not itself", async () => {

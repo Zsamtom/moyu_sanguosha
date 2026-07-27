@@ -108,7 +108,7 @@ export const api = {
         maxPlayers,
         botIntelligence,
         ...(gameType !== 'sanguosha' ? { gameType } : {}),
-        ...(gameType === 'doudizhu' && botMode === 'llm' ? { botMode } : {}),
+        ...(gameType !== 'gouji' && botMode === 'llm' ? { botMode } : {}),
         ...(gameType === 'sanguosha' && ruleConfig ? { ruleConfig } : {}),
       }),
     });

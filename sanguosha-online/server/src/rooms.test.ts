@@ -18,6 +18,7 @@ import {
   type RoomRuleConfig,
 } from "@sanguosha/shared";
 import { HttpError } from "./errors.js";
+import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import {
   DEFAULT_SERVER_ROOM_RULE_CONFIG,
   RoomService,
@@ -132,6 +133,67 @@ describe("RoomService", () => {
     expect(ownerView.players.find((player) => player.id === owner.id)?.hand).not.toBeNull();
     expect(ownerView.players.find((player) => player.id === bot.id)?.hand).toBeNull();
     expect(ownerView.prompt.type === "play" ? ownerView.prompt.playerId : ownerView.prompt.type).not.toBe(bot.id);
+  });
+
+  it("uses the optional LLM provider for every Sanguosha bot decision", async () => {
+    let resolveDecision!: (result: {
+      candidateIndex: number;
+      usage: { promptTokens: number; completionTokens: number };
+    }) => void;
+    const decide = vi.fn(() => new Promise<{
+      candidateIndex: number;
+      usage: { promptTokens: number; completionTokens: number };
+    }>((resolve) => {
+      resolveDecision = resolve;
+    }));
+    const registry = new BotDecisionRegistry().register("sanguosha", { decide });
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry);
+    const created = rooms.create(owner, {
+      name: "大模型三国杀",
+      maxPlayers: 2,
+      botIntelligence: 7,
+      botMode: "llm",
+    });
+    rooms.setConnected(owner.id, true);
+    const withBot = rooms.addBot(created.id, owner.id);
+    const bot = withBot.players.find((player) => player.isBot)!;
+    rooms.setReady(created.id, owner.id, true);
+    rooms.start(created.id, owner.id);
+
+    const internal = roomInternals(rooms).rooms.get(created.id)!;
+    const game = internal.game!;
+    game.currentPlayerId = bot.id;
+    game.turn = {
+      ...game.turn,
+      playerId: bot.id,
+      phase: "play",
+      slashUsed: false,
+      requiredDiscardCount: 0,
+    };
+    game.pendingResponse = null;
+    roomInternals(rooms).runBots(internal);
+
+    await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+    expect(rooms.get(created.id)?.llmBot.thinkingPlayerId).toBe(bot.id);
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({
+      playerId: bot.id,
+      intelligence: 7,
+      candidates: expect.any(Array),
+    }));
+
+    resolveDecision({
+      candidateIndex: 0,
+      usage: { promptTokens: 55, completionTokens: 4 },
+    });
+    await vi.waitFor(() => {
+      expect(rooms.get(created.id)?.llmBot.usage).toMatchObject({
+        calls: expect.any(Number),
+        completionTokens: expect.any(Number),
+        fallbacks: 0,
+      });
+      expect(rooms.get(created.id)!.llmBot.usage.calls).toBeGreaterThanOrEqual(1);
+      expect(rooms.get(created.id)!.llmBot.usage.completionTokens).toBeGreaterThanOrEqual(4);
+    });
   });
 
   it("uses higher intelligence to attack a weaker legal target", () => {

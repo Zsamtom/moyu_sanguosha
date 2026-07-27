@@ -62,7 +62,7 @@ APP_ORIGIN=https://moyu.pdcat.cn
 APP_VERSION=2026.07.20
 BUILD_SHA=替换为main分支的Git提交SHA
 
-# 可选：斗地主 DeepSeek 机器人首次启动引导；三项全部留空时禁用
+# 可选：三国杀与斗地主 DeepSeek 机器人首次启动引导；三项全部留空时禁用
 DOUDIZHU_LLM_ENDPOINT=https://api.deepseek.com/chat/completions
 DOUDIZHU_LLM_API_KEY=替换为服务端密钥
 DOUDIZHU_LLM_MODEL=deepseek-v4-flash

@@ -7,6 +7,7 @@ import {
 import type { Pool } from "pg";
 import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import { OpenAiCompatibleDoudizhuProvider } from "./bots/doudizhu-llm.js";
+import { OpenAiCompatibleSanguoshaProvider } from "./bots/sanguosha-llm.js";
 import type { AppConfig } from "./config.js";
 
 export const DEEPSEEK_CHAT_ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -337,19 +338,20 @@ export class LlmSettingsService {
   private applyProvider(): void {
     if (!this.current.enabled || !this.current.apiKey) {
       this.registry.unregister("doudizhu");
+      this.registry.unregister("sanguosha");
       return;
     }
-    this.registry.register(
-      "doudizhu",
-      new OpenAiCompatibleDoudizhuProvider({
-        endpoint: DEEPSEEK_CHAT_ENDPOINT,
-        apiKey: this.current.apiKey,
-        model: this.current.model,
-        timeoutMs: this.current.timeoutMs,
-        maximumOutputTokens: this.current.maximumOutputTokens,
-        thinkingEnabled: this.current.thinkingEnabled,
-        jsonOutput: true,
-      }),
-    );
+    const providerConfig = {
+      endpoint: DEEPSEEK_CHAT_ENDPOINT,
+      apiKey: this.current.apiKey,
+      model: this.current.model,
+      timeoutMs: this.current.timeoutMs,
+      maximumOutputTokens: this.current.maximumOutputTokens,
+      thinkingEnabled: this.current.thinkingEnabled,
+      jsonOutput: true,
+    };
+    this.registry
+      .register("doudizhu", new OpenAiCompatibleDoudizhuProvider(providerConfig))
+      .register("sanguosha", new OpenAiCompatibleSanguoshaProvider(providerConfig));
   }
 }

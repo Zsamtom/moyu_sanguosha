@@ -288,7 +288,7 @@ export function AdminUsersScreen({
         <div className="section-toolbar">
           <div>
             <h2>大模型机器人</h2>
-            <p>当前仅应用于斗地主；三国杀和够级继续使用原有规则机器人。</p>
+            <p>当前应用于三国杀和斗地主；够级继续使用原有规则机器人。</p>
           </div>
           <Space>
             <Tag color={llmSettings?.enabled ? 'green' : 'default'}>
@@ -352,7 +352,7 @@ export function AdminUsersScreen({
             <Form.Item name="enabled" valuePropName="checked" noStyle>
               <Switch checkedChildren="已启用" unCheckedChildren="未启用" />
             </Form.Item>
-            <span>允许斗地主机器人全程使用大模型，并支持真人主动获取大模型出牌推荐；调用失败会回退规则策略。</span>
+            <span>允许三国杀与斗地主机器人全程使用大模型，并支持斗地主真人主动获取大模型出牌推荐；调用失败会回退规则策略。</span>
             <Space>
               {llmSettings?.apiKeyConfigured && (
                 <Popconfirm

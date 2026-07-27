@@ -2,13 +2,11 @@ import { Alert, Button, Popconfirm, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { getRoomStartBlockReason } from '../interactionRules';
 import {
-  BOT_INTELLIGENCE_NAMES,
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
   type AuthUser,
   type FullGeneralId,
   type GameRole,
-  type PackId,
   type PlayableFaction,
   type RoomDetail,
 } from '../types';
@@ -41,10 +39,6 @@ export const generalNames = {
 const factionNames: Record<PlayableFaction, string> = { wei: '魏', shu: '蜀', wu: '吴', qun: '群' };
 const draftFactionNames = { ...factionNames, selectable: '神' } as const;
 const roleNames: Record<GameRole, string> = { lord: '主公', loyalist: '忠臣', rebel: '反贼', renegade: '内奸' };
-const packNames: Record<PackId, string> = {
-  standard: '标准', sp: 'SP', wind: '风', fire: '火', forest: '林', mountain: '山', god: '神',
-};
-
 export function RoomScreen({
   room,
   user,
@@ -256,6 +250,15 @@ export function RoomScreen({
           </button>
         </div>
         <div className="room-heading__status">
+          {room.gameType === 'sanguosha' && (
+            <Tag color={room.botMode === 'llm' && room.llmBot.available ? 'purple' : 'default'}>
+              {room.botMode === 'llm'
+                ? room.llmBot.available
+                  ? '大模型全程决策'
+                  : '大模型未配置 · 规则回退'
+                : '规则机器人'}
+            </Tag>
+          )}
           <Tag color="green">等待开始</Tag>
           <span>{room.playerCount} / {room.maxPlayers} 人</span>
         </div>
@@ -291,15 +294,7 @@ export function RoomScreen({
             </strong>
           </div>
         </section>
-      ) : room.ruleConfig && (
-        <section className="room-rule-summary" aria-label="房间规则">
-          <div><span>武将包</span><strong>{room.ruleConfig.enabledGeneralPacks.map((pack) => packNames[pack]).join(' / ')}</strong></div>
-          <div><span>选将</span><strong>{room.ruleConfig.generalSelection.mode === 'random' ? '服务器随机' : `私有候选 ${room.ruleConfig.generalSelection.candidatesPerPlayer} 选 1`}</strong></div>
-          <div><span>机器人</span><strong>{botIntelligence} · {BOT_INTELLIGENCE_NAMES[botIntelligence]}</strong></div>
-          <div><span>牌堆</span><strong>原版 160 张</strong></div>
-          <div><span>重洗上限</span><strong>{room.ruleConfig.maximumReshuffles} 次</strong></div>
-        </section>
-      )}
+      ) : null}
 
       <section className="seat-section">
         <div className="section-title-row">

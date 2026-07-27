@@ -77,9 +77,14 @@ describe("room creation and draft schemas", () => {
       gameType: "doudizhu",
       botMode: "llm",
     })).toMatchObject({ botMode: "llm" });
-    expect(createRoomSchema.safeParse({
-      name: "未开放的大模型三国杀",
+    expect(createRoomSchema.parse({
+      name: "大模型三国杀",
       gameType: "sanguosha",
+      botMode: "llm",
+    })).toMatchObject({ botMode: "llm" });
+    expect(createRoomSchema.safeParse({
+      name: "未开放的大模型够级",
+      gameType: "gouji",
       botMode: "llm",
     }).success).toBe(false);
     expect(createRoomSchema.safeParse({ name: "人数错误", gameType: "doudizhu", maxPlayers: 4 }).success).toBe(false);

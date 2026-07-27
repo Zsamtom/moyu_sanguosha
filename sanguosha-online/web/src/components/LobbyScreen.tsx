@@ -111,7 +111,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
         ruleConfig,
         values.botIntelligence ?? 3,
         values.gameType,
-        values.gameType === 'doudizhu' ? values.botMode ?? 'rules' : 'rules',
+        values.gameType === 'gouji' ? 'rules' : values.botMode ?? 'rules',
       );
       setCreateOpen(false);
       form.resetFields();
@@ -335,6 +335,16 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                   value: Number(value),
                   label: `${value} · ${label}`,
                 }))} />
+              </Form.Item>
+              <Form.Item
+                label="机器人决策引擎"
+                name="botMode"
+                extra="选择大模型后，机器人每次需要操作都会请求当前模型；仅发送短局面摘要和合法候选编号，失败时回退规则机器人。"
+              >
+                <Select options={[
+                  { value: 'rules', label: '规则机器人（零 Token）' },
+                  { value: 'llm', label: '大模型全程决策' },
+                ]} />
               </Form.Item>
               <Form.Item
                 label="武将扩展包"
