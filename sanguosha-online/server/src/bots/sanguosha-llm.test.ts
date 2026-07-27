@@ -71,7 +71,7 @@ describe("Sanguosha LLM provider", () => {
       expect(body.messages[0]?.content).toContain("L7 expert");
       expect(body.messages[1]?.content).toContain('"o"');
       expect(body.messages[1]?.content).not.toContain("11111111-1111-4111-8111-111111111111");
-      expect(body.max_tokens).toBe(16);
+      expect(body.max_tokens).toBe(4_000);
       expect(body.thinking).toEqual({ type: "disabled" });
       expect(body.response_format).toEqual({ type: "json_object" });
       return new Response(JSON.stringify({
@@ -83,8 +83,8 @@ describe("Sanguosha LLM provider", () => {
       endpoint: "https://api.deepseek.com/chat/completions",
       apiKey: "sk-test",
       model: "deepseek-v4-flash",
-      timeoutMs: 4_000,
-      maximumOutputTokens: 16,
+      timeoutMs: 10_000,
+      maximumOutputTokens: 4_000,
       thinkingEnabled: false,
       jsonOutput: true,
     }, fetcher);
@@ -100,5 +100,40 @@ describe("Sanguosha LLM provider", () => {
       usage: { promptTokens: 42, completionTokens: 4 },
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an empty response once before using a legal candidate", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "" } }],
+        usage: { prompt_tokens: 40, completion_tokens: 0 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "{\"i\":0}" } }],
+        usage: { prompt_tokens: 44, completion_tokens: 4 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const provider = new OpenAiCompatibleSanguoshaProvider({
+      endpoint: "https://api.deepseek.com/chat/completions",
+      apiKey: "sk-test",
+      model: "deepseek-v4-flash",
+      timeoutMs: 10_000,
+      maximumOutputTokens: 4_000,
+      thinkingEnabled: false,
+      jsonOutput: true,
+    }, fetcher);
+
+    const result = await provider.decide({
+      roomId: "room",
+      playerId: state.players[0]!.id,
+      intelligence: 7,
+      state,
+      candidates: [{ type: "end_play", playerId: state.players[0]!.id }],
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      candidateIndex: 0,
+      usage: { promptTokens: 84, completionTokens: 4 },
+    });
   });
 });

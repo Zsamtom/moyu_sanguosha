@@ -93,6 +93,14 @@ export interface DoudizhuLogEntry {
   readonly id: number;
   readonly type: "system" | "bid" | "play" | "pass" | "victory";
   readonly message: string;
+  readonly actorSeat?: number;
+  readonly bidScore?: 0 | 1 | 2 | 3;
+  readonly pattern?: {
+    readonly type: DoudizhuPatternType;
+    readonly primaryRank: DoudizhuRank;
+    readonly length: number;
+    readonly ranks: DoudizhuRank[];
+  };
 }
 
 export interface DoudizhuGameState {
@@ -333,8 +341,12 @@ function appendLog(
   game: DoudizhuGameState,
   type: DoudizhuLogEntry["type"],
   message: string,
+  details: Pick<
+    DoudizhuLogEntry,
+    "actorSeat" | "bidScore" | "pattern"
+  > = {},
 ): void {
-  game.logs.push({ id: game.nextLogId, type, message });
+  game.logs.push({ id: game.nextLogId, type, message, ...details });
   game.nextLogId += 1;
   if (game.logs.length > 120) game.logs.splice(0, game.logs.length - 120);
 }
@@ -541,7 +553,12 @@ export function applyDoudizhuAction(
       throw new DoudizhuRuleError("DOUDIZHU_INVALID_BID", "叫分必须高于当前分数，或选择不叫");
     }
     game.bid.bids.push({ playerId: player.id, score: action.score });
-    appendLog(game, "bid", `${player.name}${action.score === 0 ? "不叫" : `叫 ${action.score} 分`}`);
+    appendLog(
+      game,
+      "bid",
+      `${player.name}${action.score === 0 ? "不叫" : `叫 ${action.score} 分`}`,
+      { actorSeat: player.seat, bidScore: action.score },
+    );
     if (action.score > game.bid.currentBid) {
       game.bid.currentBid = action.score;
       game.bid.bidderId = player.id;
@@ -585,7 +602,20 @@ export function applyDoudizhuAction(
       game.multiplier *= 2;
     }
     game.trick = { fromPlayerId: player.id, pattern: parsed, passCount: 0 };
-    appendLog(game, "play", `${player.name}打出${describeDoudizhuPattern(parsed)}`);
+    appendLog(
+      game,
+      "play",
+      `${player.name}打出${describeDoudizhuPattern(parsed)}`,
+      {
+        actorSeat: player.seat,
+        pattern: {
+          type: parsed.type,
+          primaryRank: parsed.primaryRank,
+          length: parsed.length,
+          ranks: parsed.cards.map((card) => card.rank),
+        },
+      },
+    );
     if (player.hand.length === 0) {
       finish(game, player);
     } else {
@@ -598,7 +628,9 @@ export function applyDoudizhuAction(
     if (!game.trick || game.trick.fromPlayerId === player.id) {
       throw new DoudizhuRuleError("DOUDIZHU_CANNOT_PASS", "新一轮领牌时不能不出");
     }
-    appendLog(game, "pass", `${player.name}不出`);
+    appendLog(game, "pass", `${player.name}不出`, {
+      actorSeat: player.seat,
+    });
     game.trick.passCount += 1;
     if (game.trick.passCount >= 2) {
       const leaderId = game.trick.fromPlayerId;
@@ -747,6 +779,31 @@ function candidatePatterns(hand: readonly DoudizhuCard[]): DoudizhuPattern[] {
     }
   }
   return patterns;
+}
+
+/**
+ * Estimates how many future plays remain by repeatedly choosing the legal
+ * pattern that sheds the most cards while preserving lower ranks on ties.
+ * It is intentionally bounded and deterministic so it can be attached to
+ * every LLM candidate without turning a room action into an expensive search.
+ */
+export function estimateDoudizhuRemainingTurns(
+  hand: readonly DoudizhuCard[],
+): number {
+  let remaining = sortCards(hand);
+  let turns = 0;
+  while (remaining.length > 0) {
+    const best = candidatePatterns(remaining).sort((left, right) =>
+      right.cards.length - left.cards.length ||
+      doudizhuRankValue(left.primaryRank) -
+        doudizhuRankValue(right.primaryRank)
+    )[0];
+    if (!best) return turns + remaining.length;
+    const played = new Set(best.cards.map((card) => card.id));
+    remaining = remaining.filter((card) => !played.has(card.id));
+    turns += 1;
+  }
+  return turns;
 }
 
 function handStrength(hand: readonly DoudizhuCard[]): number {

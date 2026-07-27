@@ -1,26 +1,31 @@
 import {
   getDoudizhuGameView,
+  estimateDoudizhuRemainingTurns,
   listDoudizhuBotActions,
   parseDoudizhuPattern,
   type DoudizhuAction,
   type DoudizhuBotIntelligence,
   type DoudizhuCard,
   type DoudizhuGameState,
+  type DoudizhuLogEntry,
   type DoudizhuPatternType,
   type DoudizhuRank,
   type DoudizhuRole,
 } from "@sanguosha/shared";
 import type {
+  BotDecisionFailureReason,
   BotDecisionInput,
   BotDecisionProvider,
   BotDecisionResult,
 } from "./decision-registry.js";
+import { BotDecisionProviderError } from "./decision-registry.js";
 
 export interface DoudizhuLlmUsage {
   calls: number;
   promptTokens: number;
   completionTokens: number;
   fallbacks: number;
+  lastFailureReason: BotDecisionFailureReason | null;
 }
 
 export const EMPTY_DOUDIZHU_LLM_USAGE: DoudizhuLlmUsage = {
@@ -28,10 +33,24 @@ export const EMPTY_DOUDIZHU_LLM_USAGE: DoudizhuLlmUsage = {
   promptTokens: 0,
   completionTokens: 0,
   fallbacks: 0,
+  lastFailureReason: null,
 };
 
-const MAX_LLM_CANDIDATES = 10;
+const MAX_LLM_CANDIDATES = 20;
+const RECENT_PUBLIC_ACTIONS = 12;
 const STABLE_CANDIDATE_ORDERING_LEVEL: DoudizhuBotIntelligence = 7;
+
+interface DoudizhuCompactHistoryEntry {
+  readonly seat: number;
+  readonly type: "bid" | "play" | "pass";
+  readonly score?: 0 | 1 | 2 | 3;
+  readonly pattern?: {
+    readonly type: DoudizhuPatternType;
+    readonly rank: DoudizhuRank;
+    readonly length: number;
+    readonly ranks: readonly DoudizhuRank[];
+  };
+}
 
 export interface DoudizhuCompactState {
   readonly phase: "bid" | "play";
@@ -42,7 +61,11 @@ export interface DoudizhuCompactState {
     readonly seat: number;
     readonly role: DoudizhuRole | null;
     readonly handCount: number;
+    readonly playedCount: number;
   }[];
+  readonly bottomCards: readonly DoudizhuCard[];
+  readonly playedRanks: readonly DoudizhuRank[];
+  readonly history: readonly DoudizhuCompactHistoryEntry[];
   readonly currentBid: 0 | 1 | 2 | 3;
   readonly multiplier: number;
   readonly trick: {
@@ -58,6 +81,33 @@ export interface DoudizhuDecision {
   readonly input: BotDecisionInput<DoudizhuCompactState, DoudizhuAction>;
   readonly fallback: DoudizhuAction;
   readonly estimatedPromptTokens: number;
+}
+
+function projectHistoryEntry(
+  log: DoudizhuLogEntry,
+): DoudizhuCompactHistoryEntry | null {
+  if (log.actorSeat === undefined) return null;
+  if (log.type === "bid") {
+    return {
+      seat: log.actorSeat,
+      type: "bid",
+      ...(log.bidScore === undefined ? {} : { score: log.bidScore }),
+    };
+  }
+  if (log.type === "pass") {
+    return { seat: log.actorSeat, type: "pass" };
+  }
+  if (log.type !== "play" || !log.pattern) return null;
+  return {
+    seat: log.actorSeat,
+    type: "play",
+    pattern: {
+      type: log.pattern.type,
+      rank: log.pattern.primaryRank,
+      length: log.pattern.length,
+      ranks: log.pattern.ranks,
+    },
+  };
 }
 
 export function createDoudizhuDecision(
@@ -100,7 +150,15 @@ export function createDoudizhuDecision(
       seat: player.seat,
       role: player.role ?? null,
       handCount: player.handCount,
+      playedCount: player.playedCount,
     })),
+    bottomCards: view.bottomCards,
+    playedRanks: view.logs.flatMap((log) => log.pattern?.ranks ?? []),
+    history: view.logs.slice(-RECENT_PUBLIC_ACTIONS)
+      .map(projectHistoryEntry)
+      .filter((entry): entry is DoudizhuCompactHistoryEntry =>
+        entry !== null
+      ),
     currentBid: view.bid.currentBid,
     multiplier: view.multiplier,
     trick: view.trick
@@ -142,7 +200,7 @@ export interface OpenAiCompatibleDoudizhuConfig {
 type FetchLike = typeof fetch;
 
 const BASE_SYSTEM_PROMPT =
-  "Choose one legal Dou Dizhu option index. Reply JSON only: {\"i\":0}.";
+  "Choose one legal Dou Dizhu option index after planning the remaining hand. Input JSON codes: p=phase(b bid/p play), r=role(l landlord/f farmer), s=seat, h=own ranks, n=players [seat,role,handCount,playedTurns], d=public bottom ranks, b=current bid, m=multiplier, t=current trick [seat,role,pattern,rank,length], u=all publicly played ranks, a=recent actions, o=legal options [move,remainingRanks,estimatedTurns]. Moves: b=bid, x=pass; s/p/t/t1/t2/q/c/a/a1/a2/f1/f2/b/r are single/pair/triple/triple-single/triple-pair/straight/consecutive-pairs/airplane/airplane-singles/airplane-pairs/four-two-singles/four-two-pairs/bomb/rocket. Reply JSON only, exactly {\"i\":0}.";
 
 const INTELLIGENCE_PROMPTS: Record<DoudizhuBotIntelligence, string> = {
   1: "L1 novice: prefer the first simple low-rank option; avoid bombs.",
@@ -213,18 +271,33 @@ function estimateTokens(value: string): number {
 
 function compactAction(
   action: DoudizhuAction,
+  hand: readonly DoudizhuCard[],
   handById: ReadonlyMap<string, DoudizhuCard>,
 ): unknown {
-  if (action.type === "doudizhu_bid") return ["b", action.score];
-  if (action.type === "doudizhu_pass") return "x";
+  if (action.type === "doudizhu_bid") {
+    return [
+      ["b", action.score],
+      cardRanks(hand),
+      estimateDoudizhuRemainingTurns(hand),
+    ];
+  }
+  if (action.type === "doudizhu_pass") {
+    return ["x", cardRanks(hand), estimateDoudizhuRemainingTurns(hand)];
+  }
   const cards = action.cardIds
     .map((id) => handById.get(id))
     .filter((card): card is DoudizhuCard => Boolean(card));
   const pattern = parseDoudizhuPattern(cards);
+  const playedIds = new Set(action.cardIds);
+  const remaining = hand.filter((card) => !playedIds.has(card.id));
   return [
-    pattern ? PATTERN_CODES[pattern.type] : "?",
-    pattern ? rankCode(pattern.primaryRank) : "?",
-    cardRanks(cards),
+    [
+      pattern ? PATTERN_CODES[pattern.type] : "?",
+      pattern ? rankCode(pattern.primaryRank) : "?",
+      cardRanks(cards),
+    ],
+    cardRanks(remaining),
+    estimateDoudizhuRemainingTurns(remaining),
   ];
 }
 
@@ -242,7 +315,9 @@ function compactPrompt(
       player.seat,
       roleCode(player.role),
       player.handCount,
+      player.playedCount,
     ]),
+    d: cardRanks(state.bottomCards),
     b: state.currentBid,
     m: state.multiplier,
     t: state.trick
@@ -254,7 +329,22 @@ function compactPrompt(
           state.trick.length,
         ]
       : 0,
-    o: input.candidates.map((action) => compactAction(action, handById)),
+    u: state.playedRanks.map(rankCode).join(""),
+    a: state.history.map((entry) => {
+      if (entry.type === "bid") return [entry.seat, "b", entry.score ?? 0];
+      if (entry.type === "pass") return [entry.seat, "x"];
+      return [
+        entry.seat,
+        "p",
+        entry.pattern ? PATTERN_CODES[entry.pattern.type] : "?",
+        entry.pattern ? rankCode(entry.pattern.rank) : "?",
+        entry.pattern?.length ?? 0,
+        entry.pattern?.ranks.map(rankCode).join("") ?? "",
+      ];
+    }),
+    o: input.candidates.map((action) =>
+      compactAction(action, state.hand, handById)
+    ),
   });
 }
 
@@ -288,6 +378,27 @@ function responseUsage(
   };
 }
 
+function parseCandidateIndex(
+  completion: string,
+  candidateCount: number,
+): { candidateIndex: number | null; failureReason?: BotDecisionFailureReason } {
+  if (!completion.trim()) {
+    return { candidateIndex: null, failureReason: "empty_content" };
+  }
+  try {
+    const parsed = JSON.parse(completion) as { i?: unknown };
+    if (!Number.isSafeInteger(parsed.i)) {
+      return { candidateIndex: null, failureReason: "invalid_candidate" };
+    }
+    const candidateIndex = Number(parsed.i);
+    return candidateIndex >= 0 && candidateIndex < candidateCount
+      ? { candidateIndex }
+      : { candidateIndex: null, failureReason: "invalid_candidate" };
+  } catch {
+    return { candidateIndex: null, failureReason: "invalid_json" };
+  }
+}
+
 export class OpenAiCompatibleDoudizhuProvider implements
   BotDecisionProvider<DoudizhuCompactState, DoudizhuAction> {
   constructor(
@@ -300,63 +411,116 @@ export class OpenAiCompatibleDoudizhuProvider implements
   ): Promise<BotDecisionResult> {
     const prompt = compactPrompt(input);
     const instruction = systemPrompt(input.intelligence);
+    const usage = { promptTokens: 0, completionTokens: 0 };
+    let failureReason: BotDecisionFailureReason = "invalid_json";
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const attemptInstruction = attempt === 0
+        ? instruction
+        : `${instruction} Retry: the previous response was unusable; output one JSON object and nothing else.`;
+      let payload: unknown;
+      try {
+        payload = await this.request(attemptInstruction, prompt);
+      } catch (error) {
+        if (
+          attempt === 0 &&
+          error instanceof BotDecisionProviderError &&
+          error.reason === "invalid_json"
+        ) {
+          failureReason = "invalid_json";
+          continue;
+        }
+        throw error;
+      }
+      const completion = responseText(payload) ?? "";
+      const attemptUsage = responseUsage(
+        payload,
+        `${attemptInstruction}\n${prompt}`,
+        completion,
+      );
+      usage.promptTokens += attemptUsage.promptTokens;
+      usage.completionTokens += attemptUsage.completionTokens;
+      const parsed = parseCandidateIndex(
+        completion,
+        input.candidates.length,
+      );
+      if (parsed.candidateIndex !== null) {
+        return { candidateIndex: parsed.candidateIndex, usage };
+      }
+      failureReason = parsed.failureReason ?? "invalid_candidate";
+    }
+    return { candidateIndex: null, usage, failureReason };
+  }
+
+  private async request(
+    instruction: string,
+    prompt: string,
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
     timeout.unref();
-    let payload: unknown;
     try {
-      const response = await this.fetcher(this.config.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            {
-              role: "system",
-              content: instruction,
-            },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0,
-          max_tokens: this.config.maximumOutputTokens,
-          ...(this.config.thinkingEnabled === undefined
-            ? {}
-            : {
-                thinking: {
-                  type: this.config.thinkingEnabled ? "enabled" : "disabled",
-                },
-              }),
-          ...(this.config.jsonOutput
-            ? { response_format: { type: "json_object" } }
-            : {}),
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`LLM bot request failed with HTTP ${response.status}`);
+      let response: Response;
+      try {
+        response = await this.fetcher(this.config.endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [
+              {
+                role: "system",
+                content: instruction,
+              },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0,
+            max_tokens: this.config.maximumOutputTokens,
+            ...(this.config.thinkingEnabled === undefined
+              ? {}
+              : {
+                  thinking: {
+                    type: this.config.thinkingEnabled
+                      ? "enabled"
+                      : "disabled",
+                  },
+                }),
+            ...(this.config.jsonOutput
+              ? { response_format: { type: "json_object" } }
+              : {}),
+          }),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === "AbortError";
+        throw new BotDecisionProviderError(
+          timedOut ? "timeout" : "network_error",
+          timedOut
+            ? "LLM bot request timed out"
+            : "LLM bot network request failed",
+          { cause: error },
+        );
       }
-      payload = await response.json();
+      if (!response.ok) {
+        throw new BotDecisionProviderError(
+          "http_error",
+          `LLM bot request failed with HTTP ${response.status}`,
+        );
+      }
+      try {
+        return await response.json();
+      } catch (error) {
+        throw new BotDecisionProviderError(
+          "invalid_json",
+          "LLM bot response envelope was not valid JSON",
+          { cause: error },
+        );
+      }
     } finally {
       clearTimeout(timeout);
     }
-    const completion = responseText(payload) ?? "";
-    const usage = responseUsage(payload, `${instruction}\n${prompt}`, completion);
-    let candidateIndex: number | null = null;
-    try {
-      const parsed = JSON.parse(completion) as { i?: unknown };
-      if (
-        Number.isSafeInteger(parsed.i) &&
-        Number(parsed.i) >= 0 &&
-        Number(parsed.i) < input.candidates.length
-      ) {
-        candidateIndex = Number(parsed.i);
-      }
-    } catch {
-      candidateIndex = null;
-    }
-    return { candidateIndex, usage };
   }
 }

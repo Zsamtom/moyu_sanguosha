@@ -13,6 +13,8 @@ import type { AppConfig } from "./config.js";
 export const DEEPSEEK_CHAT_ENDPOINT = "https://api.deepseek.com/chat/completions";
 export const DEEPSEEK_MODELS_ENDPOINT = "https://api.deepseek.com/models";
 export const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
+export const DEFAULT_LLM_TIMEOUT_MS = 10_000;
+export const DEFAULT_LLM_MAX_OUTPUT_TOKENS = 4_000;
 export const DEEPSEEK_MODELS = [
   DEFAULT_DEEPSEEK_MODEL,
   "deepseek-v4-pro",
@@ -56,8 +58,7 @@ interface EncryptedValue {
   readonly ciphertext: string;
 }
 
-export interface PersistedLlmSettings {
-  readonly version: 1;
+interface PersistedLlmSettingsBase {
   readonly enabled: boolean;
   readonly provider: "deepseek";
   readonly endpoint: typeof DEEPSEEK_CHAT_ENDPOINT;
@@ -70,8 +71,20 @@ export interface PersistedLlmSettings {
   readonly maximumPromptTokensPerGame?: number;
 }
 
+interface LegacyPersistedLlmSettings extends PersistedLlmSettingsBase {
+  readonly version: 1;
+}
+
+export interface PersistedLlmSettings extends PersistedLlmSettingsBase {
+  readonly version: 2;
+}
+
+type StoredLlmSettings =
+  | LegacyPersistedLlmSettings
+  | PersistedLlmSettings;
+
 export interface LoadedLlmSettings {
-  readonly settings: PersistedLlmSettings;
+  readonly settings: StoredLlmSettings;
   readonly updatedAt: string;
 }
 
@@ -85,7 +98,7 @@ export class PostgresLlmSettingsStore implements LlmSettingsStore {
 
   async load(): Promise<LoadedLlmSettings | undefined> {
     const result = await this.pool.query<{
-      value: PersistedLlmSettings;
+      value: StoredLlmSettings;
       updated_at: Date | string;
     }>(
       `SELECT value, updated_at
@@ -208,8 +221,9 @@ export class LlmSettingsService {
         : DEFAULT_DEEPSEEK_MODEL,
       ...(deepSeekBootstrap?.apiKey ? { apiKey: deepSeekBootstrap.apiKey } : {}),
       thinkingEnabled: false,
-      timeoutMs: deepSeekBootstrap?.timeoutMs ?? 4_000,
-      maximumOutputTokens: deepSeekBootstrap?.maximumOutputTokens ?? 16,
+      timeoutMs: deepSeekBootstrap?.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS,
+      maximumOutputTokens: deepSeekBootstrap?.maximumOutputTokens ??
+        DEFAULT_LLM_MAX_OUTPUT_TOKENS,
       updatedAt: null,
     };
   }
@@ -227,8 +241,12 @@ export class LlmSettingsService {
           ? { apiKey: decryptApiKey(settings.encryptedApiKey, this.secret) }
           : {}),
         thinkingEnabled: settings.thinkingEnabled,
-        timeoutMs: settings.timeoutMs,
-        maximumOutputTokens: settings.maximumOutputTokens,
+        timeoutMs: settings.version === 1
+          ? DEFAULT_LLM_TIMEOUT_MS
+          : settings.timeoutMs,
+        maximumOutputTokens: settings.version === 1
+          ? DEFAULT_LLM_MAX_OUTPUT_TOKENS
+          : settings.maximumOutputTokens,
         updatedAt: loaded.updatedAt,
       };
     }
@@ -271,7 +289,7 @@ export class LlmSettingsService {
       updatedAt: null,
     };
     const persisted: PersistedLlmSettings = {
-      version: 1,
+      version: 2,
       enabled: next.enabled,
       provider: "deepseek",
       endpoint: DEEPSEEK_CHAT_ENDPOINT,

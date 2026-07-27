@@ -5,6 +5,14 @@ export interface BotDecisionUsage {
   readonly completionTokens: number;
 }
 
+export type BotDecisionFailureReason =
+  | "timeout"
+  | "http_error"
+  | "network_error"
+  | "empty_content"
+  | "invalid_json"
+  | "invalid_candidate";
+
 export interface BotDecisionInput<State, Action> {
   readonly roomId: string;
   readonly playerId: string;
@@ -17,6 +25,29 @@ export interface BotDecisionResult {
   /** Index into the candidate array supplied to the provider. */
   readonly candidateIndex: number | null;
   readonly usage: BotDecisionUsage;
+  readonly failureReason?: BotDecisionFailureReason;
+}
+
+export class BotDecisionProviderError extends Error {
+  constructor(
+    readonly reason: Extract<
+      BotDecisionFailureReason,
+      "timeout" | "http_error" | "network_error" | "invalid_json"
+    >,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "BotDecisionProviderError";
+  }
+}
+
+export function botDecisionFailureReason(
+  error: unknown,
+): BotDecisionFailureReason {
+  if (error instanceof BotDecisionProviderError) return error.reason;
+  if (error instanceof Error && error.name === "AbortError") return "timeout";
+  return "network_error";
 }
 
 export interface BotDecisionProvider<State, Action> {
@@ -70,7 +101,11 @@ export class BotDecisionRegistry {
         result.candidateIndex >= input.candidates.length
       )
     ) {
-      return { candidateIndex: null, usage: result.usage };
+      return {
+        candidateIndex: null,
+        usage: result.usage,
+        failureReason: "invalid_candidate",
+      };
     }
     return result;
   }

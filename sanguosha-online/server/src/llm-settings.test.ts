@@ -22,6 +22,35 @@ class InspectableSettingsStore implements LlmSettingsStore {
 }
 
 describe("LLM settings service", () => {
+  it("migrates the legacy 16-token preset to the new planning defaults", async () => {
+    const store = new InspectableSettingsStore();
+    store.loaded = {
+      settings: {
+        version: 1,
+        enabled: false,
+        provider: "deepseek",
+        endpoint: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-v4-flash",
+        thinkingEnabled: false,
+        timeoutMs: 4_000,
+        maximumOutputTokens: 16,
+      },
+      updatedAt: "2026-07-27T00:00:00.000Z",
+    };
+    const service = new LlmSettingsService(
+      store,
+      new BotDecisionRegistry(),
+      "stable-test-encryption-secret",
+    );
+
+    await service.initialize();
+
+    expect(service.getPublicSettings()).toMatchObject({
+      timeoutMs: 10_000,
+      maximumOutputTokens: 4_000,
+    });
+  });
+
   it("never forwards a legacy third-party bootstrap key to DeepSeek", async () => {
     const registry = new BotDecisionRegistry();
     const service = new LlmSettingsService(
@@ -69,6 +98,7 @@ describe("LLM settings service", () => {
     expect(registry.supports("doudizhu")).toBe(true);
     expect(registry.supports("sanguosha")).toBe(true);
     expect(JSON.stringify(store.loaded)).not.toContain("sk-secret-value");
+    expect(store.loaded?.settings.version).toBe(2);
     expect(store.loaded?.settings.encryptedApiKey).toMatchObject({
       algorithm: "aes-256-gcm",
     });
@@ -85,6 +115,8 @@ describe("LLM settings service", () => {
       enabled: true,
       model: "deepseek-v4-pro",
       apiKeyConfigured: true,
+      timeoutMs: 2_000,
+      maximumOutputTokens: 12,
     });
     expect(restoredRegistry.supports("doudizhu")).toBe(true);
     expect(restoredRegistry.supports("sanguosha")).toBe(true);

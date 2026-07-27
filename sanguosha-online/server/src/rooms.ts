@@ -48,7 +48,11 @@ import {
   chooseBotTarget,
   type BotIntelligence,
 } from "./bot-intelligence.js";
-import { BotDecisionRegistry } from "./bots/decision-registry.js";
+import {
+  BotDecisionRegistry,
+  botDecisionFailureReason,
+  type BotDecisionFailureReason,
+} from "./bots/decision-registry.js";
 import {
   EMPTY_DOUDIZHU_LLM_USAGE,
   createDoudizhuDecision,
@@ -125,6 +129,7 @@ interface RoomPlayer extends RoomPlayerView {
 export interface DoudizhuLlmRecommendation {
   readonly action: DoudizhuAction;
   readonly source: "llm" | "rules";
+  readonly fallbackReason?: BotDecisionFailureReason;
 }
 
 interface Room {
@@ -922,6 +927,7 @@ export class RoomService {
     };
     room.doudizhuLlmUsage.calls += 1;
     room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
+    room.doudizhuLlmUsage.lastFailureReason = null;
     this.llmRecommendationRuns.set(room.id, request);
     this.changed();
 
@@ -963,18 +969,31 @@ export class RoomService {
         : decision.input.candidates[result.candidateIndex];
       if (!selected) {
         room.doudizhuLlmUsage.fallbacks += 1;
-        return { action: decision.fallback, source: "rules" };
+        const fallbackReason = result?.failureReason ?? "invalid_candidate";
+        room.doudizhuLlmUsage.lastFailureReason = fallbackReason;
+        return {
+          action: decision.fallback,
+          source: "rules",
+          fallbackReason,
+        };
       }
+      room.doudizhuLlmUsage.lastFailureReason = null;
       return { action: selected, source: "llm" };
     } catch (error) {
       if (error instanceof HttpError) throw error;
       currentGame();
       room.doudizhuLlmUsage.fallbacks += 1;
+      const fallbackReason = botDecisionFailureReason(error);
+      room.doudizhuLlmUsage.lastFailureReason = fallbackReason;
       console.error(
-        `LLM recommendation failed in room ${room.id}; using rule fallback`,
+        `LLM recommendation failed in room ${room.id} (${fallbackReason}); using rule fallback`,
         error,
       );
-      return { action: decision.fallback, source: "rules" };
+      return {
+        action: decision.fallback,
+        source: "rules",
+        fallbackReason,
+      };
     } finally {
       if (this.llmRecommendationRuns.get(room.id) === request) {
         this.llmRecommendationRuns.delete(room.id);
@@ -1207,6 +1226,7 @@ export class RoomService {
     const request = { revision: game.revision, playerId: bot.id };
     room.doudizhuLlmUsage.calls += 1;
     room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
+    room.doudizhuLlmUsage.lastFailureReason = null;
     this.llmBotRuns.set(room.id, request);
     this.changed();
 
@@ -1236,11 +1256,19 @@ export class RoomService {
           ? undefined
           : decision.input.candidates[result.candidateIndex];
         const action = selected ?? decision.fallback;
-        if (!selected) currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        if (!selected) {
+          currentRoom.doudizhuLlmUsage.fallbacks += 1;
+          currentRoom.doudizhuLlmUsage.lastFailureReason =
+            result?.failureReason ?? "invalid_candidate";
+        } else {
+          currentRoom.doudizhuLlmUsage.lastFailureReason = null;
+        }
         try {
           currentRoom.game = applyDoudizhuAction(currentRoom.game, action);
         } catch (error) {
           currentRoom.doudizhuLlmUsage.fallbacks += 1;
+          currentRoom.doudizhuLlmUsage.lastFailureReason =
+            "invalid_candidate";
           console.error(
             `LLM-selected bot action failed in room ${currentRoom.id}; using rule fallback`,
             error,
@@ -1272,8 +1300,10 @@ export class RoomService {
           return;
         }
         currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        const failureReason = botDecisionFailureReason(error);
+        currentRoom.doudizhuLlmUsage.lastFailureReason = failureReason;
         console.error(
-          `LLM bot request failed in room ${currentRoom.id}; using rule fallback`,
+          `LLM bot request failed in room ${currentRoom.id} (${failureReason}); using rule fallback`,
           error,
         );
         try {
@@ -1334,6 +1364,7 @@ export class RoomService {
     const request = { revision: game.revision, playerId: bot.id };
     room.doudizhuLlmUsage.calls += 1;
     room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
+    room.doudizhuLlmUsage.lastFailureReason = null;
     this.llmBotRuns.set(room.id, request);
     this.changed();
 
@@ -1363,11 +1394,19 @@ export class RoomService {
           ? undefined
           : decision.input.candidates[result.candidateIndex];
         const action = selected ?? decision.fallback;
-        if (!selected) currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        if (!selected) {
+          currentRoom.doudizhuLlmUsage.fallbacks += 1;
+          currentRoom.doudizhuLlmUsage.lastFailureReason =
+            result?.failureReason ?? "invalid_candidate";
+        } else {
+          currentRoom.doudizhuLlmUsage.lastFailureReason = null;
+        }
         try {
           currentRoom.game = applyAction(currentRoom.game as GameSession, action);
         } catch (error) {
           currentRoom.doudizhuLlmUsage.fallbacks += 1;
+          currentRoom.doudizhuLlmUsage.lastFailureReason =
+            "invalid_candidate";
           console.error(
             `LLM-selected Sanguosha bot action failed in room ${currentRoom.id}; using rule fallback`,
             error,
@@ -1389,8 +1428,10 @@ export class RoomService {
         const currentRoom = this.rooms.get(room.id);
         if (!isCurrentRequest(currentRoom)) return;
         currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        const failureReason = botDecisionFailureReason(error);
+        currentRoom.doudizhuLlmUsage.lastFailureReason = failureReason;
         console.error(
-          `Sanguosha LLM bot request failed in room ${currentRoom.id}; using rule fallback`,
+          `Sanguosha LLM bot request failed in room ${currentRoom.id} (${failureReason}); using rule fallback`,
           error,
         );
         try {

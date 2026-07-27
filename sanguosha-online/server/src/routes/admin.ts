@@ -40,7 +40,7 @@ const llmSettingsSchema = z.object({
   clearApiKey: z.boolean().optional(),
   thinkingEnabled: z.boolean(),
   timeoutMs: z.number().int().min(500).max(30_000),
-  maximumOutputTokens: z.number().int().min(8).max(64),
+  maximumOutputTokens: z.number().int().min(8).max(4_000),
 }).strict();
 const llmConnectionTestSchema = z.object({
   apiKey: z.string().trim().min(8).max(512).optional(),

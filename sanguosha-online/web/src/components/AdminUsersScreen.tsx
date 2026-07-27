@@ -333,8 +333,9 @@ export function AdminUsersScreen({
               label="单次最大输出 Token"
               name="maximumOutputTokens"
               rules={[{ required: true }]}
+              extra="默认 4000，为思考模式预留；最终动作仍只接收一个候选序号。"
             >
-              <InputNumber min={8} max={64} />
+              <InputNumber min={8} max={4_000} step={100} />
             </Form.Item>
             <Form.Item label="请求超时（毫秒）" name="timeoutMs" rules={[{ required: true }]}>
               <InputNumber min={500} max={30_000} step={500} />

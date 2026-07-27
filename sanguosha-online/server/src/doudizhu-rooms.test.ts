@@ -220,12 +220,14 @@ describe("Doudizhu rooms", () => {
 
   it("lets the current human request an LLM recommendation without auto-playing it", async () => {
     let resolveDecision!: (result: {
-      candidateIndex: number;
+      candidateIndex: number | null;
       usage: { promptTokens: number; completionTokens: number };
+      failureReason?: "empty_content";
     }) => void;
     const decide = vi.fn(() => new Promise<{
-      candidateIndex: number;
+      candidateIndex: number | null;
       usage: { promptTokens: number; completionTokens: number };
+      failureReason?: "empty_content";
     }>((resolve) => {
       resolveDecision = resolve;
     }));
@@ -281,6 +283,28 @@ describe("Doudizhu rooms", () => {
       promptTokens: expect.any(Number),
       completionTokens: 4,
       fallbacks: 0,
+      lastFailureReason: null,
+    });
+
+    const fallbackPromise = rooms.recommendDoudizhuAction(
+      created.id,
+      owner.id,
+    );
+    resolveDecision({
+      candidateIndex: null,
+      usage: { promptTokens: 64, completionTokens: 0 },
+      failureReason: "empty_content",
+    });
+    const fallback = await fallbackPromise;
+
+    expect(fallback).toMatchObject({
+      source: "rules",
+      fallbackReason: "empty_content",
+    });
+    expect(rooms.get(created.id)?.llmBot.usage).toMatchObject({
+      calls: 2,
+      fallbacks: 1,
+      lastFailureReason: "empty_content",
     });
   });
 

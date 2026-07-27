@@ -23,6 +23,7 @@ import type {
   AnyGameAction,
   GameLogEntry,
   GameType,
+  LlmFailureReason,
   LlmSettings,
   PlayableFaction,
   RoomDetail,
@@ -31,6 +32,15 @@ import type {
   UpdateLlmSettings,
 } from './types';
 import { isDoudizhuGameView, isGoujiGameView, normalizeGameView } from './types';
+
+const llmFallbackMessages: Record<LlmFailureReason, string> = {
+  timeout: '大模型请求超时，已提供规则推荐',
+  http_error: 'DeepSeek 接口返回错误，已提供规则推荐',
+  network_error: '无法连接 DeepSeek，已提供规则推荐',
+  empty_content: '大模型连续两次返回空内容，已提供规则推荐',
+  invalid_json: '大模型连续两次返回了无效 JSON，已提供规则推荐',
+  invalid_candidate: '大模型返回了无效候选序号，已提供规则推荐',
+};
 
 const documentTheme = {
   token: {
@@ -414,7 +424,11 @@ export default function App() {
       try {
         const recommendation = await api.getDoudizhuLlmRecommendation(room.id);
         if (recommendation.source === 'rules') {
-          toast.warning('大模型未返回有效建议，已提供规则推荐');
+          toast.warning(
+            recommendation.fallbackReason
+              ? llmFallbackMessages[recommendation.fallbackReason]
+              : '大模型未返回有效建议，已提供规则推荐',
+          );
         }
         return recommendation;
       } catch (error) {

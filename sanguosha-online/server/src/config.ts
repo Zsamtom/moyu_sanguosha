@@ -30,8 +30,8 @@ const environmentSchema = z.object({
   DOUDIZHU_LLM_ENDPOINT: optionalUrl,
   DOUDIZHU_LLM_API_KEY: optionalTrimmedString,
   DOUDIZHU_LLM_MODEL: optionalTrimmedString,
-  DOUDIZHU_LLM_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(4_000),
-  DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(8).max(64).default(16),
+  DOUDIZHU_LLM_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(10_000),
+  DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(8).max(4_000).default(4_000),
 }).superRefine((environment, context) => {
   const providerValues = [
     environment.DOUDIZHU_LLM_ENDPOINT,

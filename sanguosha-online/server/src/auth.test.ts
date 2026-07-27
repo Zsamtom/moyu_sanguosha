@@ -286,7 +286,8 @@ describe("account allocation and authorization", () => {
       model: "deepseek-v4-flash",
       apiKeyConfigured: false,
       thinkingEnabled: false,
-      maximumOutputTokens: 16,
+      timeoutMs: 10_000,
+      maximumOutputTokens: 4_000,
     });
     expect(botDecisions.supports("doudizhu")).toBe(false);
     expect(botDecisions.supports("sanguosha")).toBe(false);
@@ -317,8 +318,8 @@ describe("account allocation and authorization", () => {
         model: "deepseek-v4-pro",
         apiKey: "sk-private-deepseek-key",
         thinkingEnabled: false,
-        timeoutMs: 3_000,
-        maximumOutputTokens: 12,
+        timeoutMs: 10_000,
+        maximumOutputTokens: 4_000,
       })
       .expect(200);
     expect(saved.body.settings).toMatchObject({
@@ -326,8 +327,8 @@ describe("account allocation and authorization", () => {
       model: "deepseek-v4-pro",
       apiKeyConfigured: true,
       thinkingEnabled: false,
-      timeoutMs: 3_000,
-      maximumOutputTokens: 12,
+      timeoutMs: 10_000,
+      maximumOutputTokens: 4_000,
     });
     expect(saved.text).not.toContain("sk-private-deepseek-key");
     expect(botDecisions.supports("doudizhu")).toBe(true);
@@ -361,8 +362,8 @@ describe("account allocation and authorization", () => {
         model: "deepseek-v4-pro",
         clearApiKey: true,
         thinkingEnabled: false,
-        timeoutMs: 3_000,
-        maximumOutputTokens: 12,
+        timeoutMs: 10_000,
+        maximumOutputTokens: 4_000,
       })
       .expect(200);
     expect(cleared.body.settings.apiKeyConfigured).toBe(false);

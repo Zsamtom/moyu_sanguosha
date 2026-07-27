@@ -181,6 +181,7 @@ export interface RoomDetail extends RoomSummary {
       promptTokens: number;
       completionTokens: number;
       fallbacks: number;
+      lastFailureReason: LlmFailureReason | null;
     };
   };
   ruleConfig?: RoomRuleConfig;
@@ -570,7 +571,25 @@ export type DoudizhuAction =
 export interface DoudizhuLlmRecommendation {
   action: DoudizhuAction;
   source: 'llm' | 'rules';
+  fallbackReason?: LlmFailureReason;
 }
+
+export type LlmFailureReason =
+  | 'timeout'
+  | 'http_error'
+  | 'network_error'
+  | 'empty_content'
+  | 'invalid_json'
+  | 'invalid_candidate';
+
+const LLM_FAILURE_REASONS: readonly LlmFailureReason[] = [
+  'timeout',
+  'http_error',
+  'network_error',
+  'empty_content',
+  'invalid_json',
+  'invalid_candidate',
+];
 
 export type AnyGameAction = GameAction | GoujiAction | DoudizhuAction;
 
@@ -1507,6 +1526,13 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
         promptTokens: Number((room.llmBot as { usage?: { promptTokens?: unknown } } | undefined)?.usage?.promptTokens ?? 0),
         completionTokens: Number((room.llmBot as { usage?: { completionTokens?: unknown } } | undefined)?.usage?.completionTokens ?? 0),
         fallbacks: Number((room.llmBot as { usage?: { fallbacks?: unknown } } | undefined)?.usage?.fallbacks ?? 0),
+        lastFailureReason: LLM_FAILURE_REASONS.includes(
+          (room.llmBot as { usage?: { lastFailureReason?: unknown } } | undefined)
+            ?.usage?.lastFailureReason as LlmFailureReason,
+        )
+          ? (room.llmBot as { usage: { lastFailureReason: LlmFailureReason } })
+            .usage.lastFailureReason
+          : null,
       },
     },
     chatMessages,

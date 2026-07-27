@@ -8,10 +8,12 @@ import {
 } from "@sanguosha/shared";
 import type { BotIntelligence } from "../bot-intelligence.js";
 import type {
+  BotDecisionFailureReason,
   BotDecisionInput,
   BotDecisionProvider,
   BotDecisionResult,
 } from "./decision-registry.js";
+import { BotDecisionProviderError } from "./decision-registry.js";
 import type { OpenAiCompatibleDoudizhuConfig } from "./doudizhu-llm.js";
 
 export interface SanguoshaCompactState {
@@ -233,63 +235,134 @@ export class OpenAiCompatibleSanguoshaProvider implements
   ): Promise<BotDecisionResult> {
     const prompt = compactPrompt(input);
     const instruction = sanguoshaSystemPrompt(input.intelligence);
+    const resultUsage = { promptTokens: 0, completionTokens: 0 };
+    let failureReason: BotDecisionFailureReason = "invalid_json";
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const attemptInstruction = attempt === 0
+        ? instruction
+        : `${instruction} Retry: output one JSON object and nothing else.`;
+      let payload: unknown;
+      try {
+        payload = await this.request(attemptInstruction, prompt);
+      } catch (error) {
+        if (
+          attempt === 0 &&
+          error instanceof BotDecisionProviderError &&
+          error.reason === "invalid_json"
+        ) {
+          continue;
+        }
+        throw error;
+      }
+      const completion = responseText(payload) ?? "";
+      const usage = payload && typeof payload === "object"
+        ? (payload as {
+            usage?: {
+              prompt_tokens?: unknown;
+              completion_tokens?: unknown;
+            };
+          }).usage
+        : undefined;
+      resultUsage.promptTokens += typeof usage?.prompt_tokens === "number"
+        ? Math.max(0, Math.ceil(usage.prompt_tokens))
+        : estimateTokens(`${attemptInstruction}\n${prompt}`);
+      resultUsage.completionTokens +=
+        typeof usage?.completion_tokens === "number"
+          ? Math.max(0, Math.ceil(usage.completion_tokens))
+          : estimateTokens(completion);
+      if (!completion.trim()) {
+        failureReason = "empty_content";
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(completion) as { i?: unknown };
+        if (!Number.isSafeInteger(parsed.i)) {
+          failureReason = "invalid_candidate";
+          continue;
+        }
+        const candidateIndex = Number(parsed.i);
+        if (
+          candidateIndex < 0 ||
+          candidateIndex >= input.candidates.length
+        ) {
+          failureReason = "invalid_candidate";
+          continue;
+        }
+        return { candidateIndex, usage: resultUsage };
+      } catch {
+        failureReason = "invalid_json";
+      }
+    }
+    return { candidateIndex: null, usage: resultUsage, failureReason };
+  }
+
+  private async request(
+    instruction: string,
+    prompt: string,
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
     timeout.unref();
-    let payload: unknown;
     try {
-      const response = await this.fetcher(this.config.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            { role: "system", content: instruction },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0,
-          max_tokens: this.config.maximumOutputTokens,
-          ...(this.config.thinkingEnabled === undefined
-            ? {}
-            : { thinking: { type: this.config.thinkingEnabled ? "enabled" : "disabled" } }),
-          ...(this.config.jsonOutput ? { response_format: { type: "json_object" } } : {}),
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`LLM bot request failed with HTTP ${response.status}`);
-      payload = await response.json();
+      let response: Response;
+      try {
+        response = await this.fetcher(this.config.endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [
+              { role: "system", content: instruction },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0,
+            max_tokens: this.config.maximumOutputTokens,
+            ...(this.config.thinkingEnabled === undefined
+              ? {}
+              : {
+                  thinking: {
+                    type: this.config.thinkingEnabled
+                      ? "enabled"
+                      : "disabled",
+                  },
+                }),
+            ...(this.config.jsonOutput
+              ? { response_format: { type: "json_object" } }
+              : {}),
+          }),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === "AbortError";
+        throw new BotDecisionProviderError(
+          timedOut ? "timeout" : "network_error",
+          timedOut
+            ? "Sanguosha LLM request timed out"
+            : "Sanguosha LLM network request failed",
+          { cause: error },
+        );
+      }
+      if (!response.ok) {
+        throw new BotDecisionProviderError(
+          "http_error",
+          `Sanguosha LLM request failed with HTTP ${response.status}`,
+        );
+      }
+      try {
+        return await response.json();
+      } catch (error) {
+        throw new BotDecisionProviderError(
+          "invalid_json",
+          "Sanguosha LLM response envelope was not valid JSON",
+          { cause: error },
+        );
+      }
     } finally {
       clearTimeout(timeout);
-    }
-    const completion = responseText(payload) ?? "";
-    const usage = payload && typeof payload === "object"
-      ? (payload as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }).usage
-      : undefined;
-    const resultUsage = {
-      promptTokens: typeof usage?.prompt_tokens === "number"
-        ? Math.max(0, Math.ceil(usage.prompt_tokens))
-        : estimateTokens(`${instruction}\n${prompt}`),
-      completionTokens: typeof usage?.completion_tokens === "number"
-        ? Math.max(0, Math.ceil(usage.completion_tokens))
-        : estimateTokens(completion),
-    };
-    try {
-      const parsed = JSON.parse(completion) as { i?: unknown };
-      const candidateIndex = Number(parsed.i);
-      return {
-        candidateIndex:
-          Number.isSafeInteger(candidateIndex) &&
-          candidateIndex >= 0 &&
-          candidateIndex < input.candidates.length
-            ? candidateIndex
-            : null,
-        usage: resultUsage,
-      };
-    } catch {
-      return { candidateIndex: null, usage: resultUsage };
     }
   }
 }

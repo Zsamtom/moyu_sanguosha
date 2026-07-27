@@ -60,6 +60,20 @@ describe("optional Dou Dizhu LLM bot configuration", () => {
     });
   });
 
+  it("defaults LLM requests to ten seconds and 4000 output tokens", () => {
+    const config = loadConfig({
+      ...requiredEnvironment,
+      DOUDIZHU_LLM_ENDPOINT: "https://api.deepseek.com/chat/completions",
+      DOUDIZHU_LLM_API_KEY: "secret",
+      DOUDIZHU_LLM_MODEL: "deepseek-v4-flash",
+    });
+
+    expect(config.doudizhuLlm).toMatchObject({
+      timeoutMs: 10_000,
+      maximumOutputTokens: 4_000,
+    });
+  });
+
   it("rejects a partially configured provider", () => {
     expect(() => loadConfig({
       ...requiredEnvironment,
