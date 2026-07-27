@@ -100,6 +100,7 @@ export const api = {
     botIntelligence: BotIntelligence = 3,
     gameType: GameType = 'sanguosha',
     botMode: BotMode = 'rules',
+    digitBombDigits?: number,
   ): Promise<RoomDetail> {
     const result = await request<RoomDetail | { room: RoomDetail }>('/api/rooms', {
       method: 'POST',
@@ -108,8 +109,15 @@ export const api = {
         maxPlayers,
         botIntelligence,
         ...(gameType !== 'sanguosha' ? { gameType } : {}),
-        ...(gameType !== 'gouji' && botMode === 'llm' ? { botMode } : {}),
+        ...(gameType !== 'gouji' &&
+          gameType !== 'splendor' &&
+          gameType !== 'splendor_pokemon' &&
+          gameType !== 'digit_bomb' &&
+          botMode === 'llm'
+          ? { botMode }
+          : {}),
         ...(gameType === 'sanguosha' && ruleConfig ? { ruleConfig } : {}),
+        ...(gameType === 'digit_bomb' ? { digitBombDigits: digitBombDigits ?? 4 } : {}),
       }),
     });
     return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);

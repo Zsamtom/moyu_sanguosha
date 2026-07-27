@@ -1,6 +1,8 @@
 export * from "./types.js";
 export * from "./gouji.js";
 export * from "./doudizhu.js";
+export * from "./splendor.js";
+export * from "./digit-bomb.js";
 export {
   ALL_GENERALS,
   DEFAULT_GENERALS,

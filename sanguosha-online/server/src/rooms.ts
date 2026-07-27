@@ -31,6 +31,9 @@ import {
   type DoudizhuAction,
   type DoudizhuGameState,
   type DoudizhuGameView,
+  type DigitBombAction,
+  type DigitBombGameState,
+  type DigitBombGameView,
   type GameAction,
   type GameSession,
   type GameView,
@@ -41,8 +44,27 @@ import {
   type GeneralDraftView,
   type PlayableFaction,
   type RoomRuleConfig,
+  type SplendorAction,
+  type SplendorGameState,
+  type SplendorGameView,
 } from "@sanguosha/shared";
 import { HttpError } from "./errors.js";
+import {
+  applyAdapterAction,
+  chooseAdapterBotAction,
+  createAdapterGame,
+  forfeitAdapterPlayer,
+  gameTypeMetadata,
+  getAdapterGameView,
+  isAdapterGame,
+  isAdapterGameType,
+  isDigitBombAction,
+  isDigitBombGame,
+  isSplendorAction,
+  isSplendorGame,
+  isSplendorGameType,
+  type GameType,
+} from "./game-adapters.js";
 import {
   DEFAULT_BOT_INTELLIGENCE,
   chooseBotTarget,
@@ -62,7 +84,7 @@ import { createSanguoshaDecision } from "./bots/sanguosha-llm.js";
 import type { PublicUser } from "./users.js";
 
 export type RoomStatus = "waiting" | "drafting" | "playing" | "finished";
-export type GameType = "sanguosha" | "gouji" | "doudizhu";
+export type { GameType } from "./game-adapters.js";
 export type BotMode = "rules" | "llm";
 
 export const DEFAULT_SERVER_ROOM_RULE_CONFIG: Readonly<RoomRuleConfig> = Object.freeze({
@@ -111,6 +133,8 @@ export interface RoomView extends RoomSummary {
   ruleConfig: RoomRuleConfig;
   botIntelligence: BotIntelligence;
   botMode: BotMode;
+  /** Present only for Digit Bomb rooms. */
+  digitBombDigits?: number;
   llmBot: {
     available: boolean;
     thinkingPlayerId: string | null;
@@ -144,10 +168,11 @@ interface Room {
   ruleConfig: RoomRuleConfig;
   botIntelligence: BotIntelligence;
   botMode: BotMode;
+  digitBombDigits?: number;
   doudizhuLlmUsage: DoudizhuLlmUsage;
   chatMessages: RoomChatMessage[];
   draft?: GeneralDraftState;
-  game?: GameSession | GoujiGameState | DoudizhuGameState;
+  game?: GameSession | GoujiGameState | DoudizhuGameState | SplendorGameState | DigitBombGameState;
 }
 
 const GOUJI_BOT_NICKNAMES = [
@@ -221,10 +246,11 @@ export interface RoomServiceSnapshot {
     ruleConfig: RoomRuleConfig;
     botIntelligence?: BotIntelligence;
     botMode?: BotMode;
+    digitBombDigits?: number;
     doudizhuLlmUsage?: DoudizhuLlmUsage;
     chatMessages?: RoomChatMessage[];
     draft?: GeneralDraftState;
-    game?: GameSession | GoujiGameState | DoudizhuGameState;
+    game?: GameSession | GoujiGameState | DoudizhuGameState | SplendorGameState | DigitBombGameState;
   }>;
 }
 
@@ -235,6 +261,7 @@ export interface CreateRoomInput {
   ruleConfig?: RoomRuleConfig;
   botIntelligence?: BotIntelligence;
   botMode?: BotMode;
+  digitBombDigits?: number;
 }
 
 function cloneRuleConfig(config: RoomRuleConfig): RoomRuleConfig {
@@ -243,9 +270,24 @@ function cloneRuleConfig(config: RoomRuleConfig): RoomRuleConfig {
   return clone;
 }
 
-type AuthorityGame = GameSession | GoujiGameState | DoudizhuGameState;
-type AuthorityAction = GameAction | GoujiAction | DoudizhuAction;
-type AuthorityGameView = GameView | GoujiGameView | DoudizhuGameView;
+type AuthorityGame =
+  | GameSession
+  | GoujiGameState
+  | DoudizhuGameState
+  | SplendorGameState
+  | DigitBombGameState;
+type AuthorityAction =
+  | GameAction
+  | GoujiAction
+  | DoudizhuAction
+  | SplendorAction
+  | DigitBombAction;
+type AuthorityGameView =
+  | GameView
+  | GoujiGameView
+  | DoudizhuGameView
+  | SplendorGameView
+  | DigitBombGameView;
 
 function isGoujiGame(game: AuthorityGame): game is GoujiGameState {
   return "kind" in game && game.kind === "gouji";
@@ -364,7 +406,20 @@ export class RoomService {
       const room = structuredClone(saved) as Room;
       room.gameType = saved.gameType ?? "sanguosha";
       room.botIntelligence = saved.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE;
-      room.botMode = room.gameType === "gouji" ? "rules" : saved.botMode ?? "rules";
+      room.botMode = gameTypeMetadata(room.gameType).supportsLlmBots
+        ? saved.botMode ?? "rules"
+        : "rules";
+      room.digitBombDigits = room.gameType === "digit_bomb"
+        ? saved.digitBombDigits ?? 4
+        : undefined;
+      if (
+        room.gameType === "digit_bomb" &&
+        (!Number.isSafeInteger(room.digitBombDigits) ||
+          room.digitBombDigits! < 1 ||
+          room.digitBombDigits! > 8)
+      ) {
+        throw new Error(`Room ${saved.id} has invalid Digit Bomb digits`);
+      }
       room.doudizhuLlmUsage = {
         ...EMPTY_DOUDIZHU_LLM_USAGE,
         ...saved.doudizhuLlmUsage,
@@ -379,7 +434,11 @@ export class RoomService {
         if (player.isBot && room.gameType !== "sanguosha") {
           player.botTitle ??= room.gameType === "gouji"
             ? GOUJI_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
-            : DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence];
+            : room.gameType === "doudizhu"
+              ? DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
+              : room.gameType === "digit_bomb"
+                ? "拆弹专家"
+                : "宝石行家";
         }
         if (!player.isBot && !player.departed && this.roomByUser.has(player.id)) {
           throw new Error(`User ${player.id} appears in multiple restored rooms`);
@@ -406,8 +465,20 @@ export class RoomService {
           ? isGoujiGame(room.game)
           : room.gameType === "doudizhu"
             ? isDoudizhuGame(room.game)
-            : !isGoujiGame(room.game) && !isDoudizhuGame(room.game);
+            : isSplendorGameType(room.gameType)
+              ? isSplendorGame(room.game) && room.game.kind === room.gameType
+              : room.gameType === "digit_bomb"
+                ? isDigitBombGame(room.game)
+              : !isGoujiGame(room.game) &&
+                !isDoudizhuGame(room.game) &&
+                !isAdapterGame(room.game);
         if (!matches) throw new Error(`Room ${saved.id} game type does not match its game state`);
+        if (
+          isDigitBombGame(room.game) &&
+          room.game.digits !== room.digitBombDigits
+        ) {
+          throw new Error(`Room ${saved.id} Digit Bomb digits do not match its game state`);
+        }
       }
       this.rooms.set(room.id, room);
       if (room.status === "drafting" || room.status === "playing") {
@@ -460,18 +531,48 @@ export class RoomService {
       );
     }
     const id = randomUUID();
+    const metadata = gameTypeMetadata(gameType);
+    const maxPlayers = metadata.fixedPlayerCount
+      ? metadata.maximumPlayers
+      : input.maxPlayers ?? metadata.defaultMaximumPlayers;
+    if (maxPlayers < metadata.minimumPlayers || maxPlayers > metadata.maximumPlayers) {
+      throw new HttpError(
+        400,
+        "INVALID_MAX_PLAYERS",
+        `该游戏房间人数需为 ${metadata.minimumPlayers} 至 ${metadata.maximumPlayers} 人`,
+      );
+    }
+    if (
+      gameType === "digit_bomb" &&
+      input.digitBombDigits !== undefined &&
+      (!Number.isSafeInteger(input.digitBombDigits) ||
+        input.digitBombDigits < 1 ||
+        input.digitBombDigits > 8)
+    ) {
+      throw new HttpError(400, "INVALID_DIGIT_BOMB_DIGITS", "数字炸弹密码位数需为 1 至 8");
+    }
+    if (gameType !== "digit_bomb" && input.digitBombDigits !== undefined) {
+      throw new HttpError(
+        400,
+        "DIGIT_BOMB_DIGITS_NOT_APPLICABLE",
+        "密码位数仅适用于数字炸弹房间",
+      );
+    }
     const room: Room = {
       id,
       name: input.name.trim(),
       gameType,
       ownerId: owner.id,
       status: "waiting",
-      maxPlayers: gameType === "gouji" ? 6 : gameType === "doudizhu" ? 3 : input.maxPlayers ?? 8,
+      maxPlayers,
       createdAt: new Date().toISOString(),
       players: [this.toPlayer(owner, 0)],
       ruleConfig,
       botIntelligence: input.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE,
-      botMode: gameType === "gouji" ? "rules" : input.botMode ?? "rules",
+      botMode: metadata.supportsLlmBots ? input.botMode ?? "rules" : "rules",
+      ...(gameType === "digit_bomb"
+        ? { digitBombDigits: input.digitBombDigits ?? 4 }
+        : {}),
       doudizhuLlmUsage: { ...EMPTY_DOUDIZHU_LLM_USAGE },
       chatMessages: [],
     };
@@ -504,6 +605,9 @@ export class RoomService {
     const room = this.requireMember(roomId, ownerId);
     if (room.ownerId !== ownerId) throw new HttpError(403, "NOT_ROOM_OWNER", "只有房主可以添加机器人");
     if (room.status !== "waiting") throw new HttpError(409, "ROOM_ALREADY_STARTED", "游戏已经开始");
+    if (!gameTypeMetadata(room.gameType).supportsRuleBots) {
+      throw new HttpError(409, "BOT_NOT_AVAILABLE", "该游戏不支持规则机器人");
+    }
     if (room.players.length >= room.maxPlayers) throw new HttpError(409, "ROOM_FULL", "房间已满");
     const id = randomUUID();
     room.players.push({
@@ -513,12 +617,20 @@ export class RoomService {
         ? goujiBotNickname(room, id)
         : room.gameType === "doudizhu"
           ? doudizhuBotNickname(room, id)
-          : `机器人 ${room.players.filter((player) => player.isBot).length + 1}`,
+          : isSplendorGameType(room.gameType)
+            ? `晶石旅人 ${room.players.filter((player) => player.isBot).length + 1}`
+            : room.gameType === "digit_bomb"
+              ? `拆弹员 ${room.players.filter((player) => player.isBot).length + 1}`
+              : `机器人 ${room.players.filter((player) => player.isBot).length + 1}`,
       ...(room.gameType !== "sanguosha"
         ? {
             botTitle: room.gameType === "gouji"
               ? GOUJI_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
-              : DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence],
+              : room.gameType === "doudizhu"
+                ? DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
+                : room.gameType === "digit_bomb"
+                  ? "拆弹专家"
+                  : "宝石行家",
           }
         : {}),
       ready: true,
@@ -566,6 +678,9 @@ export class RoomService {
         room.status = room.game.status;
       } else if (isDoudizhuGame(room.game)) {
         room.game = forfeitDoudizhuPlayer(room.game, userId);
+        this.finishRoomIfNeeded(room);
+      } else if (isAdapterGame(room.game)) {
+        room.game = forfeitAdapterPlayer(room.game, userId);
         this.finishRoomIfNeeded(room);
       // A dead Sanguosha player can safely leave without changing the
       // still-running identity match. Only a living departure is a forfeiture.
@@ -718,6 +833,39 @@ export class RoomService {
       throw new HttpError(409, "PLAYERS_NOT_READY", "所有玩家准备后才能开始");
     }
 
+    if (isAdapterGameType(room.gameType)) {
+      const metadata = gameTypeMetadata(room.gameType);
+      if (
+        room.players.length < metadata.minimumPlayers ||
+        room.players.length > metadata.maximumPlayers
+      ) {
+        throw new HttpError(
+          409,
+          "ADAPTER_PLAYER_COUNT_INVALID",
+          `该游戏需要 ${metadata.minimumPlayers} 至 ${metadata.maximumPlayers} 人才能开始`,
+        );
+      }
+      room.game = createAdapterGame(
+        room.gameType,
+        room.players.map((player) => ({
+          id: player.id,
+          name: player.displayName,
+          ...(player.botTitle ? { botTitle: player.botTitle } : {}),
+        })),
+        randomBytes(32).toString("hex"),
+        { digitBombDigits: room.digitBombDigits ?? 4 },
+      );
+      if (!room.game) throw new Error(`Missing adapter for ${room.gameType}`);
+      room.status = "playing";
+      room.draft = undefined;
+      this.runBots(room);
+      if (!this.rooms.has(room.id)) {
+        throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
+      }
+      this.changed();
+      return this.toView(room, userId);
+    }
+
     if (room.gameType === "gouji") {
       if (room.players.length !== 6) {
         throw new HttpError(409, "GOUJI_REQUIRES_SIX_PLAYERS", "够级必须恰好 6 人才能开始");
@@ -844,7 +992,11 @@ export class RoomService {
       ? getGoujiGameView(room.game, userId)
       : isDoudizhuGame(room.game)
         ? getDoudizhuGameView(room.game, userId)
-        : getGameView(room.game, userId);
+        : isSplendorGame(room.game)
+          ? getAdapterGameView(room.game, userId)
+          : isDigitBombGame(room.game)
+            ? getAdapterGameView(room.game, userId)
+          : getGameView(room.game, userId);
     if (expectedRevision !== currentView.revision || expectedPromptId !== currentView.actionPromptId) {
       throw new HttpError(409, "STALE_GAME_ACTION", "游戏状态已更新，请基于最新界面重试");
     }
@@ -859,8 +1011,23 @@ export class RoomService {
         throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行斗地主");
       }
       room.game = applyDoudizhuAction(room.game, action);
+    } else if (isSplendorGame(room.game)) {
+      if (!isSplendorAction(action)) {
+        throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行璀璨宝石");
+      }
+      room.game = applyAdapterAction(room.game, action);
+    } else if (isDigitBombGame(room.game)) {
+      if (!isDigitBombAction(action)) {
+        throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行数字炸弹");
+      }
+      room.game = applyAdapterAction(room.game, action);
     } else {
-      if (isGoujiAction(action) || isDoudizhuAction(action)) {
+      if (
+        isGoujiAction(action) ||
+        isDoudizhuAction(action) ||
+        isSplendorAction(action) ||
+        isDigitBombAction(action)
+      ) {
         throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行三国杀");
       }
       room.game = applyAction(room.game, action);
@@ -875,7 +1042,11 @@ export class RoomService {
       ? getGoujiGameView(room.game, userId)
       : isDoudizhuGame(room.game)
         ? getDoudizhuGameView(room.game, userId)
-        : getGameView(room.game, userId);
+        : isSplendorGame(room.game)
+          ? getAdapterGameView(room.game, userId)
+          : isDigitBombGame(room.game)
+            ? getAdapterGameView(room.game, userId)
+          : getGameView(room.game, userId);
   }
 
   async recommendDoudizhuAction(
@@ -1009,7 +1180,11 @@ export class RoomService {
       ? getGoujiGameView(room.game, userId)
       : isDoudizhuGame(room.game)
         ? getDoudizhuGameView(room.game, userId)
-        : getGameView(room.game, userId);
+        : isSplendorGame(room.game)
+          ? getAdapterGameView(room.game, userId)
+          : isDigitBombGame(room.game)
+            ? getAdapterGameView(room.game, userId)
+          : getGameView(room.game, userId);
   }
 
   setConnected(userId: string, connected: boolean): void {
@@ -1057,6 +1232,7 @@ export class RoomService {
   }
 
   private toView(room: Room, viewerId?: string): RoomView {
+    const supportsLlmBots = gameTypeMetadata(room.gameType).supportsLlmBots;
     return {
       ...this.toSummary(room),
       players: room.players
@@ -1065,12 +1241,17 @@ export class RoomService {
       ruleConfig: structuredClone(room.ruleConfig),
       botIntelligence: room.botIntelligence,
       botMode: room.botMode,
+      ...(room.gameType === "digit_bomb"
+        ? { digitBombDigits: room.digitBombDigits ?? 4 }
+        : {}),
       llmBot: {
-        available: room.gameType === "sanguosha"
-          ? this.botDecisions.supports("sanguosha")
-          : room.gameType === "doudizhu"
-            ? this.botDecisions.supports("doudizhu")
-            : false,
+        available: supportsLlmBots && (
+          room.gameType === "sanguosha"
+            ? this.botDecisions.supports("sanguosha")
+            : room.gameType === "doudizhu"
+              ? this.botDecisions.supports("doudizhu")
+              : false
+        ),
         thinkingPlayerId:
           this.llmBotRuns.get(room.id)?.playerId ??
           this.llmRecommendationRuns.get(room.id)?.playerId ??
@@ -1141,6 +1322,7 @@ export class RoomService {
         if (
           !isGoujiGame(room.game) &&
           !isDoudizhuGame(room.game) &&
+          !isAdapterGame(room.game) &&
           room.botMode === "llm" &&
           this.startSanguoshaLlmDecision(room, room.game, bot)
         ) {
@@ -1164,7 +1346,12 @@ export class RoomService {
                   room.game,
                   chooseDoudizhuBotAction(room.game, bot.id, room.botIntelligence),
                 )
-              : applyAction(room.game, this.actionForBot(room.game, bot, room.botIntelligence));
+              : isAdapterGame(room.game)
+                ? applyAdapterAction(
+                    room.game,
+                    chooseAdapterBotAction(room.game, bot.id, room.botIntelligence),
+                  )
+                : applyAction(room.game, this.actionForBot(room.game, bot, room.botIntelligence));
           mutations += 1;
         } catch (error) {
           // A bad heuristic or an unforeseen rule edge must not escape from an
@@ -1176,6 +1363,8 @@ export class RoomService {
               room.game = forfeitGoujiPlayer(room.game, bot.id);
             } else if (isDoudizhuGame(room.game)) {
               room.game = forfeitDoudizhuPlayer(room.game, bot.id);
+            } else if (isAdapterGame(room.game)) {
+              room.game = forfeitAdapterPlayer(room.game, bot.id);
             } else {
               const gamePlayer = room.game.players.find((player) => player.id === bot.id);
               if (!gamePlayer?.alive) throw new Error("Failed bot is not a living game player");
@@ -1375,6 +1564,7 @@ export class RoomService {
         currentRoom.game &&
         !isGoujiGame(currentRoom.game) &&
         !isDoudizhuGame(currentRoom.game) &&
+        !isAdapterGame(currentRoom.game) &&
         currentRoom.game.revision === request.revision &&
         this.actingBot(currentRoom)?.id === request.playerId,
       );
@@ -1477,7 +1667,9 @@ export class RoomService {
 
   private actingBot(room: Room): RoomPlayer | undefined {
     if (room.status !== "playing" || !room.game || room.game.status !== "playing") return undefined;
-    const actingPlayerId = isGoujiGame(room.game) || isDoudizhuGame(room.game)
+    const actingPlayerId = isGoujiGame(room.game) ||
+      isDoudizhuGame(room.game) ||
+      isAdapterGame(room.game)
       ? room.game.currentPlayerId
       : room.game.pendingResponse?.targetId
         ?? (room.game.turn.phase !== "respond" ? room.game.currentPlayerId : undefined);

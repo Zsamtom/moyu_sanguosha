@@ -1,11 +1,15 @@
 import type { Server as HttpServer } from "node:http";
 import {
   DoudizhuRuleError,
+  DigitBombRuleError,
   GameRuleError,
   GoujiRuleError,
+  SplendorRuleError,
   type DoudizhuGameView,
+  type DigitBombGameView,
   type GameView,
   type GoujiGameView,
+  type SplendorGameView,
 } from "@sanguosha/shared";
 import type { RequestHandler, Request } from "express";
 import { Server, type Socket } from "socket.io";
@@ -38,19 +42,26 @@ interface ClientToServerEvents {
   "room:choose-general": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
   "room:choose-god-faction": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
   "room:chat": (input: unknown, ack: Ack<{ message: RoomChatMessage }>) => void;
-  "game:action": (input: unknown, ack: Ack<{ game: GameView | GoujiGameView | DoudizhuGameView }>) => void;
+  "game:action": (
+    input: unknown,
+    ack: Ack<{
+      game: GameView | GoujiGameView | DoudizhuGameView | SplendorGameView | DigitBombGameView;
+    }>,
+  ) => void;
 }
 
 export interface RealtimeState {
   rooms: RoomSummary[];
   room: RoomView | null;
-  game: GameView | GoujiGameView | DoudizhuGameView | null;
+  game: GameView | GoujiGameView | DoudizhuGameView | SplendorGameView | DigitBombGameView | null;
 }
 
 interface ServerToClientEvents {
   "rooms:update": (rooms: RoomSummary[]) => void;
   "room:update": (room: RoomView | null) => void;
-  "game:view": (game: GameView | GoujiGameView | DoudizhuGameView | null) => void;
+  "game:view": (
+    game: GameView | GoujiGameView | DoudizhuGameView | SplendorGameView | DigitBombGameView | null,
+  ) => void;
   state: (state: RealtimeState) => void;
   "server:error": (error: { code: string; message: string }) => void;
 }
@@ -73,6 +84,8 @@ function errorPayload(error: unknown): { code: string; message: string } {
   if (error instanceof GameRuleError) return { code: error.code, message: error.message };
   if (error instanceof GoujiRuleError) return { code: error.code, message: error.message };
   if (error instanceof DoudizhuRuleError) return { code: error.code, message: error.message };
+  if (error instanceof SplendorRuleError) return { code: error.code, message: error.message };
+  if (error instanceof DigitBombRuleError) return { code: error.code, message: error.message };
   console.error(error);
   return { code: "INTERNAL_ERROR", message: "服务器内部错误" };
 }

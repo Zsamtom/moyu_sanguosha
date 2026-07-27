@@ -1,4 +1,5 @@
 import { Badge, Button, Layout, Space, Tag } from 'antd';
+import { GAME_REGISTRY } from '../games/registry';
 import type { AuthUser } from '../types';
 import { Brand } from './Brand';
 
@@ -39,9 +40,9 @@ export function AppShell({
               游戏大厅
             </Button>
             <div className="app-nav__meta" aria-label="已接入游戏">
-              <span>三国杀</span>
-              <span>够级</span>
-              <span>斗地主</span>
+              {Object.entries(GAME_REGISTRY).map(([gameType, game]) => (
+                <span key={gameType}>{game.label}</span>
+              ))}
             </div>
           </section>
           <section className="app-nav__section" aria-labelledby="function-navigation">

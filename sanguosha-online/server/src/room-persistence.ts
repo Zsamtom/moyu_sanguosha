@@ -19,8 +19,10 @@ import {
   assertWumouContinuation,
   assertYeyanContinuation,
   assertCompleteRulesEngineState,
+  assertRestorableDigitBombGameState,
   assertRestorableDoudizhuGameState,
   assertRestorableGoujiGameState,
+  assertRestorableSplendorGameState,
   currentDyingEntrySaveSkill,
   currentDyingOwnerResponseSkill,
   currentDyingResponder,
@@ -42,6 +44,7 @@ import {
   type CardUseContinuation,
   type CompleteRulesEngineState,
   type DoudizhuGameState,
+  type DigitBombGameState,
   type GeneralDraftState,
   type GameSession,
   type GoujiGameState,
@@ -49,6 +52,7 @@ import {
   type PendingNullificationResponse,
   type PendingDeathResolution,
   type RoomRuleConfig,
+  type SplendorGameState,
   type StandardImplementedSkillId,
   validateRoomRuleConfig,
 } from "@sanguosha/shared";
@@ -4568,6 +4572,24 @@ const doudizhuGameStateSchema = z.custom<DoudizhuGameState>((value) => {
   }
 }, "Invalid Doudizhu game state");
 
+const splendorGameStateSchema = z.custom<SplendorGameState>((value) => {
+  try {
+    assertRestorableSplendorGameState(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Invalid Splendor game state");
+
+const digitBombGameStateSchema = z.custom<DigitBombGameState>((value) => {
+  try {
+    assertRestorableDigitBombGameState(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Invalid Digit Bomb game state");
+
 const playerSchema = z.object({
   id: playerIdSchema,
   username: z.string().min(1).max(32),
@@ -4598,12 +4620,15 @@ function sameRoomRuleConfig(left: RoomRuleConfig, right: RoomRuleConfig): boolea
 const roomSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(40),
-  gameType: z.enum(["sanguosha", "gouji", "doudizhu"]).default("sanguosha"),
+  gameType: z.enum([
+    "sanguosha", "gouji", "doudizhu", "splendor", "splendor_pokemon", "digit_bomb",
+  ]).default("sanguosha"),
   ownerId: playerIdSchema,
   status: z.enum(["waiting", "drafting", "playing", "finished"]),
   maxPlayers: z.number().int().min(2).max(10),
   botIntelligence: botIntelligenceSchema.default(3),
   botMode: z.enum(["rules", "llm"]).default("rules"),
+  digitBombDigits: z.number().int().min(1).max(8).optional(),
   doudizhuLlmUsage: z.object({
     calls: z.number().int().min(0).max(10_000),
     promptTokens: z.number().int().min(0).max(100_000_000),
@@ -4629,7 +4654,13 @@ const roomSchema = z.object({
   ruleConfig: roomRuleConfigSchema,
   chatMessages: z.array(roomChatMessageSchema).max(100).default([]),
   draft: generalDraftSchema.optional(),
-  game: z.union([gameSessionSchema, goujiGameStateSchema, doudizhuGameStateSchema]).optional(),
+  game: z.union([
+    gameSessionSchema,
+    goujiGameStateSchema,
+    doudizhuGameStateSchema,
+    splendorGameStateSchema,
+    digitBombGameStateSchema,
+  ]).optional(),
 }).superRefine((room, context) => {
   const issue = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
   const playerIds = room.players.map((player) => player.id);
@@ -4640,8 +4671,29 @@ const roomSchema = z.object({
   if (room.players.length > room.maxPlayers) issue("Room exceeds maxPlayers");
   if (room.gameType === "gouji" && room.maxPlayers !== 6) issue("Gouji room must have exactly 6 seats");
   if (room.gameType === "doudizhu" && room.maxPlayers !== 3) issue("Doudizhu room must have exactly 3 seats");
-  if (room.botMode === "llm" && room.gameType === "gouji") {
-    issue("LLM bot mode is not available for Gouji rooms");
+  if (room.gameType === "digit_bomb" && room.maxPlayers !== 2) {
+    issue("Digit Bomb room must have exactly 2 seats");
+  }
+  if (room.gameType === "digit_bomb" && room.digitBombDigits === undefined) {
+    issue("Digit Bomb room must persist its configured digits");
+  }
+  if (room.gameType !== "digit_bomb" && room.digitBombDigits !== undefined) {
+    issue("Only Digit Bomb rooms may persist digitBombDigits");
+  }
+  if (
+    (room.gameType === "splendor" || room.gameType === "splendor_pokemon") &&
+    (room.maxPlayers < 2 || room.maxPlayers > 4)
+  ) {
+    issue("Splendor room must have between 2 and 4 seats");
+  }
+  if (
+    room.botMode === "llm" &&
+    (room.gameType === "gouji" ||
+      room.gameType === "splendor" ||
+      room.gameType === "splendor_pokemon" ||
+      room.gameType === "digit_bomb")
+  ) {
+    issue("LLM bot mode is not available for this game type");
   }
   if (room.gameType !== "sanguosha" && room.status === "drafting") issue("Only Sanguosha rooms may draft generals");
   if (room.status === "waiting" && (room.draft || room.game)) {
@@ -4675,6 +4727,21 @@ const roomSchema = z.object({
       }
       if (room.game.kind === "doudizhu" && room.gameType !== "doudizhu") {
         issue("Room game type and game state disagree");
+      }
+      if (
+        (room.game.kind === "splendor" || room.game.kind === "splendor_pokemon") &&
+        room.gameType !== room.game.kind
+      ) {
+        issue("Room game type and game state disagree");
+      }
+      if (room.game.kind === "digit_bomb" && room.gameType !== "digit_bomb") {
+        issue("Room game type and game state disagree");
+      }
+      if (
+        room.game.kind === "digit_bomb" &&
+        room.digitBombDigits !== room.game.digits
+      ) {
+        issue("Room Digit Bomb digit configuration and game state disagree");
       }
     } else {
       const sanguoshaGame = room.game as GameSession;
@@ -4870,7 +4937,13 @@ function migrateRoomSnapshot(value: unknown): unknown {
     }
     if (
       room.gameType === "gouji" ||
-      game.kind === "gouji"
+      game.kind === "gouji" ||
+      room.gameType === "splendor" ||
+      room.gameType === "splendor_pokemon" ||
+      room.gameType === "digit_bomb" ||
+      game.kind === "splendor" ||
+      game.kind === "splendor_pokemon" ||
+      game.kind === "digit_bomb"
     ) continue;
     if (game.revision === undefined) game.revision = 0;
     if (game.nextUseId === undefined) game.nextUseId = 1;

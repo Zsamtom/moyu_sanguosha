@@ -7,11 +7,13 @@ import {
   chooseGodFactionSchema,
   createRoomSchema,
   doudizhuActionSchema,
+  digitBombActionSchema,
   gameActionEnvelopeSchema,
   gameActionPayloadSchema,
   gameActionSchema,
   goujiActionSchema,
   roomRuleConfigSchema,
+  splendorActionSchema,
 } from "./room-schemas.js";
 
 const playerId = "11111111-1111-4111-8111-111111111111";
@@ -88,6 +90,59 @@ describe("room creation and draft schemas", () => {
       botMode: "llm",
     }).success).toBe(false);
     expect(createRoomSchema.safeParse({ name: "人数错误", gameType: "doudizhu", maxPlayers: 4 }).success).toBe(false);
+    for (const gameType of ["splendor", "splendor_pokemon"] as const) {
+      expect(createRoomSchema.parse({
+        name: "璀璨宝石",
+        gameType,
+      })).toMatchObject({
+        gameType,
+        botMode: "rules",
+      });
+      expect(createRoomSchema.parse({
+        name: "三人宝石",
+        gameType,
+        maxPlayers: 3,
+      })).toMatchObject({ gameType, maxPlayers: 3 });
+      expect(createRoomSchema.safeParse({
+        name: "人数过多",
+        gameType,
+        maxPlayers: 5,
+      }).success).toBe(false);
+      expect(createRoomSchema.safeParse({
+        name: "未开放的大模型宝石",
+        gameType,
+        botMode: "llm",
+      }).success).toBe(false);
+    }
+    expect(createRoomSchema.parse({
+      name: "六位数字炸弹",
+      gameType: "digit_bomb",
+      digitBombDigits: 6,
+    })).toMatchObject({
+      gameType: "digit_bomb",
+      digitBombDigits: 6,
+      botMode: "rules",
+    });
+    expect(createRoomSchema.safeParse({
+      name: "三人数字炸弹",
+      gameType: "digit_bomb",
+      maxPlayers: 3,
+    }).success).toBe(false);
+    expect(createRoomSchema.safeParse({
+      name: "位数越界",
+      gameType: "digit_bomb",
+      digitBombDigits: 9,
+    }).success).toBe(false);
+    expect(createRoomSchema.safeParse({
+      name: "错误游戏字段",
+      gameType: "splendor",
+      digitBombDigits: 4,
+    }).success).toBe(false);
+    expect(createRoomSchema.safeParse({
+      name: "大模型数字炸弹",
+      gameType: "digit_bomb",
+      botMode: "llm",
+    }).success).toBe(false);
 
     expect(createRoomSchema.safeParse({ name: "房间", injected: true }).success).toBe(false);
     expect(createRoomSchema.safeParse({
@@ -202,6 +257,89 @@ describe("gameActionSchema skill actions", () => {
       type: "doudizhu_pass",
       playerId,
       cardIds: ["server-must-reject"],
+    }).success).toBe(false);
+  });
+
+  it("accepts every strict Splendor action and rejects malformed payloads", () => {
+    const actions = [
+      { type: "splendor_take", playerId, colors: ["white", "blue", "green"] },
+      { type: "splendor_buy", playerId, cardId: "classic-l1-1" },
+      { type: "splendor_reserve", playerId, cardId: "classic-l2-1" },
+      { type: "splendor_reserve", playerId, level: 3 },
+      { type: "splendor_return", playerId, colors: ["gold", "white"] },
+      { type: "splendor_choose_noble", playerId, nobleId: "noble-1" },
+      {
+        type: "splendor_evolve",
+        playerId,
+        fromCardId: "pokemon-base-1",
+        toCardId: "pokemon-evolved-1",
+      },
+      { type: "splendor_skip_evolution", playerId },
+      { type: "splendor_pass", playerId },
+    ] as const;
+
+    for (const action of actions) {
+      expect(splendorActionSchema.parse(action)).toEqual(action);
+      expect(gameActionEnvelopeSchema.parse({
+        expectedRevision: 2,
+        expectedPromptId: "splendor:2:main",
+        action,
+      }).action).toEqual(action);
+    }
+
+    expect(splendorActionSchema.safeParse({
+      type: "splendor_take",
+      playerId,
+      colors: [],
+    }).success).toBe(false);
+    expect(splendorActionSchema.safeParse({
+      type: "splendor_take",
+      playerId,
+      colors: ["orange"],
+    }).success).toBe(false);
+    expect(splendorActionSchema.safeParse({
+      type: "splendor_reserve",
+      playerId,
+    }).success).toBe(false);
+    expect(splendorActionSchema.safeParse({
+      type: "splendor_reserve",
+      playerId,
+      cardId: "card-1",
+      level: 1,
+    }).success).toBe(false);
+    expect(splendorActionSchema.safeParse({
+      type: "splendor_pass",
+      playerId,
+      injected: true,
+    }).success).toBe(false);
+  });
+
+  it("accepts strict Digit Bomb actions and rejects malformed payloads", () => {
+    const actions = [
+      { type: "digit_bomb_set_secret", playerId, secret: "0012" },
+      { type: "digit_bomb_guess", playerId, guess: "9876" },
+      { type: "digit_bomb_feedback", playerId, correctPositions: 3 },
+      { type: "digit_bomb_vote", playerId, vote: "rematch" },
+      { type: "digit_bomb_vote", playerId, vote: "settle" },
+    ] as const;
+    for (const action of actions) {
+      expect(digitBombActionSchema.parse(action)).toEqual(action);
+    }
+    expect(digitBombActionSchema.safeParse({
+      type: "digit_bomb_set_secret",
+      playerId,
+      secret: "12a4",
+    }).success).toBe(false);
+    expect(digitBombActionSchema.safeParse({
+      type: "digit_bomb_feedback",
+      playerId,
+      correctPositions: 9,
+    }).success).toBe(false);
+    expect(digitBombActionSchema.safeParse({
+      type: "digit_bomb_vote",
+      playerId,
+      vote: "settle",
+      injected: true,
     }).success).toBe(false);
   });
 

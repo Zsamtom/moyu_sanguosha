@@ -562,6 +562,10 @@ export function getRoomStartBlockReason(room: RoomDetail, connected: boolean): s
   if (!connected) return '实时连接恢复后才能开局';
   if (room.gameType === 'gouji' && room.members.length !== 6) return '够级必须坐满 6 人';
   if (room.gameType === 'doudizhu' && room.members.length !== 3) return '斗地主必须坐满 3 人';
+  if (room.gameType === 'digit_bomb' && room.members.length !== 2) return '数字炸弹必须坐满 2 人';
+  if ((room.gameType === 'splendor' || room.gameType === 'splendor_pokemon') && room.members.length > 4) {
+    return '璀璨宝石最多支持 4 人';
+  }
   if (room.members.length < 2) return '至少需要两名玩家';
   if (!room.members.every((member) => member.online)) return '有玩家离线，全部玩家在线后才能开局';
   if (!room.members.every((member) => member.ready)) return '所有玩家准备后才能开局';

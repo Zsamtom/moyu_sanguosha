@@ -4,8 +4,10 @@ import {
   FULL_GENERAL_PACKS,
   validateRoomRuleConfig,
   type DoudizhuAction,
+  type DigitBombAction,
   type GameAction,
   type GoujiAction,
+  type SplendorAction,
 } from "@sanguosha/shared";
 import { z } from "zod";
 import { DEFAULT_BOT_INTELLIGENCE } from "./bot-intelligence.js";
@@ -40,8 +42,11 @@ export const roomRuleConfigSchema = z.object({
 
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(40),
-  gameType: z.enum(["sanguosha", "gouji", "doudizhu"]).optional(),
+  gameType: z.enum([
+    "sanguosha", "gouji", "doudizhu", "splendor", "splendor_pokemon", "digit_bomb",
+  ]).optional(),
   maxPlayers: z.number().int().min(2).max(10).optional(),
+  digitBombDigits: z.number().int().min(1).max(8).optional(),
   botIntelligence: botIntelligenceSchema.default(DEFAULT_BOT_INTELLIGENCE),
   botMode: z.enum(["rules", "llm"]).default("rules"),
   ruleConfig: roomRuleConfigSchema.optional(),
@@ -60,11 +65,53 @@ export const createRoomSchema = z.object({
       message: "斗地主固定为 3 人",
     });
   }
+  if (
+    (input.gameType === "splendor" || input.gameType === "splendor_pokemon") &&
+    input.maxPlayers !== undefined &&
+    (input.maxPlayers < 2 || input.maxPlayers > 4)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxPlayers"],
+      message: "璀璨宝石房间人数需为 2 至 4 人",
+    });
+  }
+  if (input.gameType === "digit_bomb" && input.maxPlayers !== undefined && input.maxPlayers !== 2) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxPlayers"],
+      message: "数字炸弹固定为 2 人",
+    });
+  }
   if (input.botMode === "llm" && input.gameType === "gouji") {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["botMode"],
       message: "LLM bot mode is not available for Gouji rooms",
+    });
+  }
+  if (
+    input.botMode === "llm" &&
+    (input.gameType === "splendor" || input.gameType === "splendor_pokemon")
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["botMode"],
+      message: "LLM bot mode is not available for Splendor rooms",
+    });
+  }
+  if (input.botMode === "llm" && input.gameType === "digit_bomb") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["botMode"],
+      message: "LLM bot mode is not available for Digit Bomb rooms",
+    });
+  }
+  if (input.digitBombDigits !== undefined && input.gameType !== "digit_bomb") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["digitBombDigits"],
+      message: "digitBombDigits is only available for Digit Bomb rooms",
     });
   }
 });
@@ -280,10 +327,102 @@ export const doudizhuActionSchema = z.discriminatedUnion("type", [
   }),
 ]).transform((action): DoudizhuAction => action);
 
+const splendorColorSchema = z.enum([
+  "white", "blue", "green", "red", "black", "pink", "yellow", "gold", "purple",
+]);
+const splendorCardLevelSchema = z.union([
+  z.literal(1), z.literal(2), z.literal(3), z.literal("rare"), z.literal("legendary"),
+]);
+const parsedSplendorActionSchema = z.discriminatedUnion("type", [
+  strictObject({
+    type: z.literal("splendor_take"),
+    playerId,
+    colors: z.array(splendorColorSchema).min(1).max(3),
+  }),
+  strictObject({
+    type: z.literal("splendor_buy"),
+    playerId,
+    cardId,
+  }),
+  strictObject({
+    type: z.literal("splendor_reserve"),
+    playerId,
+    cardId: cardId.optional(),
+    level: splendorCardLevelSchema.optional(),
+  }),
+  strictObject({
+    type: z.literal("splendor_return"),
+    playerId,
+    colors: z.array(splendorColorSchema).min(1).max(10),
+  }),
+  strictObject({
+    type: z.literal("splendor_choose_noble"),
+    playerId,
+    nobleId: cardId,
+  }),
+  strictObject({
+    type: z.literal("splendor_evolve"),
+    playerId,
+    fromCardId: cardId,
+    toCardId: cardId,
+  }),
+  strictObject({
+    type: z.literal("splendor_skip_evolution"),
+    playerId,
+  }),
+  strictObject({
+    type: z.literal("splendor_pass"),
+    playerId,
+  }),
+]).superRefine((action, context) => {
+  if (
+    action.type === "splendor_reserve" &&
+    (action.cardId === undefined) === (action.level === undefined)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Splendor reserve requires exactly one of cardId or level",
+    });
+  }
+});
+
+export const splendorActionSchema = parsedSplendorActionSchema.transform(
+  (action): SplendorAction => action,
+);
+
+export const digitBombActionSchema = z.discriminatedUnion("type", [
+  strictObject({
+    type: z.literal("digit_bomb_set_secret"),
+    playerId,
+    secret: z.string().regex(/^\d{1,8}$/),
+  }),
+  strictObject({
+    type: z.literal("digit_bomb_guess"),
+    playerId,
+    guess: z.string().regex(/^\d{1,8}$/),
+  }),
+  strictObject({
+    type: z.literal("digit_bomb_feedback"),
+    playerId,
+    correctPositions: z.number().int().min(0).max(8),
+  }),
+  strictObject({
+    type: z.literal("digit_bomb_vote"),
+    playerId,
+    vote: z.enum(["rematch", "settle"]),
+  }),
+]).transform((action): DigitBombAction => action);
+
 export const gameActionEnvelopeSchema = z.object({
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   expectedPromptId: promptId,
-  action: z.union([gameActionSchema, goujiActionSchema, doudizhuActionSchema]),
+  action: z.union([
+    gameActionSchema,
+    goujiActionSchema,
+    doudizhuActionSchema,
+    splendorActionSchema,
+    digitBombActionSchema,
+  ]),
 }).strict();
 
 export const gameActionPayloadSchema = gameActionEnvelopeSchema.extend({ roomId: roomIdSchema }).strict();

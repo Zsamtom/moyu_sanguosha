@@ -94,6 +94,24 @@ export const DOUDIZHU_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = 
   6: '残局大师',
   7: '牌桌宗师',
 };
+export const SPLENDOR_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
+  1: '初来乍到',
+  2: '筹码学徒',
+  3: '市场行家',
+  4: '声望猎手',
+  5: '贵族名流',
+  6: '宝石大师',
+  7: '传奇收藏家',
+};
+export const DIGIT_BOMB_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
+  1: '线路新人',
+  2: '密码学徒',
+  3: '拆弹队员',
+  4: '信号专家',
+  5: '密码猎手',
+  6: '首席拆弹手',
+  7: '零失误传奇',
+};
 export type GeneralDraftStage = 'selecting_generals' | 'selecting_factions' | 'complete';
 
 export interface RoomRuleConfig {
@@ -134,7 +152,7 @@ export interface GeneralDraftView {
 }
 
 export type RoomStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
-export type GameType = 'sanguosha' | 'gouji' | 'doudizhu';
+export type GameType = 'sanguosha' | 'gouji' | 'doudizhu' | 'splendor' | 'splendor_pokemon' | 'digit_bomb';
 export type BotMode = 'rules' | 'llm';
 
 export interface RoomSummary {
@@ -173,6 +191,7 @@ export interface RoomDetail extends RoomSummary {
   members: RoomMember[];
   botIntelligence?: BotIntelligence;
   botMode: BotMode;
+  digitBombDigits?: number;
   llmBot: {
     available: boolean;
     thinkingPlayerId: string | null;
@@ -568,6 +587,188 @@ export type DoudizhuAction =
   | { type: 'doudizhu_play'; playerId: string; cardIds: string[] }
   | { type: 'doudizhu_pass'; playerId: string };
 
+export type SplendorClassicColor = 'white' | 'blue' | 'green' | 'red' | 'black';
+export type SplendorPokemonColor = 'red' | 'blue' | 'black' | 'pink' | 'yellow';
+export type SplendorWildColor = 'gold' | 'purple';
+export type SplendorColor = SplendorClassicColor | SplendorPokemonColor | SplendorWildColor;
+export type SplendorCardLevel = 1 | 2 | 3 | 'rare' | 'legendary';
+export type SplendorResourceMap = Partial<Record<SplendorColor, number>>;
+
+export interface SplendorCard {
+  id: string;
+  name: string;
+  level: SplendorCardLevel;
+  points: number;
+  cost: SplendorResourceMap;
+  bonus: SplendorColor;
+  bonusCount: number;
+  evolutionOf?: string;
+  evolutionReq?: SplendorResourceMap;
+}
+
+export interface SplendorNoble {
+  id: string;
+  points: 3;
+  requirement: SplendorResourceMap;
+}
+
+export interface SplendorPlayerView {
+  id: string;
+  seat: number;
+  name: string;
+  botTitle?: string;
+  tokens: SplendorResourceMap;
+  bonuses: SplendorResourceMap;
+  cards: SplendorCard[];
+  evolvedCards: SplendorCard[];
+  reservedCount: number;
+  /** Present only for the viewing player. */
+  reservedCards?: SplendorCard[];
+  /** Only cards deliberately revealed by the server. */
+  publicReservedCards: SplendorCard[];
+  nobles: SplendorNoble[];
+  score: number;
+  evolutionCount: number;
+}
+
+export interface SplendorEvolutionOption {
+  fromCardId: string;
+  toCardId: string;
+}
+
+export type SplendorPrompt =
+  | {
+      type: 'take' | 'buy' | 'reserve';
+      playerId: string;
+      takeOptions: Array<{ colors: SplendorColor[] }>;
+      buyCardIds: string[];
+      reserveCardIds: string[];
+      reserveDeckLevels: SplendorCardLevel[];
+      evolutionOptions: SplendorEvolutionOption[];
+      canPass: boolean;
+    }
+  | { type: 'return'; playerId: string; count: number; available: SplendorResourceMap }
+  | { type: 'choose_noble'; playerId: string; nobleIds: string[] }
+  | {
+      type: 'evolution';
+      playerId: string;
+      options: SplendorEvolutionOption[];
+      canSkip: true;
+    }
+  | { type: 'waiting'; playerId: string }
+  | { type: 'finished'; playerId: null };
+
+export interface SplendorWinner {
+  playerIds: string[];
+  reason: 'score' | 'forfeit';
+  rankings: Array<{
+    playerId: string;
+    score: number;
+    developmentCardCount: number;
+    evolutionCount: number;
+  }>;
+}
+
+export interface SplendorGameView {
+  kind: 'splendor' | 'splendor_pokemon';
+  version: 1;
+  revision: number;
+  actionPromptId: string;
+  status: 'playing' | 'finished';
+  phase: 'main' | 'return' | 'choose_noble' | 'evolution' | 'finished';
+  currentPlayerId: string;
+  players: SplendorPlayerView[];
+  tokenSupply: SplendorResourceMap;
+  market: Record<string, SplendorCard[]>;
+  deckCounts: Record<string, number>;
+  nobles: SplendorNoble[];
+  finalRoundTriggered: boolean;
+  winner: SplendorWinner | null;
+  prompt: SplendorPrompt;
+}
+
+export type SplendorAction =
+  | { type: 'splendor_take'; playerId: string; colors: SplendorColor[] }
+  | { type: 'splendor_buy'; playerId: string; cardId: string }
+  | { type: 'splendor_reserve'; playerId: string; cardId?: string; level?: SplendorCardLevel }
+  | { type: 'splendor_return'; playerId: string; colors: SplendorColor[] }
+  | { type: 'splendor_choose_noble'; playerId: string; nobleId: string }
+  | { type: 'splendor_evolve'; playerId: string; fromCardId: string; toCardId: string }
+  | { type: 'splendor_skip_evolution'; playerId: string }
+  | { type: 'splendor_pass'; playerId: string };
+
+export type DigitBombPhase = 'setup' | 'guess' | 'feedback' | 'round_finished' | 'finished';
+export type DigitBombVote = 'rematch' | 'settle';
+
+export interface DigitBombGuessRecord {
+  value: string;
+  feedback: number | null;
+}
+
+export interface DigitBombPendingGuess {
+  guesserId: string;
+  responderId: string;
+  value: string;
+  attempt: number;
+}
+
+export interface DigitBombRoundResult {
+  winnerId: string;
+  attempts: number;
+  points: number;
+}
+
+export interface DigitBombPlayerView {
+  id: string;
+  seat: number;
+  name: string;
+  botTitle?: string;
+  score: number;
+  secretSubmitted: boolean;
+  guesses: DigitBombGuessRecord[];
+  vote: DigitBombVote | null;
+}
+
+export type DigitBombPrompt =
+  | { type: 'set_secret'; playerId: string }
+  | { type: 'guess'; playerId: string }
+  | { type: 'feedback'; playerId: string; pendingGuess: DigitBombPendingGuess }
+  | { type: 'vote'; playerId: string; currentVote: DigitBombVote | null }
+  | { type: 'waiting'; playerId: string | null }
+  | { type: 'finished'; playerId: null };
+
+export interface DigitBombWinner {
+  playerIds: string[];
+  reason: 'settle' | 'forfeit';
+  rankings: Array<{ playerId: string; score: number }>;
+}
+
+export interface DigitBombGameView {
+  kind: 'digit_bomb';
+  version: 1;
+  revision: number;
+  actionPromptId: string;
+  status: 'playing' | 'finished';
+  phase: DigitBombPhase;
+  digits: number;
+  round: number;
+  roundStarterId: string;
+  currentPlayerId: string | null;
+  players: DigitBombPlayerView[];
+  /** The authenticated viewer's secret only; null before submission. */
+  ownSecret: string | null;
+  pendingGuess: DigitBombPendingGuess | null;
+  roundResult: DigitBombRoundResult | null;
+  winner: DigitBombWinner | null;
+  prompt: DigitBombPrompt;
+}
+
+export type DigitBombAction =
+  | { type: 'digit_bomb_set_secret'; playerId: string; secret: string }
+  | { type: 'digit_bomb_guess'; playerId: string; guess: string }
+  | { type: 'digit_bomb_feedback'; playerId: string; correctPositions: number }
+  | { type: 'digit_bomb_vote'; playerId: string; vote: DigitBombVote };
+
 export interface DoudizhuLlmRecommendation {
   action: DoudizhuAction;
   source: 'llm' | 'rules';
@@ -591,7 +792,7 @@ const LLM_FAILURE_REASONS: readonly LlmFailureReason[] = [
   'invalid_candidate',
 ];
 
-export type AnyGameAction = GameAction | GoujiAction | DoudizhuAction;
+export type AnyGameAction = GameAction | GoujiAction | DoudizhuAction | SplendorAction | DigitBombAction;
 
 export function isGoujiGameView(value: unknown): value is GoujiGameView {
   if (!value || typeof value !== 'object') return false;
@@ -656,6 +857,92 @@ export function isDoudizhuGameView(value: unknown): value is DoudizhuGameView {
     Array.isArray(game.logs);
 }
 
+export function isSplendorGameView(value: unknown): value is SplendorGameView {
+  if (!value || typeof value !== 'object') return false;
+  const game = value as Partial<SplendorGameView>;
+  const players = Array.isArray(game.players) ? game.players : [];
+  const prompt = game.prompt as Partial<SplendorPrompt> | undefined;
+  const validEvolutionOptions = (options: unknown): options is SplendorEvolutionOption[] =>
+    Array.isArray(options) &&
+    options.every((option) =>
+      option && typeof option === 'object' &&
+      typeof (option as Partial<SplendorEvolutionOption>).fromCardId === 'string' &&
+      typeof (option as Partial<SplendorEvolutionOption>).toCardId === 'string'
+    );
+  const validPrompt = Boolean(prompt) &&
+    (((prompt?.type === 'take' || prompt?.type === 'buy' || prompt?.type === 'reserve') &&
+      validEvolutionOptions(prompt.evolutionOptions)) ||
+      prompt?.type === 'return' ||
+      prompt?.type === 'choose_noble' ||
+      (prompt?.type === 'evolution' && validEvolutionOptions(prompt.options)) ||
+      prompt?.type === 'waiting' ||
+      prompt?.type === 'finished');
+  return (game.kind === 'splendor' || game.kind === 'splendor_pokemon') &&
+    game.version === 1 &&
+    Number.isSafeInteger(game.revision) &&
+    typeof game.actionPromptId === 'string' &&
+    (game.status === 'playing' || game.status === 'finished') &&
+    typeof game.currentPlayerId === 'string' &&
+    players.length >= 2 &&
+    players.length <= 4 &&
+    players.every((player) =>
+      player && typeof player === 'object' &&
+      typeof player.id === 'string' &&
+      Number.isInteger(player.seat) &&
+      typeof player.name === 'string' &&
+      Array.isArray(player.cards) &&
+      Array.isArray(player.evolvedCards) &&
+      Array.isArray(player.publicReservedCards) &&
+      (player.reservedCards === undefined || Array.isArray(player.reservedCards))
+    ) &&
+    validPrompt &&
+    Boolean(game.tokenSupply) &&
+    Boolean(game.market) &&
+    Boolean(game.deckCounts) &&
+    Array.isArray(game.nobles);
+}
+
+export function isDigitBombGameView(value: unknown): value is DigitBombGameView {
+  if (!value || typeof value !== 'object') return false;
+  const game = value as Partial<DigitBombGameView>;
+  const players = Array.isArray(game.players) ? game.players : [];
+  const prompt = game.prompt as Partial<DigitBombPrompt> | undefined;
+  return game.kind === 'digit_bomb' &&
+    game.version === 1 &&
+    Number.isSafeInteger(game.revision) &&
+    typeof game.actionPromptId === 'string' &&
+    (game.status === 'playing' || game.status === 'finished') &&
+    Number.isSafeInteger(game.digits) &&
+    Number(game.digits) >= 1 &&
+    Number(game.digits) <= 8 &&
+    (game.ownSecret === null ||
+      (typeof game.ownSecret === 'string' &&
+        game.ownSecret.length === Number(game.digits) &&
+        /^[0-9]+$/.test(game.ownSecret))) &&
+    Number.isSafeInteger(game.round) &&
+    Number(game.round) >= 1 &&
+    players.length === 2 &&
+    players.every((player) =>
+      player && typeof player === 'object' &&
+      !('secret' in player) &&
+      !('ownSecret' in player) &&
+      typeof player.id === 'string' &&
+      Number.isInteger(player.seat) &&
+      typeof player.name === 'string' &&
+      Number.isSafeInteger(player.score) &&
+      typeof player.secretSubmitted === 'boolean' &&
+      Array.isArray(player.guesses) &&
+      (player.vote === null || player.vote === 'rematch' || player.vote === 'settle')
+    ) &&
+    Boolean(prompt) &&
+    (prompt?.type === 'set_secret' ||
+      prompt?.type === 'guess' ||
+      prompt?.type === 'feedback' ||
+      prompt?.type === 'vote' ||
+      prompt?.type === 'waiting' ||
+      prompt?.type === 'finished');
+}
+
 export interface ApiErrorBody {
   code?: string;
   message?: string;
@@ -670,7 +957,7 @@ export interface SocketAck<T = unknown> {
 export interface ServerState {
   rooms?: RoomSummary[];
   room?: RoomDetail | null;
-  game?: GameView | GoujiGameView | DoudizhuGameView | null;
+  game?: GameView | GoujiGameView | DoudizhuGameView | SplendorGameView | DigitBombGameView | null;
 }
 
 type EngineCardKind = StandardCardKind;
@@ -1422,7 +1709,13 @@ export function normalizeRoomSummary(room: Partial<RoomSummary> & Record<string,
   return {
     id: String(room.id ?? ''),
     name: String(room.name ?? '未命名房间'),
-    gameType: room.gameType === 'gouji' || room.gameType === 'doudizhu' ? room.gameType : 'sanguosha',
+    gameType: room.gameType === 'gouji' ||
+      room.gameType === 'doudizhu' ||
+      room.gameType === 'splendor' ||
+      room.gameType === 'splendor_pokemon' ||
+      room.gameType === 'digit_bomb'
+      ? room.gameType
+      : 'sanguosha',
     status: (room.status as RoomStatus | undefined) ?? 'waiting',
     hostId: String(room.hostId ?? room.ownerId ?? host?.userId ?? ''),
     hostName: String(room.hostName ?? room.ownerName ?? host?.displayName ?? ''),
@@ -1510,6 +1803,15 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
     playerCount: members.length,
     botIntelligence,
     botMode: room.botMode === 'llm' ? 'llm' : 'rules',
+    ...(summary.gameType === 'digit_bomb'
+      ? {
+          digitBombDigits: Number.isSafeInteger(room.digitBombDigits) &&
+            Number(room.digitBombDigits) >= 1 &&
+            Number(room.digitBombDigits) <= 8
+            ? Number(room.digitBombDigits)
+            : 4,
+        }
+      : {}),
     llmBot: {
       available: Boolean(
         room.llmBot &&

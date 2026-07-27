@@ -71,6 +71,34 @@ describe('room start rules', () => {
     room.members[1] = { ...room.members[1]!, ready: false };
     expect(getRoomStartBlockReason(room, true)).toContain('准备');
   });
+
+  it('allows 2–4 player Splendor rooms and rejects an oversized projection', () => {
+    expect(getRoomStartBlockReason(roomWith({ gameType: 'splendor', maxPlayers: 4 }), true)).toBeUndefined();
+    expect(getRoomStartBlockReason(roomWith({ gameType: 'splendor_pokemon', maxPlayers: 4 }), true)).toBeUndefined();
+    const oversized = roomWith({
+      gameType: 'splendor',
+      maxPlayers: 5,
+      members: Array.from({ length: 5 }, (_, seat) => ({
+        userId: `user-${seat}`,
+        username: `user-${seat}`,
+        displayName: `玩家${seat}`,
+        seat,
+        ready: true,
+        online: true,
+        isHost: seat === 0,
+      })),
+    });
+    expect(getRoomStartBlockReason(oversized, true)).toContain('最多');
+  });
+
+  it('requires exactly two players for Digit Bomb', () => {
+    expect(getRoomStartBlockReason(roomWith({ gameType: 'digit_bomb', maxPlayers: 2 }), true)).toBeUndefined();
+    expect(getRoomStartBlockReason(roomWith({
+      gameType: 'digit_bomb',
+      maxPlayers: 2,
+      members: [roomWith().members[0]!],
+    }), true)).toContain('坐满 2 人');
+  });
 });
 
 describe('active-game exit copy', () => {

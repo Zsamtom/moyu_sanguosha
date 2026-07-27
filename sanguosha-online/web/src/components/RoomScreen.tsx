@@ -1,9 +1,12 @@
 import { Alert, Button, Popconfirm, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
+import { gameRegistration, isSplendorGameType } from '../games/registry';
 import { getRoomStartBlockReason } from '../interactionRules';
 import {
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
+  DIGIT_BOMB_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
+  SPLENDOR_BOT_INTELLIGENCE_NAMES,
   type AuthUser,
   type FullGeneralId,
   type GameRole,
@@ -59,6 +62,7 @@ export function RoomScreen({
   const startBlockReason = getRoomStartBlockReason(room, connected);
   const canStart = Boolean(isHost && !startBlockReason);
   const botIntelligence = room.botIntelligence ?? 3;
+  const registration = gameRegistration(room.gameType);
 
   const seats = useMemo(() => {
     const bySeat = new Map(room.members.map((member) => [member.seat, member]));
@@ -242,7 +246,7 @@ export function RoomScreen({
       <section className="room-heading paper-card">
         <div>
           <span className="section-kicker">
-            {room.gameType === 'gouji' ? 'Gouji / 3V3' : room.gameType === 'doudizhu' ? 'Doudizhu / Classic' : 'Sanguosha / Identity'}
+            {registration.kicker}
           </span>
           <h1>{room.name}</h1>
           <button className="room-id" type="button" onClick={() => void copyRoomId()} title="复制房间号">
@@ -294,6 +298,21 @@ export function RoomScreen({
             </strong>
           </div>
         </section>
+      ) : isSplendorGameType(room.gameType) ? (
+        <section className={`room-rule-summary room-rule-summary--${room.gameType}`} aria-label={`${registration.label}房间规则`}>
+          {registration.roomRuleSummary?.map((item) => (
+            <div key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>
+          ))}
+          <div><span>机器人</span><strong>{botIntelligence} · {SPLENDOR_BOT_INTELLIGENCE_NAMES[botIntelligence]} / 零 Token</strong></div>
+        </section>
+      ) : room.gameType === 'digit_bomb' ? (
+        <section className="room-rule-summary room-rule-summary--digit_bomb" aria-label="数字炸弹房间规则">
+          <div><span>玩法</span><strong>数字炸弹</strong></div>
+          <div><span>座位</span><strong>固定 2 人</strong></div>
+          <div><span>密码</span><strong>{room.digitBombDigits ?? 4} 位 / 可重复 / 可 0 开头</strong></div>
+          <div><span>赛制</span><strong>多局积分 / 双方投票结算</strong></div>
+          <div><span>机器人</span><strong>{botIntelligence} · {DIGIT_BOMB_BOT_INTELLIGENCE_NAMES[botIntelligence]} / 零 Token</strong></div>
+        </section>
       ) : null}
 
       <section className="seat-section">
@@ -301,11 +320,7 @@ export function RoomScreen({
           <div>
             <h2>成员列表</h2>
             <p>
-              {room.gameType === 'gouji'
-                ? '坐满 6 席并全部准备后开局；机器人会自动准备并按权威规则行动。'
-                : room.gameType === 'doudizhu'
-                  ? '坐满 3 席并全部准备后开局；机器人会自动叫分和出牌。'
-                : '所有成员准备后，房主可以开始并进入服务器选将流程。'}
+              {registration.waitingCopy}
             </p>
           </div>
           <span className="ready-summary">

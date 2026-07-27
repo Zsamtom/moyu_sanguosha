@@ -8,10 +8,12 @@ import {
   chooseGodFaction,
   createDeathFrame,
   createDoudizhuGame,
+  createDigitBombGame,
   createDyingFrame,
   createGame,
   createGameFromDraft,
   createGeneralDraft,
+  createSplendorGame,
   forfeitPlayer,
   getCardDefinition,
   getGeneralDraftView,
@@ -42,6 +44,159 @@ function standardCard(id: string, kind: CardKind, suit: Card["suit"] = "spade"):
 }
 
 describe("room snapshot persistence", () => {
+  it("round-trips private Digit Bomb state and rejects digits, secrets, and type tampering", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const game = createDigitBombGame({
+      players: playerIds.map((id, seat) => ({ id, name: `拆弹员${seat + 1}` })),
+      seed: "63".repeat(32),
+      digits: 6,
+    });
+    game.players[0]!.secret = "001234";
+    game.currentPlayerId = playerIds[1]!;
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        name: "持久化数字炸弹",
+        gameType: "digit_bomb",
+        ownerId: playerIds[0]!,
+        status: "playing",
+        maxPlayers: 2,
+        digitBombDigits: 6,
+        createdAt: new Date().toISOString(),
+        botIntelligence: 3,
+        botMode: "rules",
+        ruleConfig: structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG),
+        players: playerIds.map((id, seat) => ({
+          id,
+          username: `digit-${seat}`,
+          displayName: `拆弹员${seat + 1}`,
+          ready: true,
+          connected: false,
+          seat,
+          isBot: false,
+        })),
+        game,
+      }],
+    };
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    expect(await load(JSON.parse(JSON.stringify(snapshot)))).toMatchObject({
+      kind: "valid",
+      snapshot: {
+        version: 1,
+        rooms: [{
+          gameType: "digit_bomb",
+          digitBombDigits: 6,
+          game: {
+            kind: "digit_bomb",
+            digits: 6,
+            players: [{ secret: "001234" }, { secret: null }],
+          },
+        }],
+      },
+    });
+
+    const badSecret = structuredClone(snapshot);
+    if (!badSecret.rooms[0]?.game || !("kind" in badSecret.rooms[0].game)) {
+      throw new Error("Missing Digit Bomb game");
+    }
+    (badSecret.rooms[0].game as typeof game).players[0]!.secret = "123";
+    expect(await load(badSecret)).toMatchObject({ kind: "invalid" });
+
+    const badDigits = structuredClone(snapshot);
+    badDigits.rooms[0]!.digitBombDigits = 5;
+    expect(await load(badDigits)).toMatchObject({ kind: "invalid" });
+
+    const wrongType = structuredClone(snapshot);
+    wrongType.rooms[0]!.gameType = "splendor";
+    delete wrongType.rooms[0]!.digitBombDigits;
+    expect(await load(wrongType)).toMatchObject({ kind: "invalid" });
+
+    const llm = structuredClone(snapshot);
+    llm.rooms[0]!.botMode = "llm";
+    expect(await load(llm)).toMatchObject({ kind: "invalid" });
+  });
+
+  it("round-trips both Splendor variants and rejects tampered or mismatched state", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    for (const kind of ["splendor", "splendor_pokemon"] as const) {
+      const game = createSplendorGame({
+        kind,
+        players: playerIds.map((id, seat) => ({ id, name: `宝石玩家${seat + 1}` })),
+        seed: (kind === "splendor" ? "51" : "52").repeat(32),
+      });
+      const snapshot: RoomServiceSnapshot = {
+        version: 1,
+        rooms: [{
+          id: kind === "splendor"
+            ? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            : "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          name: "持久化璀璨宝石",
+          gameType: kind,
+          ownerId: playerIds[0]!,
+          status: "playing",
+          maxPlayers: 4,
+          createdAt: new Date().toISOString(),
+          botIntelligence: 3,
+          botMode: "rules",
+          ruleConfig: structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG),
+          players: playerIds.map((id, seat) => ({
+            id,
+            username: `splendor-${seat}`,
+            displayName: `宝石玩家${seat + 1}`,
+            ready: true,
+            connected: false,
+            seat,
+            isBot: false,
+          })),
+          game,
+        }],
+      };
+
+      const valid = await load(JSON.parse(JSON.stringify(snapshot)));
+      expect(valid).toMatchObject({
+        kind: "valid",
+        snapshot: {
+          version: 1,
+          rooms: [{
+            gameType: kind,
+            status: "playing",
+            game: { kind, version: 1, revision: 0 },
+          }],
+        },
+      });
+
+      const tampered = structuredClone(snapshot);
+      if (!tampered.rooms[0]?.game || !("kind" in tampered.rooms[0].game)) {
+        throw new Error("Missing Splendor game");
+      }
+      const supply = (tampered.rooms[0].game as typeof game).tokenSupply as Record<string, number>;
+      supply[kind === "splendor" ? "white" : "red"] = -1;
+      expect(await load(tampered)).toMatchObject({ kind: "invalid" });
+
+      const mismatched = structuredClone(snapshot);
+      mismatched.rooms[0]!.gameType = kind === "splendor" ? "splendor_pokemon" : "splendor";
+      expect(await load(mismatched)).toMatchObject({ kind: "invalid" });
+
+      const llm = structuredClone(snapshot);
+      llm.rooms[0]!.botMode = "llm";
+      expect(await load(llm)).toMatchObject({ kind: "invalid" });
+    }
+  });
+
   it("loads a complete Doudizhu room without passing it through Sanguosha migration", async () => {
     const playerIds = [
       "11111111-1111-4111-8111-111111111111",

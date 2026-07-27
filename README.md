@@ -1,6 +1,6 @@
 # 墨鱼
 
-面向电脑浏览器的私人游戏与功能工作区，采用 React、Node.js、PostgreSQL 与服务端权威规则引擎实现。当前“游戏”包含三国杀、固定 6 人 3V3 的山东够级和经典 3 人斗地主；“功能”包含支持本地 TXT、中文编码、章节识别与技术文档模式的小说阅读器。
+面向电脑浏览器的私人游戏与功能工作区，采用 React、Node.js、PostgreSQL 与服务端权威规则引擎实现。当前“游戏”包含三国杀、固定 6 人 3V3 的山东够级、经典 3 人斗地主、璀璨宝石、璀璨宝石宝可梦和数字炸弹；“功能”包含支持本地 TXT、中文编码、章节识别与技术文档模式的小说阅读器。
 
 示例网站：https://moyu.pdcat.cn
 
@@ -30,4 +30,4 @@ pnpm check
 
 生产环境请使用 `sanguosha-online/docker-compose.yml`，并在服务器本地创建 `.env`；任何密钥、数据库数据、`node_modules`、构建输出或本地发布压缩包都不应提交到 GitHub。
 
-规则实现参考 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha) 与 [alun-430/gouji](https://github.com/alun-430/gouji)。公开运营前请自行确认名称、美术及第三方素材授权。
+规则实现参考 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)、[alun-430/gouji](https://github.com/alun-430/gouji)、[jrbarronumd/Splendor](https://github.com/jrbarronumd/Splendor) 与 [xiaoruanyo/splendor-pokemon](https://github.com/xiaoruanyo/splendor-pokemon)。公开运营前请自行确认名称、美术及第三方素材授权。

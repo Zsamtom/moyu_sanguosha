@@ -1,9 +1,12 @@
 import { Button, Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Progress, Select, Skeleton, Tag } from 'antd';
 import { useMemo, useRef, useState } from 'react';
+import { GAME_REGISTRY, gameRegistration, isSplendorGameType } from '../games/registry';
 import {
   BOT_INTELLIGENCE_NAMES,
+  DIGIT_BOMB_BOT_INTELLIGENCE_NAMES,
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
+  SPLENDOR_BOT_INTELLIGENCE_NAMES,
   type BotIntelligence,
   type BotMode,
   type GameType,
@@ -19,6 +22,7 @@ interface CreateRoomValues {
   maxPlayers: number;
   botIntelligence: BotIntelligence;
   botMode: BotMode;
+  digitBombDigits: number;
   enabledGeneralPacks: PackId[];
   selectionMode: 'choice' | 'random';
   candidatesPerPlayer: number;
@@ -39,6 +43,7 @@ interface LobbyScreenProps {
     botIntelligence: BotIntelligence,
     gameType: GameType,
     botMode: BotMode,
+    digitBombDigits?: number,
   ) => Promise<RoomDetail>;
   onJoin: (roomId: string) => Promise<void>;
 }
@@ -105,13 +110,15 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             godFactionChoice: values.godFactionChoice ?? true,
           }
         : undefined;
+      const registration = gameRegistration(values.gameType);
       await onCreate(
         values.name.trim(),
-        values.gameType === 'gouji' ? 6 : values.gameType === 'doudizhu' ? 3 : values.maxPlayers,
+        registration.fixedPlayers ? registration.defaultPlayers : values.maxPlayers,
         ruleConfig,
         values.botIntelligence ?? 3,
         values.gameType,
-        values.gameType === 'gouji' ? 'rules' : values.botMode ?? 'rules',
+        registration.supportsLlmBots ? values.botMode ?? 'rules' : 'rules',
+        values.gameType === 'digit_bomb' ? values.digitBombDigits ?? 4 : undefined,
       );
       setCreateOpen(false);
       form.resetFields();
@@ -196,7 +203,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                     <div>
                       <h3>{room.name}</h3>
                       <p>
-                        {room.gameType === 'gouji' ? '够级' : room.gameType === 'doudizhu' ? '斗地主' : '三国杀'} · {' '}
+                        {gameRegistration(room.gameType).label} · {' '}
                         {room.hostName ? `房主 ${room.hostName}` : `房间号 ${room.id.slice(0, 8)}`}
                       </p>
                     </div>
@@ -246,6 +253,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             maxPlayers: 5,
             botIntelligence: 3,
             botMode: 'rules',
+            digitBombDigits: 4,
             enabledGeneralPacks: ['standard', 'sp'],
             selectionMode: 'random',
             candidatesPerPlayer: 3,
@@ -268,11 +276,13 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             <Input placeholder="例如：周末欢乐局" maxLength={24} showCount autoFocus />
           </Form.Item>
           <Form.Item label="游戏类型" name="gameType">
-            <Select options={[
-              { value: 'sanguosha', label: '三国杀 · 经典身份局' },
-              { value: 'gouji', label: '够级 · 山东 6 人 3V3' },
-              { value: 'doudizhu', label: '斗地主 · 经典 3 人局' },
-            ]} />
+            <Select
+              onChange={(value: GameType) => form.setFieldValue('maxPlayers', gameRegistration(value).defaultPlayers)}
+              options={Object.entries(GAME_REGISTRY).map(([value, registration]) => ({
+                value,
+                label: registration.createLabel,
+              }))}
+            />
           </Form.Item>
           {gameType === 'gouji' ? (
             <>
@@ -318,6 +328,56 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                   { value: 'rules', label: '规则机器人（零 Token）' },
                   { value: 'llm', label: '大模型全程决策' },
                 ]} />
+              </Form.Item>
+            </>
+          ) : isSplendorGameType(gameType) ? (
+            <>
+              <div className={`game-type-note game-type-note--${gameType}`}>
+                <strong>{gameRegistration(gameType).noteTitle}</strong>
+                {gameRegistration(gameType).noteLines.map((line) => <p key={line}>{line}</p>)}
+              </div>
+              <Form.Item
+                label="最大人数"
+                name="maxPlayers"
+                extra="允许 2—4 人开局，默认 4 人；未满席位可由规则机器人补齐。"
+                rules={[{ required: true, message: '请选择人数' }]}
+              >
+                <InputNumber min={2} max={4} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="机器人水平"
+                name="botIntelligence"
+                extra="仅使用服务端权威规则行动，不调用大模型。"
+              >
+                <Select options={Object.entries(SPLENDOR_BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+                  value: Number(value),
+                  label: `${value} · ${label}`,
+                }))} />
+              </Form.Item>
+            </>
+          ) : gameType === 'digit_bomb' ? (
+            <>
+              <div className="game-type-note game-type-note--digit_bomb">
+                <strong>{gameRegistration(gameType).noteTitle}</strong>
+                {gameRegistration(gameType).noteLines.map((line) => <p key={line}>{line}</p>)}
+              </div>
+              <Form.Item
+                label="密码位数"
+                name="digitBombDigits"
+                extra="支持 1—8 位，默认 4 位；可用 0 开头，数字可以重复。"
+                rules={[{ required: true, message: '请选择密码位数' }]}
+              >
+                <InputNumber min={1} max={8} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="机器人水平"
+                name="botIntelligence"
+                extra="机器人会秘密出题、猜测和反馈，不调用大模型。"
+              >
+                <Select options={Object.entries(DIGIT_BOMB_BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+                  value: Number(value),
+                  label: `${value} · ${label}`,
+                }))} />
               </Form.Item>
             </>
           ) : (

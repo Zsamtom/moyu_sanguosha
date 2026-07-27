@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RealtimeClient } from './realtime';
-import { isDoudizhuGameView, isGoujiGameView, normalizeGameView, normalizeRoomDetail, type GameAction } from './types';
+import { isDigitBombGameView, isDoudizhuGameView, isGoujiGameView, isSplendorGameView, normalizeGameView, normalizeRoomDetail, type GameAction } from './types';
 
 describe('server payload adapters', () => {
   it('normalizes the server room view and identifies the owner', () => {
@@ -110,6 +110,114 @@ describe('server payload adapters', () => {
         },
       logs: [],
     })).toBe(true);
+  });
+
+  it('recognizes both Splendor views and requires the server privacy projection', () => {
+    const players = Array.from({ length: 2 }, (_, seat) => ({
+      id: `user-${seat + 1}`,
+      seat,
+      name: `玩家${seat + 1}`,
+      tokens: {},
+      bonuses: {},
+      cards: [],
+      evolvedCards: [],
+      reservedCount: seat,
+      ...(seat === 0 ? { reservedCards: [] } : {}),
+      publicReservedCards: [],
+      nobles: [],
+      score: 0,
+      evolutionCount: 0,
+    }));
+    const base = {
+      version: 1,
+      revision: 1,
+      actionPromptId: 'splendor:1:main:user-1',
+      status: 'playing',
+      phase: 'main',
+      currentPlayerId: 'user-1',
+      players,
+      tokenSupply: {},
+      market: { 1: [], 2: [], 3: [] },
+      deckCounts: { 1: 36, 2: 26, 3: 16 },
+      nobles: [],
+      finalRoundTriggered: false,
+      winner: null,
+      prompt: {
+        type: 'take',
+        playerId: 'user-1',
+        takeOptions: [{ colors: ['white', 'blue', 'green'] }],
+        buyCardIds: [],
+        reserveCardIds: [],
+        reserveDeckLevels: [1, 2, 3],
+        evolutionOptions: [{ fromCardId: 'charmander', toCardId: 'charmeleon' }],
+        canPass: false,
+      },
+    };
+
+    expect(isSplendorGameView({ ...base, kind: 'splendor' })).toBe(true);
+    expect(isSplendorGameView({ ...base, kind: 'splendor_pokemon' })).toBe(true);
+    expect(isSplendorGameView({
+      ...base,
+      kind: 'splendor_pokemon',
+      prompt: { ...base.prompt, evolutionOptions: undefined },
+    })).toBe(false);
+    expect(isSplendorGameView({
+      ...base,
+      kind: 'splendor_pokemon',
+      prompt: { ...base.prompt, evolutionOptions: [{ fromCardId: 'charmander' }] },
+    })).toBe(false);
+    expect(isSplendorGameView({
+      ...base,
+      kind: 'splendor',
+      players: players.map(({ publicReservedCards: _public, ...player }) => player),
+    })).toBe(false);
+  });
+
+  it('preserves Digit Bomb room options and recognizes its private game view', () => {
+    const room = normalizeRoomDetail({
+      id: 'room-bomb',
+      name: '霓虹拆弹',
+      gameType: 'digit_bomb',
+      status: 'playing',
+      ownerId: 'user-1',
+      maxPlayers: 2,
+      digitBombDigits: 6,
+      players: [],
+    });
+    expect(room).toMatchObject({ gameType: 'digit_bomb', maxPlayers: 2, digitBombDigits: 6 });
+
+    const gameView = {
+      kind: 'digit_bomb',
+      version: 1,
+      revision: 2,
+      actionPromptId: 'digit-bomb:2:1:guess:user-1',
+      status: 'playing',
+      phase: 'guess',
+      digits: 6,
+      round: 1,
+      roundStarterId: 'user-1',
+      currentPlayerId: 'user-1',
+      players: [
+        { id: 'user-1', seat: 0, name: '玩家一', score: 0, secretSubmitted: true, guesses: [], vote: null },
+        { id: 'user-2', seat: 1, name: '玩家二', score: 0, secretSubmitted: true, guesses: [], vote: null },
+      ],
+      ownSecret: '001122',
+      pendingGuess: null,
+      roundResult: null,
+      winner: null,
+      prompt: { type: 'guess', playerId: 'user-1' },
+    };
+    expect(isDigitBombGameView(gameView)).toBe(true);
+
+    const { ownSecret: _missingSecret, ...withoutOwnSecret } = gameView;
+    expect(isDigitBombGameView(withoutOwnSecret)).toBe(false);
+    expect(isDigitBombGameView({ ...gameView, ownSecret: '00112' })).toBe(false);
+    expect(isDigitBombGameView({ ...gameView, ownSecret: '00112a' })).toBe(false);
+    expect(isDigitBombGameView({
+      ...gameView,
+      players: gameView.players.map((player, index) =>
+        index === 1 ? { ...player, secret: '999999' } : player),
+    })).toBe(false);
   });
 
   it('preserves the caller-private general draft without deriving other candidates', () => {

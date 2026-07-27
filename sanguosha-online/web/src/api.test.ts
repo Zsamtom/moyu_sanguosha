@@ -58,6 +58,20 @@ describe('room draft API', () => {
       }))
       .mockResolvedValueOnce(jsonResponse({
         room: { ...roomPayload('waiting'), gameType: 'doudizhu', maxPlayers: 3 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        room: { ...roomPayload('waiting'), gameType: 'splendor', maxPlayers: 4 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        room: { ...roomPayload('waiting'), gameType: 'splendor_pokemon', maxPlayers: 4 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        room: {
+          ...roomPayload('waiting'),
+          gameType: 'digit_bomb',
+          maxPlayers: 2,
+          digitBombDigits: 6,
+        },
       }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -68,6 +82,9 @@ describe('room draft API', () => {
     // game selector. Gouji requests must never forward that unrelated config.
     const gouji = await api.createRoom('够级房', 6, ruleConfig, 5, 'gouji');
     const doudizhu = await api.createRoom('斗地主房', 3, ruleConfig, 4, 'doudizhu', 'llm');
+    const splendor = await api.createRoom('璀璨宝石房', 4, ruleConfig, 4, 'splendor', 'llm');
+    const pokemon = await api.createRoom('璀璨宝石宝可梦房', 4, ruleConfig, 4, 'splendor_pokemon', 'llm');
+    const digitBomb = await api.createRoom('数字炸弹房', 2, ruleConfig, 5, 'digit_bomb', 'llm', 6);
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5, botIntelligence: 3 });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, botIntelligence: 7, ruleConfig });
@@ -91,9 +108,36 @@ describe('room draft API', () => {
       gameType: 'doudizhu',
       botMode: 'llm',
     });
+    expect(JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body))).toEqual({
+      name: '璀璨宝石房',
+      maxPlayers: 4,
+      botIntelligence: 4,
+      gameType: 'splendor',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body))).toEqual({
+      name: '璀璨宝石宝可梦房',
+      maxPlayers: 4,
+      botIntelligence: 4,
+      gameType: 'splendor_pokemon',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body))).toEqual({
+      name: '数字炸弹房',
+      maxPlayers: 2,
+      botIntelligence: 5,
+      gameType: 'digit_bomb',
+      digitBombDigits: 6,
+    });
     expect(configured.ruleConfig).toEqual(ruleConfig);
     expect(gouji).toMatchObject({ gameType: 'gouji', maxPlayers: 6 });
     expect(doudizhu).toMatchObject({ gameType: 'doudizhu', maxPlayers: 3 });
+    expect(splendor).toMatchObject({ gameType: 'splendor', maxPlayers: 4, botMode: 'rules' });
+    expect(pokemon).toMatchObject({ gameType: 'splendor_pokemon', maxPlayers: 4, botMode: 'rules' });
+    expect(digitBomb).toMatchObject({
+      gameType: 'digit_bomb',
+      maxPlayers: 2,
+      botMode: 'rules',
+      digitBombDigits: 6,
+    });
   });
 
   it('returns the private room projection when starting a choice-mode room', async () => {
