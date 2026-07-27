@@ -47,13 +47,11 @@ export function digitBombCardBackSlots(digits: number): number[] {
 export function digitBombVisibleSecretSlots(
   ownSecret: string | null,
   digits: number,
-  visible: boolean,
   self: boolean,
 ): Array<string | null> {
   const concealed = digitBombCardBackSlots(digits).map(() => null);
   if (
     !self ||
-    !visible ||
     ownSecret === null ||
     ownSecret.length !== digits ||
     !/^[0-9]+$/.test(ownSecret)
@@ -81,18 +79,14 @@ function PlayerCard({
   active,
   digits,
   ownSecret,
-  secretVisible,
-  onToggleSecret,
 }: {
   player: DigitBombPlayerView;
   self: boolean;
   active: boolean;
   digits: number;
   ownSecret: string | null;
-  secretVisible: boolean;
-  onToggleSecret: () => void;
 }) {
-  const secretSlots = digitBombVisibleSecretSlots(ownSecret, digits, secretVisible, self);
+  const secretSlots = digitBombVisibleSecretSlots(ownSecret, digits, self);
   return (
     <article className={`digit-bomb-player${self ? ' is-self' : ''}${active ? ' is-active' : ''}`}>
       <div className="digit-bomb-avatar" aria-hidden="true">{player.name.slice(0, 1)}</div>
@@ -124,17 +118,6 @@ function PlayerCard({
           </i>
         ))}
       </div>
-      {self && ownSecret !== null && (
-        <Button
-          size="small"
-          className="digit-bomb-secret-toggle"
-          aria-label={secretVisible ? '隐藏我的秘密数字' : '查看我的秘密数字'}
-          aria-pressed={secretVisible}
-          onClick={onToggleSecret}
-        >
-          {secretVisible ? '隐藏我的数字' : '查看我的数字'}
-        </Button>
-      )}
     </article>
   );
 }
@@ -190,12 +173,10 @@ export function DigitBombBoard({
 }: DigitBombBoardProps) {
   const self = game.players.find((player) => player.id === userId);
   const [entry, setEntry] = useState('');
-  const [secretVisible, setSecretVisible] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setEntry('');
-    setSecretVisible(false);
     setBusy(false);
   }, [game.actionPromptId]);
 
@@ -287,8 +268,6 @@ export function DigitBombBoard({
           active={game.currentPlayerId === game.players[0]!.id}
           digits={game.digits}
           ownSecret={game.ownSecret}
-          secretVisible={secretVisible}
-          onToggleSecret={() => setSecretVisible((visible) => !visible)}
         />
         <div className="digit-bomb-versus__mark" aria-hidden="true"><span>VS</span><i /></div>
         <PlayerCard
@@ -297,8 +276,6 @@ export function DigitBombBoard({
           active={game.currentPlayerId === game.players[1]!.id}
           digits={game.digits}
           ownSecret={game.ownSecret}
-          secretVisible={secretVisible}
-          onToggleSecret={() => setSecretVisible((visible) => !visible)}
         />
       </section>
 
@@ -312,7 +289,7 @@ export function DigitBombBoard({
             <div className="digit-bomb-entry">
               <input
                 aria-label="秘密数字"
-                type={secretVisible ? 'text' : 'password'}
+                type="text"
                 inputMode="numeric"
                 autoComplete="off"
                 maxLength={game.digits}
@@ -324,7 +301,6 @@ export function DigitBombBoard({
             </div>
             <div className="digit-bomb-entry-actions">
               <Button onClick={() => setEntry(generateRandomDigitCode(game.digits))}>随机生成</Button>
-              <Button onClick={() => setSecretVisible((visible) => !visible)}>{secretVisible ? '隐藏数字' : '显示数字'}</Button>
               <Button
                 type="primary"
                 disabled={!canSubmit || entry.length !== game.digits}

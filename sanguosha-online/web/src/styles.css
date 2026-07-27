@@ -7218,46 +7218,31 @@ button.ddz-card {
   }
 }
 
-/* Digit Bomb: technical field manual */
+/* Digit Bomb: minimal monochrome interface */
 .digit-bomb-board {
-  --digit-bomb-paper: #f4f3ee;
-  --digit-bomb-paper-raised: #fbfaf6;
-  --digit-bomb-paper-muted: #e8e7e1;
-  --digit-bomb-ink: #20262b;
-  --digit-bomb-muted: #626c74;
-  --digit-bomb-line: #a7afb5;
-  --digit-bomb-line-strong: #4e5860;
-  --digit-bomb-blue: #1d5d7a;
-  --digit-bomb-blue-soft: rgba(29, 93, 122, 0.09);
-  --digit-bomb-red: #a33c35;
-  --digit-bomb-red-soft: rgba(163, 60, 53, 0.08);
+  --digit-bomb-paper: #f4f4f4;
+  --digit-bomb-paper-raised: #ffffff;
+  --digit-bomb-paper-muted: #e8e8e8;
+  --digit-bomb-ink: #111111;
+  --digit-bomb-muted: #666666;
+  --digit-bomb-line: #c8c8c8;
+  --digit-bomb-line-strong: #333333;
+  --digit-bomb-blue: #111111;
+  --digit-bomb-blue-soft: rgba(0, 0, 0, 0.04);
+  --digit-bomb-red: #555555;
+  --digit-bomb-red-soft: rgba(0, 0, 0, 0.06);
   --digit-bomb-mono: "SFMono-Regular", "Roboto Mono", Consolas, "Liberation Mono", monospace;
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  padding: 24px clamp(18px, 2.7vw, 42px) 52px;
-  background:
-    linear-gradient(90deg, transparent 0 72px, rgba(163, 60, 53, 0.16) 72px 73px, transparent 73px),
-    repeating-linear-gradient(0deg, rgba(32, 38, 43, 0.018) 0 1px, transparent 1px 4px),
-    var(--digit-bomb-paper);
+  padding: 20px clamp(18px, 2.7vw, 42px) 44px;
+  background: var(--digit-bomb-paper);
   color: var(--digit-bomb-ink);
   font-family: "Inter", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
 }
 
 .digit-bomb-grid-bg {
-  position: fixed;
-  z-index: 0;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.58;
-  background-image:
-    linear-gradient(rgba(29, 93, 122, 0.075) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(29, 93, 122, 0.075) 1px, transparent 1px),
-    linear-gradient(rgba(29, 93, 122, 0.09) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(29, 93, 122, 0.09) 1px, transparent 1px);
-  background-position: 0 0, 0 0, 0 0, 0 0;
-  background-size: 24px 24px, 24px 24px, 120px 120px, 120px 120px;
-  mask-image: linear-gradient(to bottom, black 0 78%, transparent);
+  display: none;
 }
 
 .digit-bomb-board > :not(.digit-bomb-grid-bg) {
@@ -7285,14 +7270,10 @@ button.ddz-card {
   align-items: center;
   justify-content: space-between;
   gap: 28px;
-  margin: 0 auto 18px;
-  padding: 15px 18px 14px 22px;
+  margin: 0 auto 14px;
+  padding: 12px 16px;
   border: 1px solid var(--digit-bomb-line-strong);
-  border-left: 5px solid var(--digit-bomb-red);
-  background:
-    linear-gradient(90deg, var(--digit-bomb-blue-soft) 1px, transparent 1px) 0 0 / 24px 24px,
-    rgba(251, 250, 246, 0.94);
-  box-shadow: 4px 4px 0 rgba(32, 38, 43, 0.08);
+  background: var(--digit-bomb-paper-raised);
 }
 
 .digit-bomb-header::after {
@@ -7315,16 +7296,16 @@ button.ddz-card {
 }
 
 .digit-bomb-header h1 {
-  margin: 4px 0 2px;
+  margin: 3px 0 1px;
   color: var(--digit-bomb-ink);
-  font-size: clamp(30px, 3.6vw, 46px);
-  font-weight: 780;
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 750;
   letter-spacing: 0.04em;
   line-height: 1.06;
 }
 
 .digit-bomb-header p {
-  margin: 7px 0 0;
+  margin: 5px 0 0;
   color: var(--digit-bomb-muted);
   font-family: var(--digit-bomb-mono);
   font-size: 10px;
@@ -7367,7 +7348,7 @@ button.ddz-card {
   border-radius: 1px;
   background: var(--digit-bomb-paper-raised);
   color: var(--digit-bomb-ink);
-  box-shadow: 2px 2px 0 rgba(32, 38, 43, 0.1);
+  box-shadow: none;
   font-family: var(--digit-bomb-mono);
   font-size: 11px;
   font-weight: 700;
@@ -7378,14 +7359,14 @@ button.ddz-card {
   border-color: var(--digit-bomb-blue);
   background: #fff;
   color: var(--digit-bomb-blue);
-  box-shadow: 2px 2px 0 rgba(29, 93, 122, 0.18);
+  box-shadow: none;
 }
 
 .digit-bomb-board .ant-btn-primary {
   border-color: var(--digit-bomb-blue);
   background: var(--digit-bomb-blue);
   color: #fff;
-  box-shadow: 3px 3px 0 rgba(32, 38, 43, 0.18);
+  box-shadow: none;
 }
 
 .digit-bomb-board .ant-btn-primary:not(:disabled):hover {
@@ -7405,7 +7386,7 @@ button.ddz-card {
   grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  margin: 0 auto 18px;
+  margin: 0 auto 14px;
 }
 
 .digit-bomb-player {
@@ -7417,10 +7398,7 @@ button.ddz-card {
   gap: 11px 13px;
   padding: 28px 15px 13px;
   border: 1px solid var(--digit-bomb-line);
-  background:
-    linear-gradient(90deg, rgba(29, 93, 122, 0.035) 1px, transparent 1px) 0 0 / 16px 16px,
-    rgba(251, 250, 246, 0.95);
-  box-shadow: 3px 3px 0 rgba(32, 38, 43, 0.07);
+  background: var(--digit-bomb-paper-raised);
 }
 
 .digit-bomb-player::before {
@@ -7451,7 +7429,7 @@ button.ddz-card {
 
 .digit-bomb-player.is-active {
   border-color: var(--digit-bomb-blue);
-  box-shadow: 3px 3px 0 rgba(29, 93, 122, 0.14);
+  box-shadow: inset 0 0 0 1px var(--digit-bomb-blue);
 }
 
 .digit-bomb-player.is-active::after {
@@ -7459,9 +7437,7 @@ button.ddz-card {
 }
 
 .digit-bomb-player.is-self {
-  background:
-    repeating-linear-gradient(135deg, transparent 0 7px, rgba(29, 93, 122, 0.035) 7px 8px),
-    var(--digit-bomb-paper-raised);
+  background: #fafafa;
 }
 
 .digit-bomb-avatar {
@@ -7586,18 +7562,12 @@ button.ddz-card {
   aspect-ratio: 0.72;
   min-width: 0;
   border: 1px solid var(--digit-bomb-line-strong);
-  background:
-    linear-gradient(135deg, transparent 47%, rgba(78, 88, 96, 0.28) 48% 52%, transparent 53%),
-    repeating-linear-gradient(90deg, #e3e2dc 0 3px, #f7f6f1 3px 6px);
-  box-shadow: 1px 1px 0 rgba(32, 38, 43, 0.12);
+  background: #e5e5e5;
 }
 
 .digit-bomb-card-backs.is-loaded i {
   border-color: var(--digit-bomb-blue);
-  background:
-    linear-gradient(135deg, transparent 47%, rgba(29, 93, 122, 0.24) 48% 52%, transparent 53%),
-    repeating-linear-gradient(90deg, #dfe8ea 0 3px, #f7f8f5 3px 6px);
-  box-shadow: 1px 1px 0 rgba(29, 93, 122, 0.18);
+  background: #dddddd;
 }
 
 .digit-bomb-card-backs i.is-revealed,
@@ -7613,16 +7583,6 @@ button.ddz-card {
   font-style: normal !important;
   font-weight: 800 !important;
   text-shadow: none !important;
-}
-
-.digit-bomb-secret-toggle {
-  height: 24px;
-  grid-column: 1 / -1;
-  justify-self: center;
-  margin-top: 2px;
-  border-style: dashed !important;
-  color: var(--digit-bomb-blue) !important;
-  font-size: 9px !important;
 }
 
 .digit-bomb-versus__mark {
@@ -7642,7 +7602,7 @@ button.ddz-card {
   font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  transform: rotate(-4deg);
+  transform: none;
 }
 
 .digit-bomb-versus__mark i {
@@ -7655,19 +7615,15 @@ button.ddz-card {
 .digit-bomb-console {
   position: relative;
   display: grid;
-  width: min(940px, 100%);
-  min-height: 245px;
+  width: min(660px, 100%);
+  min-height: 188px;
   place-items: center;
-  margin: 0 auto 18px;
+  margin: 0 auto 14px;
   overflow: hidden;
-  padding: 36px 28px 28px;
+  padding: 31px 22px 20px;
   border: 1px solid var(--digit-bomb-line-strong);
-  border-top: 4px solid var(--digit-bomb-ink);
-  background:
-    linear-gradient(90deg, rgba(29, 93, 122, 0.045) 1px, transparent 1px) 0 0 / 20px 20px,
-    linear-gradient(rgba(29, 93, 122, 0.045) 1px, transparent 1px) 0 0 / 20px 20px,
-    rgba(251, 250, 246, 0.97);
-  box-shadow: 5px 5px 0 rgba(32, 38, 43, 0.08);
+  border-top: 3px solid var(--digit-bomb-ink);
+  background: var(--digit-bomb-paper-raised);
 }
 
 .digit-bomb-console::before {
@@ -7683,14 +7639,7 @@ button.ddz-card {
 }
 
 .digit-bomb-console__scan {
-  position: absolute;
-  height: 1px;
-  top: 24px;
-  right: 3%;
-  left: 3%;
-  border-top: 1px dashed var(--digit-bomb-blue);
-  opacity: 0.42;
-  animation: digit-bomb-scan 4.8s linear infinite;
+  display: none;
 }
 
 @keyframes digit-bomb-scan {
@@ -7702,7 +7651,7 @@ button.ddz-card {
 .digit-bomb-entry-panel,
 .digit-bomb-feedback-panel,
 .digit-bomb-waiting {
-  width: min(680px, 100%);
+  width: min(520px, 100%);
   text-align: center;
 }
 
@@ -7722,16 +7671,16 @@ button.ddz-card {
 .digit-bomb-entry-panel h2,
 .digit-bomb-feedback-panel h2,
 .digit-bomb-waiting h2 {
-  margin: 9px 0 7px;
+  margin: 7px 0 5px;
   color: var(--digit-bomb-ink);
-  font-size: clamp(20px, 2.4vw, 28px);
+  font-size: clamp(17px, 2vw, 22px);
   font-weight: 720;
   letter-spacing: 0.02em;
 }
 
 .digit-bomb-entry-panel p,
 .digit-bomb-feedback-panel p {
-  margin: 0 auto 16px;
+  margin: 0 auto 10px;
   color: var(--digit-bomb-muted);
   font-size: 11px;
   line-height: 1.7;
@@ -7739,33 +7688,30 @@ button.ddz-card {
 
 .digit-bomb-entry {
   position: relative;
-  width: min(420px, 100%);
-  margin: 0 auto 14px;
+  width: min(300px, 100%);
+  margin: 0 auto 10px;
 }
 
 .digit-bomb-entry input {
   width: 100%;
-  height: 64px;
-  padding: 7px 60px 7px 14px;
-  border: 1px solid var(--digit-bomb-red);
-  border-bottom-width: 3px;
+  height: 48px;
+  padding: 5px 50px 5px 12px;
+  border: 1px solid var(--digit-bomb-line-strong);
   border-radius: 0;
   outline: 0;
-  background:
-    repeating-linear-gradient(90deg, transparent 0 39px, rgba(78, 88, 96, 0.09) 39px 40px),
-    #fff;
+  background: #fff;
   color: var(--digit-bomb-ink);
-  box-shadow: inset 0 0 0 5px var(--digit-bomb-red-soft);
+  box-shadow: none;
   font-family: var(--digit-bomb-mono);
-  font-size: clamp(26px, 4vw, 38px);
+  font-size: clamp(21px, 3vw, 28px);
   font-weight: 800;
   letter-spacing: 0.28em;
   text-align: center;
 }
 
 .digit-bomb-entry--guess input {
-  border-color: var(--digit-bomb-blue);
-  box-shadow: inset 0 0 0 5px var(--digit-bomb-blue-soft);
+  border-color: var(--digit-bomb-line-strong);
+  box-shadow: none;
 }
 
 .digit-bomb-entry > span {
@@ -7815,19 +7761,17 @@ button.ddz-card {
   padding: 6px;
   border: 1px solid var(--digit-bomb-line-strong);
   border-radius: 0;
-  background:
-    linear-gradient(135deg, transparent 0 89%, var(--digit-bomb-blue-soft) 89%),
-    var(--digit-bomb-paper-raised);
+  background: var(--digit-bomb-paper-raised);
   color: var(--digit-bomb-ink);
   cursor: pointer;
-  box-shadow: 2px 2px 0 rgba(32, 38, 43, 0.08);
+  box-shadow: none;
 }
 
 .digit-bomb-feedback-options button:not(:disabled):hover {
   border-color: var(--digit-bomb-blue);
   background: var(--digit-bomb-blue);
   color: #fff;
-  box-shadow: 2px 2px 0 rgba(32, 38, 43, 0.2);
+  box-shadow: none;
 }
 
 .digit-bomb-feedback-options button:last-child {
@@ -7860,36 +7804,21 @@ button.ddz-card {
 
 .digit-bomb-radar {
   position: relative;
-  width: 70px;
-  height: 70px;
+  width: 42px;
+  height: 42px;
   margin-bottom: 9px;
   overflow: hidden;
-  border: 1px solid var(--digit-bomb-blue);
+  border: 1px solid var(--digit-bomb-line-strong);
   border-radius: 50%;
-  background:
-    radial-gradient(circle, transparent 0 18px, rgba(29, 93, 122, 0.18) 18px 19px, transparent 19px),
-    linear-gradient(90deg, transparent 49%, rgba(29, 93, 122, 0.32) 50%, transparent 51%),
-    linear-gradient(transparent 49%, rgba(29, 93, 122, 0.32) 50%, transparent 51%);
+  background: #f4f4f4;
 }
 
 .digit-bomb-radar::after {
-  position: absolute;
-  width: 50%;
-  height: 50%;
-  top: 0;
-  left: 50%;
-  transform-origin: bottom left;
-  background: linear-gradient(35deg, rgba(29, 93, 122, 0.22), transparent 70%);
-  content: "";
-  animation: digit-bomb-radar 2.8s linear infinite;
+  display: none;
 }
 
 .digit-bomb-radar i {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border: 1px solid var(--digit-bomb-red);
-  background: var(--digit-bomb-paper);
+  display: none;
 }
 
 .digit-bomb-radar i:first-child { top: 16px; left: 37px; }
@@ -7901,26 +7830,23 @@ button.ddz-card {
 
 .digit-bomb-histories {
   display: grid;
-  width: min(1240px, 100%);
+  width: min(840px, 100%);
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
   margin: 0 auto;
 }
 
 .digit-bomb-history {
   min-width: 0;
-  min-height: 210px;
-  padding: 15px;
+  min-height: 170px;
+  padding: 12px;
   border: 1px solid var(--digit-bomb-line);
-  background:
-    repeating-linear-gradient(0deg, transparent 0 25px, rgba(29, 93, 122, 0.07) 25px 26px),
-    rgba(251, 250, 246, 0.96);
-  box-shadow: 3px 3px 0 rgba(32, 38, 43, 0.07);
+  background: var(--digit-bomb-paper-raised);
 }
 
 .digit-bomb-history.is-active {
   border-color: var(--digit-bomb-blue);
-  box-shadow: inset 4px 0 var(--digit-bomb-blue), 3px 3px 0 rgba(29, 93, 122, 0.12);
+  box-shadow: inset 3px 0 var(--digit-bomb-blue);
 }
 
 .digit-bomb-history > header {
@@ -7969,7 +7895,7 @@ button.ddz-card {
 
 .digit-bomb-history ol {
   display: grid;
-  max-height: 250px;
+  max-height: 220px;
   gap: 0;
   margin: 0;
   overflow: auto;
@@ -8023,7 +7949,7 @@ button.ddz-card {
 
 .digit-bomb-history__empty {
   display: grid;
-  min-height: 125px;
+  min-height: 88px;
   place-items: center;
   align-content: center;
   color: var(--digit-bomb-muted);
@@ -8062,10 +7988,7 @@ button.ddz-card {
   inset: 0;
   place-items: center;
   padding: 20px;
-  background:
-    linear-gradient(rgba(32, 38, 43, 0.05) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(90deg, rgba(32, 38, 43, 0.05) 1px, transparent 1px) 0 0 / 24px 24px,
-    rgba(232, 231, 225, 0.92);
+  background: rgba(238, 238, 238, 0.94);
   backdrop-filter: blur(4px);
 }
 
@@ -8075,11 +7998,9 @@ button.ddz-card {
   width: min(580px, 100%);
   padding: clamp(38px, 5vw, 52px) clamp(24px, 5vw, 48px) clamp(26px, 5vw, 42px);
   border: 1px solid var(--digit-bomb-line-strong);
-  border-top: 5px solid var(--digit-bomb-red);
-  background:
-    repeating-linear-gradient(0deg, transparent 0 23px, rgba(29, 93, 122, 0.06) 23px 24px),
-    var(--digit-bomb-paper-raised);
-  box-shadow: 8px 8px 0 rgba(32, 38, 43, 0.14);
+  border-top: 4px solid var(--digit-bomb-ink);
+  background: var(--digit-bomb-paper-raised);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
   text-align: center;
   animation: digit-bomb-modal-in 360ms ease-out both;
 }
@@ -8164,10 +8085,7 @@ button.ddz-card {
 }
 
 .digit-bomb-fireworks {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+  display: none;
 }
 
 .digit-bomb-fireworks i {
@@ -8210,12 +8128,9 @@ button.ddz-card {
   width: min(720px, calc(100% - 24px));
   padding: clamp(42px, 6vw, 70px) clamp(26px, 6vw, 64px);
   border: 1px solid var(--digit-bomb-line-strong);
-  border-top: 6px solid var(--digit-bomb-blue);
-  background:
-    linear-gradient(90deg, rgba(29, 93, 122, 0.045) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(rgba(29, 93, 122, 0.045) 1px, transparent 1px) 0 0 / 24px 24px,
-    rgba(251, 250, 246, 0.97);
-  box-shadow: 9px 9px 0 rgba(32, 38, 43, 0.12);
+  border-top: 5px solid var(--digit-bomb-ink);
+  background: var(--digit-bomb-paper-raised);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.1);
   text-align: center;
 }
 
@@ -8279,9 +8194,7 @@ button.ddz-card {
   width: var(--digit-score-ratio);
   height: 4px;
   transform-origin: left;
-  background:
-    repeating-linear-gradient(135deg, transparent 0 3px, rgba(255, 255, 255, 0.28) 3px 4px),
-    var(--digit-bomb-blue);
+  background: var(--digit-bomb-ink);
   animation: digit-bomb-score-grow 900ms 250ms both;
 }
 
@@ -8371,9 +8284,7 @@ button.ddz-card {
 @media (max-width: 760px) {
   .digit-bomb-board {
     padding: 12px 10px 34px;
-    background:
-      repeating-linear-gradient(0deg, rgba(32, 38, 43, 0.018) 0 1px, transparent 1px 4px),
-      var(--digit-bomb-paper);
+    background: var(--digit-bomb-paper);
   }
 
   .digit-bomb-header {
@@ -8407,8 +8318,8 @@ button.ddz-card {
   }
 
   .digit-bomb-console {
-    min-height: 230px;
-    padding: 36px 16px 24px;
+    min-height: 180px;
+    padding: 31px 16px 20px;
   }
 
   .digit-bomb-histories {
@@ -8443,9 +8354,9 @@ button.ddz-card {
   }
 
   .digit-bomb-entry input {
-    height: 58px;
+    height: 46px;
     padding-right: 48px;
-    font-size: clamp(23px, 9vw, 34px);
+    font-size: clamp(21px, 8vw, 28px);
   }
 
   .digit-bomb-feedback-options {

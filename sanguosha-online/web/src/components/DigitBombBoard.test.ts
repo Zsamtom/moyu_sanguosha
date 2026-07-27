@@ -30,20 +30,14 @@ describe('Digit Bomb controls', () => {
     expect(digitBombCardBackSlots(8)).toHaveLength(8);
   });
 
-  it('reveals a valid secret only on the viewing player card after an explicit toggle', () => {
-    expect(digitBombVisibleSecretSlots('0077', 4, false, true)).toEqual([
-      null,
-      null,
-      null,
-      null,
-    ]);
-    expect(digitBombVisibleSecretSlots('0077', 4, true, true)).toEqual([
+  it('always reveals a valid secret on the viewing player card', () => {
+    expect(digitBombVisibleSecretSlots('0077', 4, true)).toEqual([
       '0',
       '0',
       '7',
       '7',
     ]);
-    expect(digitBombVisibleSecretSlots('0077', 4, true, false)).toEqual([
+    expect(digitBombVisibleSecretSlots('0077', 4, false)).toEqual([
       null,
       null,
       null,
@@ -52,13 +46,13 @@ describe('Digit Bomb controls', () => {
   });
 
   it('keeps malformed private-view values concealed', () => {
-    expect(digitBombVisibleSecretSlots('123', 4, true, true)).toEqual([
+    expect(digitBombVisibleSecretSlots('123', 4, true)).toEqual([
       null,
       null,
       null,
       null,
     ]);
-    expect(digitBombVisibleSecretSlots('12a4', 4, true, true)).toEqual([
+    expect(digitBombVisibleSecretSlots('12a4', 4, true)).toEqual([
       null,
       null,
       null,
