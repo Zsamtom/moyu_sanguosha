@@ -61,8 +61,10 @@ export interface NumberConnectPlayerView {
   readonly name: string;
   readonly botTitle?: string;
   readonly lineCount: number;
-  /** Only the viewer's board is ever present in a private game view. */
+  /** Present for the viewer, then for both players after the match. */
   readonly board?: number[];
+  /** Revealed for both players only after the match finishes. */
+  readonly markedNumbers?: number[];
 }
 
 export type NumberConnectPrompt =
@@ -333,8 +335,11 @@ export function getNumberConnectGameView(
       name: player.name,
       ...(player.botTitle ? { botTitle: player.botTitle } : {}),
       lineCount: player.lineCount,
-      ...(player.id === viewerId
+      ...(game.status === "finished" || player.id === viewerId
         ? { board: [...player.board] }
+        : {}),
+      ...(game.status === "finished"
+        ? { markedNumbers: [...player.markedNumbers] }
         : {}),
     })),
     calledNumbers: viewerId === null

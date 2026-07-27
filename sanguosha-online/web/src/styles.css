@@ -1849,22 +1849,22 @@ p {
 
 /* Number Connect */
 .number-connect-board {
-  --number-connect-paper: #f3f1e9;
-  --number-connect-panel: #fffefa;
-  --number-connect-ink: #17202a;
-  --number-connect-muted: #70757a;
-  --number-connect-line: #b8b8b1;
-  --number-connect-blue: #245e73;
-  --number-connect-blue-soft: #e4eff1;
-  --number-connect-red: #b4473d;
-  --number-connect-red-soft: #f6e7e3;
+  --number-connect-paper: #f2f2f2;
+  --number-connect-panel: #ffffff;
+  --number-connect-ink: #050505;
+  --number-connect-muted: #666666;
+  --number-connect-line: #b8b8b8;
+  --number-connect-blue: #050505;
+  --number-connect-blue-soft: #e8e8e8;
+  --number-connect-red: #050505;
+  --number-connect-red-soft: #ededed;
   position: relative;
   min-height: 100vh;
   overflow: hidden;
   padding: 20px clamp(14px, 2.6vw, 42px) 48px;
   background:
-    linear-gradient(rgba(36, 94, 115, 0.06) 1px, transparent 1px) 0 0 / 28px 28px,
-    linear-gradient(90deg, rgba(36, 94, 115, 0.06) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(rgba(0, 0, 0, 0.055) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, rgba(0, 0, 0, 0.055) 1px, transparent 1px) 0 0 / 28px 28px,
     var(--number-connect-paper);
   color: var(--number-connect-ink);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
@@ -1876,8 +1876,8 @@ p {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 10% 10%, rgba(180, 71, 61, 0.09), transparent 24%),
-    radial-gradient(circle at 90% 80%, rgba(36, 94, 115, 0.1), transparent 27%);
+    radial-gradient(circle at 10% 10%, rgba(0, 0, 0, 0.07), transparent 24%),
+    radial-gradient(circle at 90% 80%, rgba(0, 0, 0, 0.08), transparent 27%);
 }
 
 .number-connect-board > :not(.number-connect-board__pattern) {
@@ -1887,7 +1887,7 @@ p {
 
 .number-connect-board button:focus-visible,
 .number-connect-board .ant-btn:focus-visible {
-  outline: 3px solid rgba(36, 94, 115, 0.36);
+  outline: 3px solid rgba(0, 0, 0, 0.36);
   outline-offset: 3px;
 }
 
@@ -1901,8 +1901,8 @@ p {
   padding: 15px 18px 16px 21px;
   border: 1px solid var(--number-connect-ink);
   border-top-width: 4px;
-  background: rgba(255, 254, 250, 0.95);
-  box-shadow: 5px 5px 0 rgba(23, 32, 42, 0.1);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.12);
 }
 
 .number-connect-header > div:first-child > span,
@@ -1954,7 +1954,7 @@ p {
 
 .number-connect-header__tools > span.is-online i {
   background: var(--number-connect-blue);
-  box-shadow: 0 0 0 4px rgba(36, 94, 115, 0.1);
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.1);
 }
 
 .number-connect-scoreboard {
@@ -1974,7 +1974,7 @@ p {
   gap: 12px;
   padding: 11px 14px 14px;
   border: 1px solid var(--number-connect-line);
-  background: rgba(255, 254, 250, 0.92);
+  background: rgba(255, 255, 255, 0.94);
 }
 
 .number-connect-player.is-self {
@@ -2049,7 +2049,7 @@ p {
   left: 0;
   height: 4px;
   background:
-    linear-gradient(90deg, var(--number-connect-blue) var(--number-connect-progress), #deded8 var(--number-connect-progress));
+    linear-gradient(90deg, var(--number-connect-blue) var(--number-connect-progress), #dedede var(--number-connect-progress));
 }
 
 .number-connect-table {
@@ -2066,14 +2066,14 @@ p {
 .number-connect-rules,
 .number-connect-reveal > article {
   border: 1px solid var(--number-connect-line);
-  background: rgba(255, 254, 250, 0.96);
+  background: rgba(255, 255, 255, 0.97);
 }
 
 .number-connect-own-board {
   min-width: 0;
   padding: clamp(16px, 2.4vw, 30px);
   border-color: var(--number-connect-ink);
-  box-shadow: 7px 7px 0 rgba(23, 32, 42, 0.1);
+  box-shadow: 7px 7px 0 rgba(0, 0, 0, 0.12);
 }
 
 .number-connect-own-board > header,
@@ -2130,9 +2130,9 @@ p {
   padding: clamp(7px, 1vw, 12px);
   border: 2px solid var(--number-connect-ink);
   background:
-    linear-gradient(rgba(36, 94, 115, 0.07) 1px, transparent 1px) 0 0 / 20% 20%,
-    linear-gradient(90deg, rgba(36, 94, 115, 0.07) 1px, transparent 1px) 0 0 / 20% 20%,
-    #eeeee8;
+    linear-gradient(rgba(0, 0, 0, 0.065) 1px, transparent 1px) 0 0 / 20% 20%,
+    linear-gradient(90deg, rgba(0, 0, 0, 0.065) 1px, transparent 1px) 0 0 / 20% 20%,
+    #eeeeee;
 }
 
 .number-connect-grid > button,
@@ -2142,11 +2142,11 @@ p {
   min-width: 0;
   min-height: 0;
   place-items: center;
-  border: 1px solid #858984;
+  border: 1px solid #858585;
   border-radius: 2px;
   background: var(--number-connect-panel);
   color: var(--number-connect-ink);
-  box-shadow: inset 0 -3px rgba(23, 32, 42, 0.06);
+  box-shadow: inset 0 -3px rgba(0, 0, 0, 0.06);
 }
 
 .number-connect-grid > button {
@@ -2162,7 +2162,7 @@ p {
   transform: translateY(-2px);
   border-color: var(--number-connect-blue);
   background: var(--number-connect-blue-soft);
-  box-shadow: 0 5px 0 rgba(36, 94, 115, 0.2);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.2);
 }
 
 .number-connect-grid > button:disabled {
@@ -2170,17 +2170,17 @@ p {
 }
 
 .number-connect-grid > button.is-marked {
-  border-color: #c6b0aa;
+  border-color: #aaaaaa;
   background: var(--number-connect-red-soft);
-  color: #8c807b;
+  color: #777777;
 }
 
 .number-connect-grid > button.is-line {
   border-color: var(--number-connect-blue);
   background:
-    linear-gradient(rgba(36, 94, 115, 0.12), rgba(36, 94, 115, 0.12)),
+    linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)),
     var(--number-connect-red-soft);
-  box-shadow: inset 0 0 0 2px rgba(36, 94, 115, 0.22);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.22);
 }
 
 .number-connect-grid > button.is-last {
@@ -2188,7 +2188,7 @@ p {
 }
 
 @keyframes number-connect-last {
-  0% { transform: scale(0.84); box-shadow: 0 0 0 10px rgba(180, 71, 61, 0.26); }
+  0% { transform: scale(0.84); box-shadow: 0 0 0 10px rgba(0, 0, 0, 0.22); }
 }
 
 .number-connect-grid > button > i {
@@ -2224,22 +2224,22 @@ p {
 
 .number-connect-grid--hidden {
   overflow: hidden;
-  border-color: #a6a6a0;
+  border-color: #a6a6a6;
   background:
-    repeating-linear-gradient(45deg, rgba(36, 94, 115, 0.07) 0 10px, transparent 10px 20px),
-    #eeeeea;
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.07) 0 10px, transparent 10px 20px),
+    #eeeeee;
 }
 
 .number-connect-grid--hidden > span {
   overflow: hidden;
-  background: #e1e3df;
+  background: #e2e2e2;
 }
 
 .number-connect-grid--hidden > span i {
   width: 45%;
   height: 45%;
   transform: rotate(45deg);
-  border: 1px solid rgba(36, 94, 115, 0.22);
+  border: 1px solid rgba(0, 0, 0, 0.22);
 }
 
 .number-connect-grid--hidden > div {
@@ -2248,8 +2248,8 @@ p {
   place-content: center;
   inset: 25%;
   border: 1px solid var(--number-connect-ink);
-  background: rgba(255, 254, 250, 0.96);
-  box-shadow: 4px 4px 0 rgba(23, 32, 42, 0.14);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.14);
   text-align: center;
 }
 
@@ -2299,7 +2299,7 @@ p {
 
 .number-connect-turn.is-mine {
   border-color: var(--number-connect-red);
-  box-shadow: 4px 4px 0 rgba(180, 71, 61, 0.12);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.12);
 }
 
 .number-connect-turn h2 {
@@ -2424,7 +2424,7 @@ p {
 
 .number-connect-reveal > article.is-winner {
   border-color: var(--number-connect-red);
-  box-shadow: inset 0 4px var(--number-connect-red), 5px 5px 0 rgba(180, 71, 61, 0.1);
+  box-shadow: inset 0 4px var(--number-connect-red), 5px 5px 0 rgba(0, 0, 0, 0.12);
 }
 
 .number-connect-reveal > article > header {
@@ -2437,7 +2437,9 @@ p {
 
 .number-connect-final-action {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
+  gap: 10px;
   margin-top: 20px;
 }
 
@@ -2447,6 +2449,18 @@ p {
   box-shadow: none;
 }
 
+.number-connect-board .ant-btn-dangerous {
+  border-color: var(--number-connect-ink);
+  background: #ffffff;
+  color: var(--number-connect-ink);
+}
+
+.number-connect-board .ant-btn-dangerous:not(:disabled):hover {
+  border-color: var(--number-connect-ink);
+  background: var(--number-connect-ink);
+  color: #ffffff;
+}
+
 .number-connect-sync {
   width: min(430px, calc(100% - 30px));
   margin: 20vh auto;
@@ -2454,36 +2468,36 @@ p {
   border: 1px solid var(--number-connect-ink);
   border-left: 5px solid var(--number-connect-blue);
   background: var(--number-connect-panel);
-  box-shadow: 5px 5px 0 rgba(23, 32, 42, 0.12);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.12);
   text-align: center;
 }
 
 .game-type-note--number_connect {
-  border-color: #8da7ad;
-  border-left: 4px solid #245e73;
+  border-color: #888888;
+  border-left: 4px solid #050505;
   border-radius: 2px;
   background:
-    linear-gradient(rgba(36, 94, 115, 0.055) 1px, transparent 1px) 0 0 / 20px 20px,
-    linear-gradient(90deg, rgba(36, 94, 115, 0.055) 1px, transparent 1px) 0 0 / 20px 20px,
-    #f7f6f1;
+    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
+    #f7f7f7;
 }
 
 .game-type-note--number_connect strong {
-  color: #245e73;
+  color: #050505;
 }
 
 .room-rule-summary--number_connect {
-  border-color: #8da7ad;
+  border-color: #888888;
   border-radius: 2px;
   background:
-    linear-gradient(rgba(36, 94, 115, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
-    linear-gradient(90deg, rgba(36, 94, 115, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
-    #f7f6f1;
-  box-shadow: inset 4px 0 #245e73, 3px 3px 0 rgba(32, 38, 43, 0.07);
+    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px) 0 0 / 20px 20px,
+    #f7f7f7;
+  box-shadow: inset 4px 0 #050505, 3px 3px 0 rgba(0, 0, 0, 0.07);
 }
 
 .room-rule-summary--number_connect > div {
-  border-color: #acb9bb;
+  border-color: #b0b0b0;
   background: rgba(255, 255, 255, 0.58);
 }
 

@@ -88,17 +88,35 @@ describe("Number Connect rooms", () => {
 
   it("accepts concurrent marks on separate private boards and rejects another game's action", () => {
     const { rooms, roomId } = startHumanRoom();
+    const ownerBefore = view(rooms, roomId, owner.id);
     const guestBefore = view(rooms, roomId, guest.id);
-    const after = apply(rooms, roomId, owner.id, {
-      type: "number_connect_call",
-      playerId: owner.id,
-      number: 13,
+    const after = rooms.applyAction(roomId, owner.id, {
+      expectedRevision: ownerBefore.revision,
+      expectedPromptId: ownerBefore.actionPromptId,
+      action: {
+        type: "number_connect_call",
+        playerId: owner.id,
+        number: 13,
+      },
     });
     expect(after).toMatchObject({
       calledNumbers: [13],
       lastNumber: 13,
     });
     expect(after.currentPlayerId).toBeNull();
+    const ownerRapidSecondMark = rooms.applyAction(roomId, owner.id, {
+      expectedRevision: ownerBefore.revision,
+      expectedPromptId: ownerBefore.actionPromptId,
+      action: {
+        type: "number_connect_call",
+        playerId: owner.id,
+        number: 14,
+      },
+    });
+    expect(ownerRapidSecondMark).toMatchObject({
+      calledNumbers: [13, 14],
+      lastNumber: 14,
+    });
     expect(view(rooms, roomId, guest.id)).toMatchObject({
       calledNumbers: [],
       lastNumber: null,
@@ -126,7 +144,7 @@ describe("Number Connect rooms", () => {
     })).toThrow(/该房间正在进行数字连连看/);
   });
 
-  it("finishes at five lines, keeps boards private, and restores the snapshot", () => {
+  it("reveals both finished boards, restores the snapshot, and starts a confirmed rematch", () => {
     const { rooms, roomId } = startHumanRoom();
     for (let turn = 0; turn < 25; turn += 1) {
       const before = view(rooms, roomId, owner.id);
@@ -145,15 +163,37 @@ describe("Number Connect rooms", () => {
       winner: { reason: "lines" },
     });
     expect(finished.players.find((player) => player.id === owner.id)?.board).toHaveLength(25);
-    expect(finished.players.find((player) => player.id === guest.id)?.board).toBeUndefined();
+    expect(finished.players.find((player) => player.id === guest.id)?.board).toHaveLength(25);
+    expect(finished.players.every((player) => Array.isArray(player.markedNumbers))).toBe(true);
     const guestFinished = view(rooms, roomId, guest.id);
     expect(guestFinished.players.find((player) => player.id === guest.id)?.board).toHaveLength(25);
-    expect(guestFinished.players.find((player) => player.id === owner.id)?.board).toBeUndefined();
+    expect(guestFinished.players.find((player) => player.id === owner.id)?.board).toHaveLength(25);
     expect(Math.max(...finished.players.map((player) => player.lineCount))).toBeGreaterThanOrEqual(5);
 
     const restored = new RoomService();
     restored.restoreSnapshot(rooms.exportSnapshot());
     expect(view(restored, roomId, owner.id)).toEqual(finished);
+
+    const ownerConfirmed = rooms.requestRematch(roomId, owner.id);
+    expect(ownerConfirmed).toMatchObject({
+      status: "finished",
+      players: expect.arrayContaining([
+        expect.objectContaining({ id: owner.id, ready: true }),
+        expect.objectContaining({ id: guest.id, ready: false }),
+      ]),
+    });
+    const rematched = rooms.requestRematch(roomId, guest.id);
+    expect(rematched.status).toBe("playing");
+    const nextGame = view(rooms, roomId, owner.id);
+    expect(nextGame).toMatchObject({
+      status: "playing",
+      currentPlayerId: null,
+      calledNumbers: [],
+      lastNumber: null,
+      winner: null,
+    });
+    expect(nextGame.players.find((player) => player.id === owner.id)?.board).toHaveLength(25);
+    expect(nextGame.players.find((player) => player.id === guest.id)?.board).toBeUndefined();
   });
 
   it("does not allow rule bots", () => {

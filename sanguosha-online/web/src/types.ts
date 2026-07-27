@@ -782,8 +782,10 @@ export interface NumberConnectPlayerView {
   name: string;
   botTitle?: string;
   lineCount: number;
-  /** Present only for the viewer's own board. */
+  /** Present for the viewer, then for both players after the match. */
   board?: number[];
+  /** Present for both players after the match. */
+  markedNumbers?: number[];
 }
 
 export interface NumberConnectWinner {
@@ -1029,7 +1031,13 @@ export function isNumberConnectGameView(value: unknown): value is NumberConnectG
       Number.isInteger(player.seat) &&
       typeof player.name === 'string' &&
       Number.isSafeInteger(player.lineCount) &&
-      (player.board === undefined || validBoard(player.board))
+      (player.board === undefined || validBoard(player.board)) &&
+      (player.markedNumbers === undefined ||
+        (Array.isArray(player.markedNumbers) &&
+          player.markedNumbers.every((number) =>
+            Number.isSafeInteger(number) && number >= 1 && number <= 25
+          ) &&
+          new Set(player.markedNumbers).size === player.markedNumbers.length))
     ) &&
     Boolean(prompt) &&
     (prompt?.type === 'call' || prompt?.type === 'spectating' || prompt?.type === 'finished');

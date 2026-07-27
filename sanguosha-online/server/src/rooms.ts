@@ -800,16 +800,22 @@ export class RoomService {
     if (
       room.status !== "finished" ||
       !room.game ||
-      !isDoudizhuGame(room.game)
+      (!isDoudizhuGame(room.game) && !isNumberConnectGame(room.game))
     ) {
       throw new HttpError(409, "REMATCH_NOT_AVAILABLE", "当前房间不能继续下一局");
     }
+    const doudizhuGame = isDoudizhuGame(room.game) ? room.game : null;
     const previousBeans = new Map(
-      room.game.players.map((candidate) => [candidate.id, candidate.beans] as const),
+      doudizhuGame?.players.map((candidate) => [candidate.id, candidate.beans] as const) ?? [],
     );
     const activePlayers = room.players.filter((player) => !player.departed);
-    if (activePlayers.length !== 3) {
-      throw new HttpError(409, "REMATCH_REQUIRES_THREE_PLAYERS", "继续下一局需要三名玩家都留在房间");
+    const requiredPlayers = doudizhuGame ? 3 : 2;
+    if (activePlayers.length !== requiredPlayers) {
+      throw new HttpError(
+        409,
+        doudizhuGame ? "REMATCH_REQUIRES_THREE_PLAYERS" : "REMATCH_REQUIRES_TWO_PLAYERS",
+        `继续下一局需要${requiredPlayers === 3 ? "三" : "两"}名玩家都留在房间`,
+      );
     }
 
     const player = activePlayers.find((candidate) => candidate.id === userId)!;
@@ -825,16 +831,27 @@ export class RoomService {
         candidate.seat = seat;
         candidate.ready = true;
       });
-      room.game = createDoudizhuGame({
-        players: room.players.map((candidate) => ({
-          id: candidate.id,
-          name: candidate.displayName,
-          ...(candidate.botTitle ? { botTitle: candidate.botTitle } : {}),
-          beans: previousBeans.get(candidate.id) ?? DOUDIZHU_INITIAL_BEANS,
-        })),
-        seed: randomBytes(32).toString("hex"),
-      });
-      room.doudizhuLlmUsage = { ...EMPTY_DOUDIZHU_LLM_USAGE };
+      if (doudizhuGame) {
+        room.game = createDoudizhuGame({
+          players: room.players.map((candidate) => ({
+            id: candidate.id,
+            name: candidate.displayName,
+            ...(candidate.botTitle ? { botTitle: candidate.botTitle } : {}),
+            beans: previousBeans.get(candidate.id) ?? DOUDIZHU_INITIAL_BEANS,
+          })),
+          seed: randomBytes(32).toString("hex"),
+        });
+        room.doudizhuLlmUsage = { ...EMPTY_DOUDIZHU_LLM_USAGE };
+      } else {
+        room.game = createAdapterGame(
+          "number_connect",
+          room.players.map((candidate) => ({
+            id: candidate.id,
+            name: candidate.displayName,
+          })),
+          randomBytes(32).toString("hex"),
+        )!;
+      }
       room.status = "playing";
       this.runBots(room);
     }
@@ -1696,6 +1713,8 @@ export class RoomService {
       for (const player of room.players) {
         player.ready = Boolean(player.isBot && !player.departed);
       }
+    } else if (transitioned && isNumberConnectGame(room.game)) {
+      for (const player of room.players) player.ready = false;
     }
   }
 

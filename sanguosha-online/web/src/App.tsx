@@ -576,10 +576,12 @@ export default function App() {
         <Suspense fallback={<Spin size="large" />}>{numberConnectGame ? (
           <NumberConnectBoard
             game={numberConnectGame}
+            room={room}
             userId={user.id}
             connected={connected}
             onAction={sendAction}
             onExit={leaveRoom}
+            onRematch={rematchRoom}
           />
         ) : digitBombGame ? (
           <DigitBombBoard

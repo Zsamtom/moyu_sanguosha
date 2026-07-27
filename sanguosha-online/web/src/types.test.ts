@@ -272,6 +272,10 @@ describe('server payload adapters', () => {
       players: [{ ...gameView.players[0], board: [...board.slice(0, 24), 24] }, gameView.players[1]],
     })).toBe(false);
     expect(isNumberConnectGameView({ ...gameView, calledNumbers: [3, 3] })).toBe(false);
+    expect(isNumberConnectGameView({
+      ...gameView,
+      players: [{ ...gameView.players[0], markedNumbers: [3, 3] }, gameView.players[1]],
+    })).toBe(false);
   });
 
   it('preserves the caller-private general draft without deriving other candidates', () => {

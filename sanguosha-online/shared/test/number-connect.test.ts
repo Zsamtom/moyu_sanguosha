@@ -98,7 +98,7 @@ describe("Number Connect authoritative engine", () => {
     expect(getNumberConnectGameView(game, nextId).calledNumbers).toEqual([]);
   });
 
-  it("keeps the opponent board private after someone reaches five lines", () => {
+  it("keeps the opponent board private until the match finishes", () => {
     let game = createNumberConnectGame({ players, seed });
     const ownView = getNumberConnectGameView(game, players[0]!.id);
     expect(ownView.players[0]!.board).toEqual(game.players[0]!.board);
@@ -115,8 +115,8 @@ describe("Number Connect authoritative engine", () => {
     expect(Math.max(...game.players.map((player) => player.lineCount)))
       .toBeGreaterThanOrEqual(NUMBER_CONNECT_TARGET_LINES);
     const finalView = getNumberConnectGameView(game, players[0]!.id);
-    expect(finalView.players[0]!.board).toEqual(game.players[0]!.board);
-    expect(finalView.players[1]!.board).toBeUndefined();
+    expect(finalView.players.every((player) => player.board?.length === 25)).toBe(true);
+    expect(finalView.players.every((player) => Array.isArray(player.markedNumbers))).toBe(true);
     expect(() => assertRestorableNumberConnectGameState(game)).not.toThrow();
   });
 

@@ -166,7 +166,7 @@ export const GAME_REGISTRY = {
       '双方各有一张随机 5×5 数字棋盘，同一格位置不会出现相同数字。',
       '双方无需轮流等待，可随时点击自己的未标记数字；每次点击只在自己的棋盘打叉。',
       '横、竖或斜向连满一线得 1 分，先到 5 分获胜；本游戏不提供机器人。',
-      '双方只能看到自己的棋盘；对局结束后也不会公开对方的数字排列。',
+      '对局中只能看到自己的棋盘；结束后公开双方最终棋盘，并可共同确认再来一局。',
     ],
     roomRuleSummary: [
       { label: '玩法', value: '双人实时竞速' },
@@ -174,7 +174,7 @@ export const GAME_REGISTRY = {
       { label: '计分', value: '横 / 竖 / 双斜线' },
       { label: '目标', value: '率先完成 5 条线' },
     ],
-    waitingCopy: '仅限 2 名真人玩家；双方准备后开局，对手的数字排列始终隐藏。',
+    waitingCopy: '仅限 2 名真人玩家；双方准备后开局，对手的数字排列在结算前保持隐藏。',
   },
 } as const satisfies Record<GameType, GameRegistration>;
 

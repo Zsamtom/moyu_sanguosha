@@ -4,14 +4,17 @@ import type {
   AnyGameAction,
   NumberConnectGameView,
   NumberConnectPlayerView,
+  RoomDetail,
 } from '../types';
 
 interface NumberConnectBoardProps {
   game: NumberConnectGameView;
+  room: RoomDetail | null;
   userId: string;
   connected: boolean;
   onAction: (action: AnyGameAction) => Promise<void>;
   onExit: () => Promise<void>;
+  onRematch: () => Promise<void>;
 }
 
 const BOARD_SIZE = 5;
@@ -44,9 +47,11 @@ export function numberConnectCompletedLineIndexes(
 function ScoreCard({
   player,
   self,
+  lineCount = player.lineCount,
 }: {
   player: NumberConnectPlayerView;
   self: boolean;
+  lineCount?: number;
 }) {
   return (
     <article className={`number-connect-player${self ? ' is-self' : ''}`}>
@@ -57,12 +62,12 @@ function ScoreCard({
         <span>{self ? '自由标记中' : '实时竞速中'}</span>
       </div>
       <b>
-        {player.lineCount}
+        {lineCount}
         <small>/ {TARGET_LINES} 线</small>
       </b>
       <i
-        aria-label={`${player.lineCount} / ${TARGET_LINES} 条线`}
-        style={{ '--number-connect-progress': `${Math.min(100, player.lineCount / TARGET_LINES * 100)}%` } as React.CSSProperties}
+        aria-label={`${lineCount} / ${TARGET_LINES} 条线`}
+        style={{ '--number-connect-progress': `${Math.min(100, lineCount / TARGET_LINES * 100)}%` } as React.CSSProperties}
       />
     </article>
   );
@@ -128,36 +133,80 @@ function NumberGrid({
 
 export function NumberConnectBoard({
   game,
+  room,
   userId,
   connected,
   onAction,
   onExit,
+  onRematch,
 }: NumberConnectBoardProps) {
-  const [busy, setBusy] = useState(false);
+  const [pendingNumbers, setPendingNumbers] = useState<Set<number>>(() => new Set());
+  const [localLastNumber, setLocalLastNumber] = useState<number | null>(null);
+  const [rematchBusy, setRematchBusy] = useState(false);
   const self = game.players.find((player) => player.id === userId);
   const opponent = game.players.find((player) => player.id !== userId);
   const canPlay = game.status === 'playing' &&
     game.prompt.type === 'call' &&
     game.prompt.playerId === userId;
-  const canCall = connected && canPlay && !busy;
-  const called = useMemo(() => new Set(game.calledNumbers), [game.calledNumbers]);
+  const canCall = connected && canPlay;
+  const confirmedNumbersKey = game.calledNumbers.join(',');
+  const displayedNumbers = useMemo(
+    () => [...new Set([...game.calledNumbers, ...pendingNumbers])],
+    [game.calledNumbers, pendingNumbers],
+  );
+  const called = useMemo(() => new Set(displayedNumbers), [displayedNumbers]);
   const availableCount = 25 - called.size;
+  const displayedLastNumber = localLastNumber ?? game.lastNumber;
+  const displayedLineCount = self?.board
+    ? numberConnectCompletedLineIndexes(self.board, displayedNumbers).length
+    : self?.lineCount ?? 0;
+  const selfReadyForRematch =
+    room?.members.find((member) => member.userId === userId)?.ready ?? false;
 
   useEffect(() => {
-    setBusy(false);
-  }, [game.actionPromptId]);
+    const confirmed = new Set(game.calledNumbers);
+    setPendingNumbers((current) => {
+      const remaining = new Set([...current].filter((number) => !confirmed.has(number)));
+      return remaining.size === current.size ? current : remaining;
+    });
+  }, [confirmedNumbersKey]);
+
+  useEffect(() => {
+    if (game.status === 'playing' && game.revision === 0 && game.calledNumbers.length === 0) {
+      setPendingNumbers(new Set());
+      setLocalLastNumber(null);
+      setRematchBusy(false);
+    }
+  }, [game.revision, game.status]);
 
   const callNumber = async (number: number) => {
     if (!canCall || called.has(number)) return;
-    setBusy(true);
+    setPendingNumbers((current) => new Set(current).add(number));
+    setLocalLastNumber(number);
     try {
       await onAction({
         type: 'number_connect_call',
         playerId: userId,
         number,
       });
+    } catch (error) {
+      setPendingNumbers((current) => {
+        const next = new Set(current);
+        next.delete(number);
+        return next;
+      });
+      setLocalLastNumber(game.lastNumber);
+      throw error;
+    }
+  };
+
+  const requestRematch = async () => {
+    if (rematchBusy || selfReadyForRematch) return;
+    setRematchBusy(true);
+    try {
+      await onRematch();
     } finally {
-      setBusy(false);
+      setRematchBusy(false);
     }
   };
 
@@ -206,6 +255,7 @@ export function NumberConnectBoard({
             key={player.id}
             player={player}
             self={player.id === userId}
+            lineCount={player.id === userId ? displayedLineCount : player.lineCount}
           />
         ))}
       </section>
@@ -217,32 +267,45 @@ export function NumberConnectBoard({
             <h2>{resultTitle}</h2>
             <p>
               {game.winner?.reason === 'forfeit'
-                ? '一方退出，本局提前结束；双方棋盘仍各自保密。'
+                ? '一方退出，本局提前结束；双方最终棋盘已公开。'
                 : winners.has(userId)
-                  ? `你标记数字 ${game.lastNumber} 后率先完成五线；对方棋盘不会公开。`
-                  : '对手已经率先完成五线；双方棋盘仍各自保密。'}
+                  ? `你标记数字 ${game.lastNumber} 后率先完成五线；双方最终棋盘已公开。`
+                  : '对手已经率先完成五线；双方最终棋盘已公开。'}
             </p>
           </section>
-          <section className="number-connect-reveal" aria-label="你的最终棋盘">
-            <article className={winners.has(self.id) ? 'is-winner' : ''}>
-              <header>
-                <div>
-                  <span>你的棋盘</span>
-                  <strong>{self.name}</strong>
-                </div>
-                <b>{self.lineCount}<small>条线</small></b>
-              </header>
-              <NumberGrid
-                board={self.board}
-                calledNumbers={game.calledNumbers}
-                lastNumber={game.lastNumber}
-                interactive={false}
-                label="你的最终棋盘"
-              />
-            </article>
+          <section className="number-connect-reveal" aria-label="双方最终棋盘">
+            {game.players.map((player) => (
+              <article key={player.id} className={winners.has(player.id) ? 'is-winner' : ''}>
+                <header>
+                  <div>
+                    <span>{player.id === userId ? '你的棋盘' : '对手棋盘'}</span>
+                    <strong>{player.name}</strong>
+                  </div>
+                  <b>{player.lineCount}<small>条线</small></b>
+                </header>
+                <NumberGrid
+                  board={player.board}
+                  calledNumbers={player.markedNumbers ?? (
+                    player.id === userId ? game.calledNumbers : []
+                  )}
+                  lastNumber={player.id === userId ? game.lastNumber : null}
+                  interactive={false}
+                  label={`${player.name} 的最终棋盘`}
+                />
+              </article>
+            ))}
           </section>
           <div className="number-connect-final-action">
-            <Button type="primary" size="large" onClick={() => void onExit()}>返回游戏大厅</Button>
+            <Button
+              type="primary"
+              size="large"
+              disabled={!connected || selfReadyForRematch}
+              loading={rematchBusy}
+              onClick={() => void requestRematch()}
+            >
+              {selfReadyForRematch ? '已确认，等待对方' : '再来一局'}
+            </Button>
+            <Button size="large" onClick={() => void onExit()}>返回游戏大厅</Button>
           </div>
         </>
       ) : (
@@ -260,8 +323,8 @@ export function NumberConnectBoard({
             </header>
             <NumberGrid
               board={self.board}
-              calledNumbers={game.calledNumbers}
-              lastNumber={game.lastNumber}
+              calledNumbers={displayedNumbers}
+              lastNumber={displayedLastNumber}
               interactive={canCall}
               onCall={(number) => void callNumber(number)}
               label="你的数字棋盘"
@@ -278,7 +341,6 @@ export function NumberConnectBoard({
               <span>LIVE RACE</span>
               <h2>随时选择自己棋盘上的数字</h2>
               <p>每次点击只会在你的棋盘上打叉，不会改变对手的棋盘；双方无需轮流等待。</p>
-              {busy && <small>正在提交选择……</small>}
             </section>
 
             <section className="number-connect-rules">
@@ -289,7 +351,7 @@ export function NumberConnectBoard({
                 <li><i />任一斜向 5 格全部打叉</li>
               </ul>
               <strong>先完成 {TARGET_LINES} 条线获胜</strong>
-              <small>双方棋盘始终独立保密，只展示连线分数。</small>
+              <small>对局中棋盘独立保密，结算后公开双方最终棋盘。</small>
             </section>
           </aside>
         </section>
