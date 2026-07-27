@@ -2,22 +2,41 @@ import { EventEmitter } from "node:events";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   DEFAULT_COMPLETE_RULE_CONFIG,
+  DOUDIZHU_INITIAL_BEANS,
+  DOUDIZHU_BOT_INTELLIGENCE_NAMES,
+  GOUJI_BOT_INTELLIGENCE_NAMES,
+  applyDoudizhuAction,
   applyAction,
   assertGeneralDraftForConfig,
   autoChooseGeneral,
   chooseGeneral as chooseDraftGeneral,
   chooseGodFaction as chooseDraftGodFaction,
   cloneGeneralDraft,
+  chooseGoujiBotAction,
+  chooseDoudizhuBotAction,
+  createDoudizhuGame,
   createGameFromDraft,
   createGeneralDraft,
+  createGoujiGame,
   forfeitPlayer,
+  forfeitDoudizhuPlayer,
+  forfeitGoujiPlayer,
+  getDoudizhuGameView,
+  getGoujiGameView,
   getGeneralDraftView,
   getGameView,
+  applyGoujiAction,
   validateRoomRuleConfig,
   type FullGeneralId,
+  type DoudizhuAction,
+  type DoudizhuGameState,
+  type DoudizhuGameView,
   type GameAction,
   type GameSession,
   type GameView,
+  type GoujiAction,
+  type GoujiGameState,
+  type GoujiGameView,
   type GeneralDraftState,
   type GeneralDraftView,
   type PlayableFaction,
@@ -32,6 +51,7 @@ import {
 import type { PublicUser } from "./users.js";
 
 export type RoomStatus = "waiting" | "drafting" | "playing" | "finished";
+export type GameType = "sanguosha" | "gouji" | "doudizhu";
 
 export const DEFAULT_SERVER_ROOM_RULE_CONFIG: Readonly<RoomRuleConfig> = Object.freeze({
   ...DEFAULT_COMPLETE_RULE_CONFIG,
@@ -47,15 +67,25 @@ export interface RoomPlayerView {
   id: string;
   username: string;
   displayName: string;
+  botTitle?: string;
   ready: boolean;
   connected: boolean;
   seat: number;
   isBot?: boolean;
 }
 
+export interface RoomChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  sentAt: string;
+}
+
 export interface RoomSummary {
   id: string;
   name: string;
+  gameType: GameType;
   ownerId: string;
   ownerName: string;
   status: RoomStatus;
@@ -68,6 +98,7 @@ export interface RoomView extends RoomSummary {
   players: RoomPlayerView[];
   ruleConfig: RoomRuleConfig;
   botIntelligence: BotIntelligence;
+  chatMessages: RoomChatMessage[];
   /** Present only in the requesting member's private room view. */
   draft?: GeneralDraftView;
 }
@@ -80,6 +111,7 @@ interface RoomPlayer extends RoomPlayerView {
 interface Room {
   id: string;
   name: string;
+  gameType: GameType;
   ownerId: string;
   status: RoomStatus;
   maxPlayers: number;
@@ -87,8 +119,66 @@ interface Room {
   players: RoomPlayer[];
   ruleConfig: RoomRuleConfig;
   botIntelligence: BotIntelligence;
+  chatMessages: RoomChatMessage[];
   draft?: GeneralDraftState;
-  game?: GameSession;
+  game?: GameSession | GoujiGameState | DoudizhuGameState;
+}
+
+const GOUJI_BOT_NICKNAMES = [
+  "皮的猫",
+  "半杯乌龙",
+  "慢半拍",
+  "晚风不迟",
+  "纸飞机",
+  "云端漫步",
+  "橘子汽水",
+  "周末晴天",
+  "白噪音",
+  "小岛来信",
+  "正在加载",
+  "深夜电台",
+  "山间微风",
+  "一页书签",
+  "北窗",
+] as const;
+
+const DOUDIZHU_BOT_NICKNAMES = [
+  "晚风有信",
+  "山茶来信",
+  "橘子汽水",
+  "一页旧书",
+  "北窗听雨",
+  "半杯乌龙",
+  "纸飞机",
+  "小岛来信",
+  "云端漫步",
+  "周末晴天",
+  "深夜电台",
+  "白噪音",
+  "正在加载",
+  "路过人间",
+  "慢半拍",
+  "海盐柠檬",
+  "今天早睡",
+  "匿名牌友",
+] as const;
+
+function doudizhuBotNickname(room: Room, entropy: string): string {
+  const start = Number.parseInt(entropy.slice(0, 8), 16) % DOUDIZHU_BOT_NICKNAMES.length;
+  for (let offset = 0; offset < DOUDIZHU_BOT_NICKNAMES.length; offset += 1) {
+    const candidate = DOUDIZHU_BOT_NICKNAMES[(start + offset) % DOUDIZHU_BOT_NICKNAMES.length]!;
+    if (!room.players.some((player) => player.displayName === candidate)) return candidate;
+  }
+  return `匿名牌友${room.players.filter((player) => player.isBot).length + 1}`;
+}
+
+function goujiBotNickname(room: Room, entropy: string): string {
+  const start = Number.parseInt(entropy.slice(0, 8), 16) % GOUJI_BOT_NICKNAMES.length;
+  for (let offset = 0; offset < GOUJI_BOT_NICKNAMES.length; offset += 1) {
+    const candidate = GOUJI_BOT_NICKNAMES[(start + offset) % GOUJI_BOT_NICKNAMES.length]!;
+    if (!room.players.some((player) => player.displayName === candidate)) return candidate;
+  }
+  return `匿名牌友${room.players.filter((player) => player.isBot).length + 1}`;
 }
 
 export interface RoomServiceSnapshot {
@@ -96,6 +186,7 @@ export interface RoomServiceSnapshot {
   readonly rooms: Array<{
     id: string;
     name: string;
+    gameType?: GameType;
     ownerId: string;
     status: RoomStatus;
     maxPlayers: number;
@@ -103,13 +194,15 @@ export interface RoomServiceSnapshot {
     players: Array<RoomPlayerView & { departed?: boolean }>;
     ruleConfig: RoomRuleConfig;
     botIntelligence?: BotIntelligence;
+    chatMessages?: RoomChatMessage[];
     draft?: GeneralDraftState;
-    game?: GameSession;
+    game?: GameSession | GoujiGameState | DoudizhuGameState;
   }>;
 }
 
 export interface CreateRoomInput {
   name: string;
+  gameType?: GameType;
   maxPlayers?: number;
   ruleConfig?: RoomRuleConfig;
   botIntelligence?: BotIntelligence;
@@ -121,6 +214,26 @@ function cloneRuleConfig(config: RoomRuleConfig): RoomRuleConfig {
   return clone;
 }
 
+type AuthorityGame = GameSession | GoujiGameState | DoudizhuGameState;
+type AuthorityAction = GameAction | GoujiAction | DoudizhuAction;
+type AuthorityGameView = GameView | GoujiGameView | DoudizhuGameView;
+
+function isGoujiGame(game: AuthorityGame): game is GoujiGameState {
+  return "kind" in game && game.kind === "gouji";
+}
+
+function isDoudizhuGame(game: AuthorityGame): game is DoudizhuGameState {
+  return "kind" in game && game.kind === "doudizhu";
+}
+
+function isGoujiAction(action: AuthorityAction): action is GoujiAction {
+  return action.type.startsWith("gouji_");
+}
+
+function isDoudizhuAction(action: AuthorityAction): action is DoudizhuAction {
+  return action.type.startsWith("doudizhu_");
+}
+
 export class RoomService {
   private readonly rooms = new Map<string, Room>();
   private readonly roomByUser = new Map<string, string>();
@@ -128,6 +241,7 @@ export class RoomService {
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly botRuns = new Set<string>();
   private readonly botContinuations = new Map<string, NodeJS.Timeout>();
+  private readonly lastChatAtByUser = new Map<string, number>();
   private readonly events = new EventEmitter();
   private snapshotPersistence?: (snapshot: RoomServiceSnapshot) => Promise<void>;
   private persistenceBarrier: Promise<void> = Promise.resolve();
@@ -136,12 +250,22 @@ export class RoomService {
     private readonly disconnectGraceMs = 90_000,
     private readonly botBatchSize = 200,
     private readonly botActionDelayMs = 0,
+    private readonly doudizhuBotDelayRangeMs: readonly [number, number] = [1_000, 5_000],
   ) {
     if (!Number.isSafeInteger(botBatchSize) || botBatchSize < 1) {
       throw new Error("botBatchSize must be a positive safe integer");
     }
     if (!Number.isSafeInteger(botActionDelayMs) || botActionDelayMs < 0) {
       throw new Error("botActionDelayMs must be a non-negative safe integer");
+    }
+    const [minimumDoudizhuDelay, maximumDoudizhuDelay] = doudizhuBotDelayRangeMs;
+    if (
+      !Number.isSafeInteger(minimumDoudizhuDelay) ||
+      !Number.isSafeInteger(maximumDoudizhuDelay) ||
+      minimumDoudizhuDelay < 0 ||
+      maximumDoudizhuDelay < minimumDoudizhuDelay
+    ) {
+      throw new Error("doudizhuBotDelayRangeMs must be an ordered pair of non-negative safe integers");
     }
   }
 
@@ -181,6 +305,7 @@ export class RoomService {
     for (const timer of this.botContinuations.values()) clearTimeout(timer);
     this.botContinuations.clear();
     this.botRuns.clear();
+    this.lastChatAtByUser.clear();
     this.connectedUsers.clear();
     this.rooms.clear();
     this.roomByUser.clear();
@@ -201,13 +326,20 @@ export class RoomService {
         throw new Error(`Non-drafting room ${saved.id} retains a draft`);
       }
       const room = structuredClone(saved) as Room;
+      room.gameType = saved.gameType ?? "sanguosha";
       room.botIntelligence = saved.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE;
+      room.chatMessages = (saved.chatMessages ?? []).slice(-100);
       room.ruleConfig = cloneRuleConfig(
         saved.ruleConfig ?? DEFAULT_SERVER_ROOM_RULE_CONFIG,
       );
       room.players.forEach((player, seat) => {
         player.isBot ??= false;
         player.departed ??= false;
+        if (player.isBot && room.gameType !== "sanguosha") {
+          player.botTitle ??= room.gameType === "gouji"
+            ? GOUJI_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
+            : DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence];
+        }
         if (!player.isBot && !player.departed && this.roomByUser.has(player.id)) {
           throw new Error(`User ${player.id} appears in multiple restored rooms`);
         }
@@ -216,6 +348,9 @@ export class RoomService {
         if (!player.isBot && !player.departed) this.roomByUser.set(player.id, room.id);
       });
       if (room.status === "drafting") {
+        if (room.gameType !== "sanguosha") {
+          throw new Error(`Non-Sanguosha room ${saved.id} cannot be in a general draft`);
+        }
         const draftPlayerIds = room.players.filter((player) => !player.departed).map((player) => player.id);
         if (room.players.some((player) => player.departed) ||
             room.draft!.playerIds.length !== draftPlayerIds.length ||
@@ -224,6 +359,14 @@ export class RoomService {
         }
         assertGeneralDraftForConfig(room.draft!, room.ruleConfig);
         this.commitDraft(room, cloneGeneralDraft(room.draft!));
+      }
+      if (room.game) {
+        const matches = room.gameType === "gouji"
+          ? isGoujiGame(room.game)
+          : room.gameType === "doudizhu"
+            ? isDoudizhuGame(room.game)
+            : !isGoujiGame(room.game) && !isDoudizhuGame(room.game);
+        if (!matches) throw new Error(`Room ${saved.id} game type does not match its game state`);
       }
       this.rooms.set(room.id, room);
       if (room.status === "drafting" || room.status === "playing") {
@@ -264,6 +407,7 @@ export class RoomService {
 
   create(owner: PublicUser, input: CreateRoomInput): RoomView {
     this.assertNotInRoom(owner.id);
+    const gameType = input.gameType ?? "sanguosha";
     let ruleConfig: RoomRuleConfig;
     try {
       ruleConfig = cloneRuleConfig(input.ruleConfig ?? DEFAULT_SERVER_ROOM_RULE_CONFIG);
@@ -278,13 +422,15 @@ export class RoomService {
     const room: Room = {
       id,
       name: input.name.trim(),
+      gameType,
       ownerId: owner.id,
       status: "waiting",
-      maxPlayers: input.maxPlayers ?? 8,
+      maxPlayers: gameType === "gouji" ? 6 : gameType === "doudizhu" ? 3 : input.maxPlayers ?? 8,
       createdAt: new Date().toISOString(),
       players: [this.toPlayer(owner, 0)],
       ruleConfig,
       botIntelligence: input.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE,
+      chatMessages: [],
     };
     this.rooms.set(id, room);
     this.roomByUser.set(owner.id, id);
@@ -317,11 +463,21 @@ export class RoomService {
     if (room.status !== "waiting") throw new HttpError(409, "ROOM_ALREADY_STARTED", "游戏已经开始");
     if (room.players.length >= room.maxPlayers) throw new HttpError(409, "ROOM_FULL", "房间已满");
     const id = randomUUID();
-    const botNumber = room.players.filter((player) => player.isBot).length + 1;
     room.players.push({
       id,
       username: `bot_${id.slice(0, 8)}`,
-      displayName: `机器人 ${botNumber}`,
+      displayName: room.gameType === "gouji"
+        ? goujiBotNickname(room, id)
+        : room.gameType === "doudizhu"
+          ? doudizhuBotNickname(room, id)
+          : `机器人 ${room.players.filter((player) => player.isBot).length + 1}`,
+      ...(room.gameType !== "sanguosha"
+        ? {
+            botTitle: room.gameType === "gouji"
+              ? GOUJI_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
+              : DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence],
+          }
+        : {}),
       ready: true,
       connected: true,
       seat: room.players.length,
@@ -362,9 +518,15 @@ export class RoomService {
         this.changed();
         return;
       }
-      // A dead player can safely leave without changing the still-running
-      // identity match. Only a living departure is a forfeiture.
-      if (gamePlayer.alive) {
+      if (isGoujiGame(room.game)) {
+        room.game = forfeitGoujiPlayer(room.game, userId);
+        room.status = room.game.status;
+      } else if (isDoudizhuGame(room.game)) {
+        room.game = forfeitDoudizhuPlayer(room.game, userId);
+        this.finishRoomIfNeeded(room);
+      // A dead Sanguosha player can safely leave without changing the
+      // still-running identity match. Only a living departure is a forfeiture.
+      } else if ("alive" in gamePlayer && gamePlayer.alive) {
         try {
           room.game = forfeitPlayer(room.game, userId);
           room.status = room.game.status;
@@ -390,6 +552,7 @@ export class RoomService {
       player.ready = false;
     }
     this.roomByUser.delete(userId);
+    this.lastChatAtByUser.delete(userId);
     const remainingHumans = room.players.filter((candidate) => !candidate.isBot && !candidate.departed);
     if (remainingHumans.length === 0) {
       this.deleteRoom(room);
@@ -417,6 +580,82 @@ export class RoomService {
     return this.toView(room, userId);
   }
 
+  sendChat(roomId: string, userId: string, rawText: string): RoomChatMessage {
+    const room = this.requireMember(roomId, userId);
+    const player = room.players.find((candidate) => candidate.id === userId && !candidate.departed)!;
+    if (player.isBot) throw new HttpError(403, "BOT_CHAT_NOT_ALLOWED", "机器人不能发送聊天消息");
+    const text = rawText.replace(/\r\n?/g, "\n").trim();
+    if (text.length < 1 || text.length > 200) {
+      throw new HttpError(400, "INVALID_CHAT_MESSAGE", "聊天内容需为 1 至 200 个字符");
+    }
+    const now = Date.now();
+    const lastSentAt = this.lastChatAtByUser.get(userId) ?? 0;
+    if (now - lastSentAt < 500) {
+      throw new HttpError(429, "CHAT_RATE_LIMITED", "发送太快，请稍后再试");
+    }
+    this.lastChatAtByUser.set(userId, now);
+    const message: RoomChatMessage = {
+      id: randomUUID(),
+      senderId: player.id,
+      senderName: player.displayName,
+      text,
+      sentAt: new Date(now).toISOString(),
+    };
+    room.chatMessages.push(message);
+    if (room.chatMessages.length > 100) {
+      room.chatMessages.splice(0, room.chatMessages.length - 100);
+    }
+    this.changed();
+    return { ...message };
+  }
+
+  requestRematch(roomId: string, userId: string): RoomView {
+    const room = this.requireMember(roomId, userId);
+    if (
+      room.status !== "finished" ||
+      !room.game ||
+      !isDoudizhuGame(room.game)
+    ) {
+      throw new HttpError(409, "REMATCH_NOT_AVAILABLE", "当前房间不能继续下一局");
+    }
+    const previousBeans = new Map(
+      room.game.players.map((candidate) => [candidate.id, candidate.beans] as const),
+    );
+    const activePlayers = room.players.filter((player) => !player.departed);
+    if (activePlayers.length !== 3) {
+      throw new HttpError(409, "REMATCH_REQUIRES_THREE_PLAYERS", "继续下一局需要三名玩家都留在房间");
+    }
+
+    const player = activePlayers.find((candidate) => candidate.id === userId)!;
+    player.ready = true;
+    for (const bot of activePlayers.filter((candidate) => candidate.isBot)) bot.ready = true;
+
+    const everyoneReady = activePlayers.every((candidate) =>
+      candidate.ready && (candidate.isBot || candidate.connected)
+    );
+    if (everyoneReady) {
+      room.players = activePlayers;
+      room.players.forEach((candidate, seat) => {
+        candidate.seat = seat;
+        candidate.ready = true;
+      });
+      room.game = createDoudizhuGame({
+        players: room.players.map((candidate) => ({
+          id: candidate.id,
+          name: candidate.displayName,
+          ...(candidate.botTitle ? { botTitle: candidate.botTitle } : {}),
+          beans: previousBeans.get(candidate.id) ?? DOUDIZHU_INITIAL_BEANS,
+        })),
+        seed: randomBytes(32).toString("hex"),
+      });
+      room.status = "playing";
+      this.runBots(room);
+    }
+
+    this.changed();
+    return this.toView(room, userId);
+  }
+
   start(roomId: string, userId: string): RoomView {
     const room = this.requireMember(roomId, userId);
     if (room.ownerId !== userId) {
@@ -433,6 +672,50 @@ export class RoomService {
     }
     if (room.players.some((player) => !player.ready)) {
       throw new HttpError(409, "PLAYERS_NOT_READY", "所有玩家准备后才能开始");
+    }
+
+    if (room.gameType === "gouji") {
+      if (room.players.length !== 6) {
+        throw new HttpError(409, "GOUJI_REQUIRES_SIX_PLAYERS", "够级必须恰好 6 人才能开始");
+      }
+      room.game = createGoujiGame({
+        players: room.players.map((player) => ({
+          id: player.id,
+          name: player.displayName,
+          ...(player.botTitle ? { botTitle: player.botTitle } : {}),
+        })),
+        seed: randomBytes(32).toString("hex"),
+      });
+      room.status = "playing";
+      room.draft = undefined;
+      this.runBots(room);
+      if (!this.rooms.has(room.id)) {
+        throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
+      }
+      this.changed();
+      return this.toView(room, userId);
+    }
+
+    if (room.gameType === "doudizhu") {
+      if (room.players.length !== 3) {
+        throw new HttpError(409, "DOUDIZHU_REQUIRES_THREE_PLAYERS", "斗地主必须恰好 3 人才能开始");
+      }
+      room.game = createDoudizhuGame({
+        players: room.players.map((player) => ({
+          id: player.id,
+          name: player.displayName,
+          ...(player.botTitle ? { botTitle: player.botTitle } : {}),
+        })),
+        seed: randomBytes(32).toString("hex"),
+      });
+      room.status = "playing";
+      room.draft = undefined;
+      this.runBots(room);
+      if (!this.rooms.has(room.id)) {
+        throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
+      }
+      this.changed();
+      return this.toView(room, userId);
     }
 
     try {
@@ -502,8 +785,8 @@ export class RoomService {
   applyAction(
     roomId: string,
     userId: string,
-    input: { expectedRevision: number; expectedPromptId: string; action: GameAction },
-  ): GameView {
+    input: { expectedRevision: number; expectedPromptId: string; action: AuthorityAction },
+  ): AuthorityGameView {
     const room = this.requireMember(roomId, userId);
     if (room.status !== "playing" || !room.game) {
       throw new HttpError(409, "GAME_NOT_IN_PROGRESS", "游戏尚未开始或已经结束");
@@ -512,24 +795,52 @@ export class RoomService {
     if (action.playerId !== userId) {
       throw new HttpError(403, "PLAYER_MISMATCH", "不能替其他玩家执行操作");
     }
-    const currentView = getGameView(room.game, userId);
+    const currentView = isGoujiGame(room.game)
+      ? getGoujiGameView(room.game, userId)
+      : isDoudizhuGame(room.game)
+        ? getDoudizhuGameView(room.game, userId)
+        : getGameView(room.game, userId);
     if (expectedRevision !== currentView.revision || expectedPromptId !== currentView.actionPromptId) {
       throw new HttpError(409, "STALE_GAME_ACTION", "游戏状态已更新，请基于最新界面重试");
     }
 
-    room.game = applyAction(room.game, action);
+    if (isGoujiGame(room.game)) {
+      if (!isGoujiAction(action)) {
+        throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行够级");
+      }
+      room.game = applyGoujiAction(room.game, action);
+    } else if (isDoudizhuGame(room.game)) {
+      if (!isDoudizhuAction(action)) {
+        throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行斗地主");
+      }
+      room.game = applyDoudizhuAction(room.game, action);
+    } else {
+      if (isGoujiAction(action) || isDoudizhuAction(action)) {
+        throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行三国杀");
+      }
+      room.game = applyAction(room.game, action);
+    }
     this.runBots(room);
     if (!this.rooms.has(room.id)) {
       throw new HttpError(409, "ROOM_ABORTED", "房间因无法恢复的机器人错误已关闭");
     }
-    if (room.game.status === "finished") room.status = "finished";
+    this.finishRoomIfNeeded(room);
     this.changed();
-    return getGameView(room.game, userId);
+    return isGoujiGame(room.game)
+      ? getGoujiGameView(room.game, userId)
+      : isDoudizhuGame(room.game)
+        ? getDoudizhuGameView(room.game, userId)
+        : getGameView(room.game, userId);
   }
 
-  getGameView(roomId: string, userId: string): GameView | undefined {
+  getGameView(roomId: string, userId: string): AuthorityGameView | undefined {
     const room = this.requireMember(roomId, userId);
-    return room.game ? getGameView(room.game, userId) : undefined;
+    if (!room.game) return undefined;
+    return isGoujiGame(room.game)
+      ? getGoujiGameView(room.game, userId)
+      : isDoudizhuGame(room.game)
+        ? getDoudizhuGameView(room.game, userId)
+        : getGameView(room.game, userId);
   }
 
   setConnected(userId: string, connected: boolean): void {
@@ -566,6 +877,7 @@ export class RoomService {
     return {
       id: room.id,
       name: room.name,
+      gameType: room.gameType,
       ownerId: room.ownerId,
       ownerName: activePlayers.find((player) => player.id === room.ownerId)?.displayName ?? "",
       status: room.status,
@@ -583,6 +895,7 @@ export class RoomService {
         .map(({ departed: _departed, ...player }) => ({ ...player })),
       ruleConfig: structuredClone(room.ruleConfig),
       botIntelligence: room.botIntelligence,
+      chatMessages: room.chatMessages.map((message) => ({ ...message })),
       ...(viewerId && room.draft ? { draft: getGeneralDraftView(room.draft, viewerId) } : {}),
     };
   }
@@ -629,7 +942,7 @@ export class RoomService {
     if (room.status !== "playing" || !room.game || this.rooms.get(room.id) !== room) return;
     if (this.botRuns.has(room.id)) return;
     this.cancelBotContinuation(room.id);
-    if (this.botActionDelayMs > 0 && !delayElapsed && this.actingBot(room)) {
+    if (this.hasBotActionDelay(room) && !delayElapsed && this.actingBot(room)) {
       this.scheduleBotContinuation(room.id);
       return;
     }
@@ -644,7 +957,17 @@ export class RoomService {
         if (!bot) break;
         steps += 1;
         try {
-          room.game = applyAction(room.game, this.actionForBot(room.game, bot, room.botIntelligence));
+          room.game = isGoujiGame(room.game)
+            ? applyGoujiAction(
+                room.game,
+                chooseGoujiBotAction(room.game, bot.id, room.botIntelligence),
+              )
+            : isDoudizhuGame(room.game)
+              ? applyDoudizhuAction(
+                  room.game,
+                  chooseDoudizhuBotAction(room.game, bot.id, room.botIntelligence),
+                )
+              : applyAction(room.game, this.actionForBot(room.game, bot, room.botIntelligence));
           mutations += 1;
         } catch (error) {
           // A bad heuristic or an unforeseen rule edge must not escape from an
@@ -652,9 +975,15 @@ export class RoomService {
           // offending bot leaves under the same authoritative rule as a human.
           console.error(`Bot ${bot.id} failed in room ${room.id}; eliminating it`, error);
           try {
-            const gamePlayer = room.game.players.find((player) => player.id === bot.id);
-            if (!gamePlayer?.alive) throw new Error("Failed bot is not a living game player");
-            room.game = forfeitPlayer(room.game, bot.id);
+            if (isGoujiGame(room.game)) {
+              room.game = forfeitGoujiPlayer(room.game, bot.id);
+            } else if (isDoudizhuGame(room.game)) {
+              room.game = forfeitDoudizhuPlayer(room.game, bot.id);
+            } else {
+              const gamePlayer = room.game.players.find((player) => player.id === bot.id);
+              if (!gamePlayer?.alive) throw new Error("Failed bot is not a living game player");
+              room.game = forfeitPlayer(room.game, bot.id);
+            }
             mutations += 1;
           } catch (recoveryError) {
             console.error(`Room ${room.id} could not recover from a bot failure; closing it`, recoveryError);
@@ -663,9 +992,9 @@ export class RoomService {
             break;
           }
         }
-        if (this.botActionDelayMs > 0) break;
+        if (this.hasBotActionDelay(room)) break;
       }
-      if (!aborted && room.game.status === "finished") room.status = "finished";
+      if (!aborted) this.finishRoomIfNeeded(room);
     } finally {
       this.botRuns.delete(room.id);
     }
@@ -674,16 +1003,35 @@ export class RoomService {
       this.changed();
       return;
     }
-    if ((steps >= this.botBatchSize || this.botActionDelayMs > 0) && this.actingBot(room)) {
+    if ((steps >= this.botBatchSize || this.hasBotActionDelay(room)) && this.actingBot(room)) {
       this.scheduleBotContinuation(room.id);
     }
     if (notify && mutations > 0) this.changed();
   }
 
+  private hasBotActionDelay(room: Room): boolean {
+    return room.game && isDoudizhuGame(room.game)
+      ? this.doudizhuBotDelayRangeMs[1] > 0
+      : this.botActionDelayMs > 0;
+  }
+
+  private finishRoomIfNeeded(room: Room): void {
+    if (!room.game || room.game.status !== "finished") return;
+    const transitioned = room.status !== "finished";
+    room.status = "finished";
+    if (transitioned && isDoudizhuGame(room.game)) {
+      for (const player of room.players) {
+        player.ready = Boolean(player.isBot && !player.departed);
+      }
+    }
+  }
+
   private actingBot(room: Room): RoomPlayer | undefined {
     if (room.status !== "playing" || !room.game || room.game.status !== "playing") return undefined;
-    const actingPlayerId = room.game.pendingResponse?.targetId
-      ?? (room.game.turn.phase !== "respond" ? room.game.currentPlayerId : undefined);
+    const actingPlayerId = isGoujiGame(room.game) || isDoudizhuGame(room.game)
+      ? room.game.currentPlayerId
+      : room.game.pendingResponse?.targetId
+        ?? (room.game.turn.phase !== "respond" ? room.game.currentPlayerId : undefined);
     if (!actingPlayerId) return undefined;
     return room.players.find((player) =>
       player.isBot && !player.departed && player.id === actingPlayerId
@@ -1074,9 +1422,16 @@ export class RoomService {
 
   private scheduleBotContinuation(roomId: string): void {
     if (this.botContinuations.has(roomId)) return;
-    const delay = this.botActionDelayMs > 0
-      ? this.botActionDelayMs + Math.floor(Math.random() * this.botActionDelayMs)
-      : 0;
+    const scheduledRoom = this.rooms.get(roomId);
+    if (!scheduledRoom?.game) return;
+    const delay = isDoudizhuGame(scheduledRoom.game)
+      ? this.doudizhuBotDelayRangeMs[0] + Math.floor(
+          Math.random() *
+          (this.doudizhuBotDelayRangeMs[1] - this.doudizhuBotDelayRangeMs[0] + 1),
+        )
+      : this.botActionDelayMs > 0
+        ? this.botActionDelayMs + Math.floor(Math.random() * this.botActionDelayMs)
+        : 0;
     const timer = setTimeout(() => {
       this.botContinuations.delete(roomId);
       const room = this.rooms.get(roomId);

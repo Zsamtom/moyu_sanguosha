@@ -45,6 +45,24 @@ export const BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
   6: '卧龙军师',
   7: '武圣临凡',
 };
+export const GOUJI_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
+  1: '摸牌学徒',
+  2: '跟牌新手',
+  3: '牌桌熟手',
+  4: '联邦主力',
+  5: '烧牌高手',
+  6: '牌局军师',
+  7: '打牌宗师',
+};
+export const DOUDIZHU_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
+  1: '新手牌友',
+  2: '稳健农民',
+  3: '欢乐牌手',
+  4: '记牌能手',
+  5: '叫分专家',
+  6: '残局大师',
+  7: '牌桌宗师',
+};
 export type GeneralDraftStage = 'selecting_generals' | 'selecting_factions' | 'complete';
 
 export interface RoomRuleConfig {
@@ -85,10 +103,12 @@ export interface GeneralDraftView {
 }
 
 export type RoomStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
+export type GameType = 'sanguosha' | 'gouji' | 'doudizhu';
 
 export interface RoomSummary {
   id: string;
   name: string;
+  gameType: GameType;
   status: RoomStatus;
   hostId: string;
   hostName: string;
@@ -101,6 +121,7 @@ export interface RoomMember {
   userId: string;
   username: string;
   displayName: string;
+  botTitle?: string;
   seat: number;
   ready: boolean;
   online: boolean;
@@ -108,10 +129,19 @@ export interface RoomMember {
   isBot?: boolean;
 }
 
+export interface RoomChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  sentAt: string;
+}
+
 export interface RoomDetail extends RoomSummary {
   members: RoomMember[];
   botIntelligence?: BotIntelligence;
   ruleConfig?: RoomRuleConfig;
+  chatMessages: RoomChatMessage[];
   /** Private projection for the caller; absent from public room summaries. */
   draft?: GeneralDraftView;
 }
@@ -328,6 +358,237 @@ export type GameAction =
   | { type: 'resolve_lord_dispatch'; playerId: string; promptId: string; cardId?: string | null }
   | { type: 'resolve_weapon'; playerId: string; promptId?: string; activate: boolean; cardIds?: string[]; tokens?: string[] };
 
+export type GoujiRank =
+  | 'big_joker' | 'small_joker' | '2' | 'A' | 'K' | 'Q' | 'J'
+  | '10' | '9' | '8' | '7' | '6' | '5' | '4' | '3';
+export type GoujiSuit = 'spade' | 'heart' | 'diamond' | 'club' | 'joker';
+export type GoujiTeam = 'A' | 'B';
+export type GoujiFinishRank = '头科' | '二科' | '三科' | '四科' | '二拉' | '大拉';
+
+export interface GoujiCard {
+  id: string;
+  rank: GoujiRank;
+  suit: GoujiSuit;
+  marked?: boolean;
+}
+
+export interface GoujiPlayerView {
+  id: string;
+  seat: number;
+  name: string;
+  botTitle?: string;
+  team: GoujiTeam;
+  handCount: number;
+  hand?: GoujiCard[];
+  finishedRank?: GoujiFinishRank;
+  openedPoint: boolean;
+  naturalPoint: boolean;
+  burnCount: number;
+}
+
+export interface GoujiGameView {
+  kind: 'gouji';
+  version: 1;
+  revision: number;
+  actionPromptId: string;
+  status: 'playing' | 'finished';
+  currentPlayerId: string;
+  leadPlayerId: string;
+  players: GoujiPlayerView[];
+  trick: {
+    fromPlayerId: string;
+    cards: GoujiCard[];
+    mainRank: GoujiRank;
+    cardCount: number;
+    isGouji: boolean;
+    passedPlayerIds: string[];
+    burning: boolean;
+    burnerPlayerId?: string;
+  } | null;
+  prompt: {
+    type: 'play' | 'waiting' | 'finished';
+    playerId: string | null;
+    canPlay: boolean;
+    canPass: boolean;
+    canYield: boolean;
+    mustIncludeJoker: boolean;
+  };
+  winner: { team: GoujiTeam; playerIds: string[] } | null;
+  logs: Array<{
+    id: number;
+    type: 'system' | 'play' | 'pass' | 'finish' | 'victory';
+    message: string;
+  }>;
+}
+
+export type GoujiAction =
+  | { type: 'gouji_play'; playerId: string; cardIds: string[] }
+  | { type: 'gouji_pass'; playerId: string }
+  | { type: 'gouji_yield'; playerId: string };
+
+export type DoudizhuRank =
+  | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A' | '2'
+  | 'small_joker' | 'big_joker';
+export type DoudizhuSuit = 'spade' | 'heart' | 'diamond' | 'club' | 'joker';
+export type DoudizhuRole = 'landlord' | 'farmer';
+export type DoudizhuPatternType =
+  | 'single' | 'pair' | 'triple' | 'triple_single' | 'triple_pair'
+  | 'straight' | 'consecutive_pairs' | 'airplane' | 'airplane_singles'
+  | 'airplane_pairs' | 'four_two_singles' | 'four_two_pairs' | 'bomb' | 'rocket';
+
+export interface DoudizhuCard {
+  id: string;
+  rank: DoudizhuRank;
+  suit: DoudizhuSuit;
+}
+
+export interface DoudizhuPattern {
+  type: DoudizhuPatternType;
+  primaryRank: DoudizhuRank;
+  length: number;
+  cards: DoudizhuCard[];
+}
+
+export interface DoudizhuPlayerView {
+  id: string;
+  seat: number;
+  name: string;
+  botTitle?: string;
+  role?: DoudizhuRole;
+  handCount: number;
+  hand?: DoudizhuCard[];
+  playedCount: number;
+  beans: number;
+  beanDelta: number;
+}
+
+export interface DoudizhuGameView {
+  kind: 'doudizhu';
+  version: 1;
+  revision: number;
+  actionPromptId: string;
+  status: 'playing' | 'finished';
+  phase: 'bidding' | 'playing' | 'finished';
+  currentPlayerId: string;
+  landlordId: string | null;
+  players: DoudizhuPlayerView[];
+  bottomCards: DoudizhuCard[];
+  bid: {
+    firstPlayerId: string;
+    currentBid: 0 | 1 | 2 | 3;
+    bidderId: string | null;
+    bids: Array<{ playerId: string; score: 0 | 1 | 2 | 3 }>;
+  };
+  trick: {
+    fromPlayerId: string;
+    pattern: DoudizhuPattern;
+    passCount: number;
+  } | null;
+  baseScore: number;
+  multiplier: number;
+  winner: {
+    role: DoudizhuRole;
+    playerIds: string[];
+    baseScore: number;
+    multiplier: number;
+    spring: boolean;
+    beanStake: number;
+    settlements: Array<{
+      playerId: string;
+      delta: number;
+      balance: number;
+    }>;
+  } | null;
+  prompt: {
+    type: 'bid' | 'play' | 'waiting' | 'finished';
+    playerId: string | null;
+    bidOptions: Array<0 | 1 | 2 | 3>;
+    canPlay: boolean;
+    canPass: boolean;
+    recommendation: {
+      type: 'play';
+      cardIds: string[];
+    } | {
+      type: 'pass';
+    } | null;
+  };
+  logs: Array<{
+    id: number;
+    type: 'system' | 'bid' | 'play' | 'pass' | 'victory';
+    message: string;
+  }>;
+}
+
+export type DoudizhuAction =
+  | { type: 'doudizhu_bid'; playerId: string; score: 0 | 1 | 2 | 3 }
+  | { type: 'doudizhu_play'; playerId: string; cardIds: string[] }
+  | { type: 'doudizhu_pass'; playerId: string };
+
+export type AnyGameAction = GameAction | GoujiAction | DoudizhuAction;
+
+export function isGoujiGameView(value: unknown): value is GoujiGameView {
+  if (!value || typeof value !== 'object') return false;
+  const game = value as Partial<GoujiGameView>;
+  const players = Array.isArray(game.players) ? game.players : [];
+  const prompt = game.prompt as Partial<GoujiGameView['prompt']> | undefined;
+  return game.kind === 'gouji' &&
+    game.version === 1 &&
+    Number.isSafeInteger(game.revision) &&
+    typeof game.actionPromptId === 'string' &&
+    (game.status === 'playing' || game.status === 'finished') &&
+    typeof game.currentPlayerId === 'string' &&
+    typeof game.leadPlayerId === 'string' &&
+    players.length === 6 &&
+    players.every((player) =>
+      player && typeof player === 'object' &&
+      typeof player.id === 'string' &&
+      Number.isInteger(player.seat) &&
+      typeof player.name === 'string' &&
+      (player.botTitle === undefined || typeof player.botTitle === 'string') &&
+      (player.team === 'A' || player.team === 'B') &&
+      Number.isInteger(player.handCount) &&
+      (player.hand === undefined || Array.isArray(player.hand))
+    ) &&
+    Boolean(prompt) &&
+    (prompt?.type === 'play' || prompt?.type === 'waiting' || prompt?.type === 'finished') &&
+    Array.isArray(game.logs);
+}
+
+export function isDoudizhuGameView(value: unknown): value is DoudizhuGameView {
+  if (!value || typeof value !== 'object') return false;
+  const game = value as Partial<DoudizhuGameView>;
+  const players = Array.isArray(game.players) ? game.players : [];
+  const prompt = game.prompt as Partial<DoudizhuGameView['prompt']> | undefined;
+  const recommendation = prompt?.recommendation;
+  return game.kind === 'doudizhu' &&
+    game.version === 1 &&
+    Number.isSafeInteger(game.revision) &&
+    typeof game.actionPromptId === 'string' &&
+    (game.status === 'playing' || game.status === 'finished') &&
+    (game.phase === 'bidding' || game.phase === 'playing' || game.phase === 'finished') &&
+    typeof game.currentPlayerId === 'string' &&
+    players.length === 3 &&
+    players.every((player) =>
+      player && typeof player === 'object' &&
+      typeof player.id === 'string' &&
+      Number.isInteger(player.seat) &&
+      typeof player.name === 'string' &&
+      Number.isInteger(player.handCount) &&
+      Number.isSafeInteger(player.beans) &&
+      Number.isSafeInteger(player.beanDelta) &&
+      (player.hand === undefined || Array.isArray(player.hand))
+    ) &&
+    Boolean(prompt) &&
+    (prompt?.type === 'bid' || prompt?.type === 'play' || prompt?.type === 'waiting' || prompt?.type === 'finished') &&
+    (recommendation === null ||
+      recommendation?.type === 'pass' ||
+      (recommendation?.type === 'play' &&
+        Array.isArray(recommendation.cardIds) &&
+        recommendation.cardIds.every((cardId) => typeof cardId === 'string'))) &&
+    Array.isArray(game.bottomCards) &&
+    Array.isArray(game.logs);
+}
+
 export interface ApiErrorBody {
   code?: string;
   message?: string;
@@ -342,7 +603,7 @@ export interface SocketAck<T = unknown> {
 export interface ServerState {
   rooms?: RoomSummary[];
   room?: RoomDetail | null;
-  game?: GameView | null;
+  game?: GameView | GoujiGameView | DoudizhuGameView | null;
 }
 
 type EngineCardKind = StandardCardKind;
@@ -1094,6 +1355,7 @@ export function normalizeRoomSummary(room: Partial<RoomSummary> & Record<string,
   return {
     id: String(room.id ?? ''),
     name: String(room.name ?? '未命名房间'),
+    gameType: room.gameType === 'gouji' || room.gameType === 'doudizhu' ? room.gameType : 'sanguosha',
     status: (room.status as RoomStatus | undefined) ?? 'waiting',
     hostId: String(room.hostId ?? room.ownerId ?? host?.userId ?? ''),
     hostName: String(room.hostName ?? room.ownerName ?? host?.displayName ?? ''),
@@ -1120,6 +1382,7 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
       userId: String(member.userId ?? member.id ?? ''),
       username: String(member.username ?? ''),
       displayName: String(member.displayName ?? member.name ?? member.username ?? `玩家${index + 1}`),
+      ...(typeof member.botTitle === 'string' ? { botTitle: member.botTitle } : {}),
       seat: Number(member.seat ?? index),
       ready: Boolean(member.ready),
       online: (member.online ?? member.connected) !== false,
@@ -1136,6 +1399,26 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
     lordBonusMinimumPlayers: room.ruleConfig.lordBonusMinimumPlayers,
     godFactionChoice: room.ruleConfig.godFactionChoice,
   } satisfies RoomRuleConfig : undefined;
+  const chatMessages = Array.isArray(room.chatMessages)
+    ? room.chatMessages.flatMap((raw) => {
+        if (!raw || typeof raw !== 'object') return [];
+        const message = raw as unknown as Record<string, unknown>;
+        if (
+          typeof message.id !== 'string' ||
+          typeof message.senderId !== 'string' ||
+          typeof message.senderName !== 'string' ||
+          typeof message.text !== 'string' ||
+          typeof message.sentAt !== 'string'
+        ) return [];
+        return [{
+          id: message.id,
+          senderId: message.senderId,
+          senderName: message.senderName,
+          text: message.text,
+          sentAt: message.sentAt,
+        }];
+      }).slice(-100)
+    : [];
   const draft = room.draft ? {
     stage: room.draft.stage,
     currentPlayerId: room.draft.currentPlayerId ?? null,
@@ -1159,6 +1442,7 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
     members,
     playerCount: members.length,
     botIntelligence,
+    chatMessages,
     ...(ruleConfig ? { ruleConfig } : {}),
     ...(draft ? { draft } : {}),
   };

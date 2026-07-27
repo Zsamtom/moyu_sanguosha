@@ -1,9 +1,20 @@
 import { Button, Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Progress, Select, Skeleton, Tag } from 'antd';
-import { useMemo, useState } from 'react';
-import { BOT_INTELLIGENCE_NAMES, type BotIntelligence, type PackId, type RoomDetail, type RoomRuleConfig, type RoomSummary } from '../types';
+import { useMemo, useRef, useState } from 'react';
+import {
+  BOT_INTELLIGENCE_NAMES,
+  DOUDIZHU_BOT_INTELLIGENCE_NAMES,
+  GOUJI_BOT_INTELLIGENCE_NAMES,
+  type BotIntelligence,
+  type GameType,
+  type PackId,
+  type RoomDetail,
+  type RoomRuleConfig,
+  type RoomSummary,
+} from '../types';
 
 interface CreateRoomValues {
   name: string;
+  gameType: GameType;
   maxPlayers: number;
   botIntelligence: BotIntelligence;
   enabledGeneralPacks: PackId[];
@@ -22,8 +33,9 @@ interface LobbyScreenProps {
   onCreate: (
     name: string,
     maxPlayers: number,
-    ruleConfig: RoomRuleConfig,
+    ruleConfig: RoomRuleConfig | undefined,
     botIntelligence: BotIntelligence,
+    gameType: GameType,
   ) => Promise<RoomDetail>;
   onJoin: (roomId: string) => Promise<void>;
 }
@@ -48,10 +60,12 @@ const packOptions: Array<{ label: string; value: PackId }> = [
 export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: LobbyScreenProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const createInFlight = useRef(false);
   const [joiningId, setJoiningId] = useState<string>();
   const [filter, setFilter] = useState<'all' | RoomSummary['status']>('all');
   const [keyword, setKeyword] = useState('');
   const [form] = Form.useForm<CreateRoomValues>();
+  const gameType = Form.useWatch('gameType', form) ?? 'sanguosha';
   const selectionMode = Form.useWatch('selectionMode', form);
   const enabledPacks = Form.useWatch('enabledGeneralPacks', form);
 
@@ -69,24 +83,36 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
   const playerCount = rooms.reduce((total, room) => total + room.playerCount, 0);
 
   const createRoom = async (values: CreateRoomValues) => {
+    if (createInFlight.current) return;
+    createInFlight.current = true;
     setCreating(true);
     try {
-      await onCreate(values.name.trim(), values.maxPlayers, {
-        ruleSetVersion: 'original-66-v1',
-        enabledGeneralPacks: values.enabledGeneralPacks,
-        generalSelection: {
-          mode: values.selectionMode,
-          candidatesPerPlayer: values.selectionMode === 'choice' ? values.candidatesPerPlayer : 1,
-          allowDuplicateGenerals: values.allowDuplicateGenerals,
-        },
-        deckProfile: 'original-160',
-        maximumReshuffles: values.maximumReshuffles,
-        lordBonusMinimumPlayers: values.lordBonusMinimumPlayers,
-        godFactionChoice: values.godFactionChoice ?? true,
-      }, values.botIntelligence);
+      const ruleConfig: RoomRuleConfig | undefined = values.gameType === 'sanguosha'
+        ? {
+            ruleSetVersion: 'original-66-v1',
+            enabledGeneralPacks: values.enabledGeneralPacks,
+            generalSelection: {
+              mode: values.selectionMode,
+              candidatesPerPlayer: values.selectionMode === 'choice' ? values.candidatesPerPlayer : 1,
+              allowDuplicateGenerals: values.allowDuplicateGenerals,
+            },
+            deckProfile: 'original-160',
+            maximumReshuffles: values.maximumReshuffles,
+            lordBonusMinimumPlayers: values.lordBonusMinimumPlayers,
+            godFactionChoice: values.godFactionChoice ?? true,
+          }
+        : undefined;
+      await onCreate(
+        values.name.trim(),
+        values.gameType === 'gouji' ? 6 : values.gameType === 'doudizhu' ? 3 : values.maxPlayers,
+        ruleConfig,
+        values.botIntelligence ?? 3,
+        values.gameType,
+      );
       setCreateOpen(false);
       form.resetFields();
     } finally {
+      createInFlight.current = false;
       setCreating(false);
     }
   };
@@ -165,7 +191,10 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                     <div className="room-mark" aria-hidden="true">#</div>
                     <div>
                       <h3>{room.name}</h3>
-                      <p>{room.hostName ? `房主 · ${room.hostName}` : `房间号 · ${room.id.slice(0, 8)}`}</p>
+                      <p>
+                        {room.gameType === 'gouji' ? '够级' : room.gameType === 'doudizhu' ? '斗地主' : '三国杀'} · {' '}
+                        {room.hostName ? `房主 ${room.hostName}` : `房间号 ${room.id.slice(0, 8)}`}
+                      </p>
                     </div>
                     <Tag color={room.status === 'waiting' ? 'green' : room.status === 'drafting' ? 'blue' : room.status === 'playing' ? 'orange' : 'default'}>
                       {statusLabel[room.status]}
@@ -209,6 +238,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
           layout="vertical"
           requiredMark={false}
           initialValues={{
+            gameType: 'sanguosha',
             maxPlayers: 5,
             botIntelligence: 3,
             enabledGeneralPacks: ['standard', 'sp'],
@@ -232,34 +262,79 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
           >
             <Input placeholder="例如：周末欢乐局" maxLength={24} showCount autoFocus />
           </Form.Item>
-          <Form.Item
-            label="最大人数"
-            name="maxPlayers"
-            extra="经典身份局建议 5—8 人，最多支持 10 人"
-            rules={[{ required: true, message: '请选择人数' }]}
-          >
-            <InputNumber min={2} max={10} precision={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="机器人智略" name="botIntelligence" extra="仅影响机器人决策；默认虎贲校尉。">
-            <Select options={Object.entries(BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
-              value: Number(value),
-              label: `${value} · ${label}`,
-            }))} />
-          </Form.Item>
-          <Form.Item
-            label="武将扩展包"
-            name="enabledGeneralPacks"
-            rules={[{ required: true, message: '请至少启用一个武将包' }]}
-          >
-            <Checkbox.Group options={packOptions} />
-          </Form.Item>
-          <Form.Item label="选将方式" name="selectionMode">
+          <Form.Item label="游戏类型" name="gameType">
             <Select options={[
-              { value: 'random', label: '服务器随机分配' },
-              { value: 'choice', label: '每人从私有候选中选择' },
+              { value: 'sanguosha', label: '三国杀 · 经典身份局' },
+              { value: 'gouji', label: '够级 · 山东 6 人 3V3' },
+              { value: 'doudizhu', label: '斗地主 · 经典 3 人局' },
             ]} />
           </Form.Item>
-          {selectionMode === 'choice' && (
+          {gameType === 'gouji' ? (
+            <>
+              <div className="game-type-note">
+                <strong>够级固定 6 人</strong>
+                <p>196 张牌，甲乙联邦交错落座；支持真人与服务器机器人混合开局。</p>
+                <p>已启用憋 3、4 全出、够级隔离、开点、烧牌、让牌与头科至大拉结算。</p>
+              </div>
+              <Form.Item
+                label="机器人水平"
+                name="botIntelligence"
+                extra="昵称随机生成；小字显示对应水平头衔。"
+              >
+                <Select options={Object.entries(GOUJI_BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+                  value: Number(value),
+                  label: `${value} · ${label}`,
+                }))} />
+              </Form.Item>
+            </>
+          ) : gameType === 'doudizhu' ? (
+            <>
+              <div className="game-type-note">
+                <strong>斗地主固定 3 人</strong>
+                <p>标准 54 张牌，三人依次叫分；地主获得 3 张底牌，先出完手牌的一方获胜。</p>
+                <p>支持顺子、连对、飞机、四带二、炸弹、王炸，以及炸弹与春天倍率。</p>
+              </div>
+              <Form.Item
+                label="机器人水平"
+                name="botIntelligence"
+                extra="机器人会自动叫分、跟牌或不出，可与真人混合开局。"
+              >
+                <Select options={Object.entries(DOUDIZHU_BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+                  value: Number(value),
+                  label: `${value} · ${label}`,
+                }))} />
+              </Form.Item>
+            </>
+          ) : (
+            <>
+              <Form.Item
+                label="最大人数"
+                name="maxPlayers"
+                extra="经典身份局建议 5—8 人，最多支持 10 人"
+                rules={[{ required: true, message: '请选择人数' }]}
+              >
+                <InputNumber min={2} max={10} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item label="机器人智略" name="botIntelligence" extra="仅影响机器人决策；默认虎贲校尉。">
+                <Select options={Object.entries(BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+                  value: Number(value),
+                  label: `${value} · ${label}`,
+                }))} />
+              </Form.Item>
+              <Form.Item
+                label="武将扩展包"
+                name="enabledGeneralPacks"
+                rules={[{ required: true, message: '请至少启用一个武将包' }]}
+              >
+                <Checkbox.Group options={packOptions} />
+              </Form.Item>
+              <Form.Item label="选将方式" name="selectionMode">
+                <Select options={[
+                  { value: 'random', label: '服务器随机分配' },
+                  { value: 'choice', label: '每人从私有候选中选择' },
+                ]} />
+              </Form.Item>
+              {selectionMode === 'choice' && (
             <Form.Item
               label="每人候选数"
               name="candidatesPerPlayer"
@@ -267,8 +342,8 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             >
               <InputNumber min={1} max={10} precision={0} style={{ width: '100%' }} />
             </Form.Item>
-          )}
-          <Collapse
+              )}
+              <Collapse
             ghost
             items={[{
               key: 'advanced',
@@ -293,7 +368,9 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                 </div>
               ),
             }]}
-          />
+              />
+            </>
+          )}
           <Button className="primary-ink-button" type="primary" htmlType="submit" block loading={creating}>
             创建并入席
           </Button>

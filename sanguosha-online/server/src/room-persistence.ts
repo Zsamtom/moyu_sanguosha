@@ -19,6 +19,8 @@ import {
   assertWumouContinuation,
   assertYeyanContinuation,
   assertCompleteRulesEngineState,
+  assertRestorableDoudizhuGameState,
+  assertRestorableGoujiGameState,
   currentDyingEntrySaveSkill,
   currentDyingOwnerResponseSkill,
   currentDyingResponder,
@@ -39,8 +41,10 @@ import {
   standardPromptId,
   type CardUseContinuation,
   type CompleteRulesEngineState,
+  type DoudizhuGameState,
   type GeneralDraftState,
   type GameSession,
+  type GoujiGameState,
   type LifePlayerState,
   type PendingNullificationResponse,
   type PendingDeathResolution,
@@ -87,6 +91,13 @@ const roomRuleConfigSchema = z.object({
     });
   }
 });
+const roomChatMessageSchema = z.object({
+  id: z.string().uuid(),
+  senderId: playerIdSchema,
+  senderName: z.string().min(1).max(80),
+  text: z.string().min(1).max(200),
+  sentAt: z.string().datetime(),
+}).strict();
 const generalDraftSchema = z.object({
   version: z.literal(1),
   playerIds: z.array(playerIdSchema).min(2).max(10),
@@ -4539,10 +4550,29 @@ const gameSessionSchema = z.object({
   if ((game.status === "finished") !== (game.winner !== null)) issue("Game status and winner disagree");
 });
 
+const goujiGameStateSchema = z.custom<GoujiGameState>((value) => {
+  try {
+    assertRestorableGoujiGameState(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Invalid Gouji game state");
+
+const doudizhuGameStateSchema = z.custom<DoudizhuGameState>((value) => {
+  try {
+    assertRestorableDoudizhuGameState(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Invalid Doudizhu game state");
+
 const playerSchema = z.object({
   id: playerIdSchema,
   username: z.string().min(1).max(32),
   displayName: z.string().min(1).max(40),
+  botTitle: z.string().min(1).max(20).optional(),
   ready: z.boolean(),
   connected: z.boolean(),
   seat: z.number().int().min(0).max(9),
@@ -4568,6 +4598,7 @@ function sameRoomRuleConfig(left: RoomRuleConfig, right: RoomRuleConfig): boolea
 const roomSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(40),
+  gameType: z.enum(["sanguosha", "gouji", "doudizhu"]).default("sanguosha"),
   ownerId: playerIdSchema,
   status: z.enum(["waiting", "drafting", "playing", "finished"]),
   maxPlayers: z.number().int().min(2).max(10),
@@ -4575,8 +4606,9 @@ const roomSchema = z.object({
   createdAt: z.string().datetime(),
   players: z.array(playerSchema).min(1).max(10),
   ruleConfig: roomRuleConfigSchema,
+  chatMessages: z.array(roomChatMessageSchema).max(100).default([]),
   draft: generalDraftSchema.optional(),
-  game: gameSessionSchema.optional(),
+  game: z.union([gameSessionSchema, goujiGameStateSchema, doudizhuGameStateSchema]).optional(),
 }).superRefine((room, context) => {
   const issue = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
   const playerIds = room.players.map((player) => player.id);
@@ -4585,6 +4617,9 @@ const roomSchema = z.object({
   if (room.players.some((player, index) => player.seat !== index)) issue("Room seats are not contiguous");
   if (!activePlayerIds.includes(room.ownerId)) issue("Room owner is not an active member");
   if (room.players.length > room.maxPlayers) issue("Room exceeds maxPlayers");
+  if (room.gameType === "gouji" && room.maxPlayers !== 6) issue("Gouji room must have exactly 6 seats");
+  if (room.gameType === "doudizhu" && room.maxPlayers !== 3) issue("Doudizhu room must have exactly 3 seats");
+  if (room.gameType !== "sanguosha" && room.status === "drafting") issue("Only Sanguosha rooms may draft generals");
   if (room.status === "waiting" && (room.draft || room.game)) {
     issue("Waiting room unexpectedly contains draft or game state");
   }
@@ -4610,8 +4645,19 @@ const roomSchema = z.object({
       issue("Room members and game players disagree");
     }
     if (room.status !== room.game.status) issue("Room status and game status disagree");
-    if (!sameRoomRuleConfig(room.ruleConfig, room.game.completeRules.ruleConfig)) {
-      issue("Room and game rule configurations disagree");
+    if ("kind" in room.game) {
+      if (room.game.kind === "gouji" && room.gameType !== "gouji") {
+        issue("Room game type and game state disagree");
+      }
+      if (room.game.kind === "doudizhu" && room.gameType !== "doudizhu") {
+        issue("Room game type and game state disagree");
+      }
+    } else {
+      const sanguoshaGame = room.game as GameSession;
+      if (room.gameType !== "sanguosha") issue("Room game type and game state disagree");
+      if (!sameRoomRuleConfig(room.ruleConfig, sanguoshaGame.completeRules.ruleConfig)) {
+        issue("Room and Sanguosha game rule configurations disagree");
+      }
     }
   }
 });
@@ -4765,10 +4811,43 @@ function migrateRoomSnapshot(value: unknown): unknown {
   for (const rawRoom of migrated.rooms) {
     if (!rawRoom || typeof rawRoom !== "object") continue;
     const room = rawRoom as Record<string, unknown>;
+    if (room.gameType === undefined) room.gameType = "sanguosha";
     const hadRoomRuleConfig = room.ruleConfig !== undefined;
     if (!hadRoomRuleConfig) room.ruleConfig = structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG);
     if (!room.game || typeof room.game !== "object") continue;
     const game = room.game as Record<string, unknown>;
+    if (room.gameType === "doudizhu" || game.kind === "doudizhu") {
+      if (Array.isArray(game.players)) {
+        for (const rawPlayer of game.players) {
+          if (!rawPlayer || typeof rawPlayer !== "object") continue;
+          const player = rawPlayer as Record<string, unknown>;
+          if (player.beans === undefined) player.beans = 10_000;
+          if (player.beanDelta === undefined) player.beanDelta = 0;
+        }
+      }
+      if (game.winner && typeof game.winner === "object") {
+        const winner = game.winner as Record<string, unknown>;
+        if (winner.beanStake === undefined) winner.beanStake = 0;
+        if (winner.settlements === undefined) {
+          winner.settlements = Array.isArray(game.players)
+            ? game.players.flatMap((rawPlayer) => {
+                if (!rawPlayer || typeof rawPlayer !== "object") return [];
+                const player = rawPlayer as Record<string, unknown>;
+                return [{
+                  playerId: player.id,
+                  delta: player.beanDelta,
+                  balance: player.beans,
+                }];
+              })
+            : [];
+        }
+      }
+      continue;
+    }
+    if (
+      room.gameType === "gouji" ||
+      game.kind === "gouji"
+    ) continue;
     if (game.revision === undefined) game.revision = 0;
     if (game.nextUseId === undefined) game.nextUseId = 1;
     if (game.nextEventId === undefined) game.nextEventId = 1;
@@ -4823,7 +4902,13 @@ export async function loadRoomSnapshot(pool: Pool): Promise<RoomSnapshotLoadResu
   if (value === undefined) return { kind: "empty" };
   const parsed = roomSnapshotSchema.safeParse(migrateRoomSnapshot(value));
   if (!parsed.success) {
-    return { kind: "invalid", reason: parsed.error.issues.map((issue) => issue.message).join("; ").slice(0, 2_000) };
+    const messages = parsed.error.issues.flatMap((issue): string[] => {
+      if (issue.code === z.ZodIssueCode.invalid_union) {
+        return issue.unionErrors.flatMap((error) => error.issues.map((nested) => nested.message));
+      }
+      return [issue.message];
+    });
+    return { kind: "invalid", reason: messages.join("; ").slice(0, 2_000) };
   }
   return { kind: "valid", snapshot: parsed.data as unknown as RoomServiceSnapshot };
 }

@@ -1,6 +1,6 @@
-# 摸鱼三国杀
+# 墨鱼
 
-面向电脑浏览器的多人文字版三国杀，采用 React、Node.js、PostgreSQL 与服务端权威规则引擎实现。支持管理员分配账号、真人或机器人开房、实时对局、断线恢复，以及标准、SP、风、火、林、山、神武将包。
+面向电脑浏览器的私人游戏与功能工作区，采用 React、Node.js、PostgreSQL 与服务端权威规则引擎实现。当前“游戏”包含三国杀、固定 6 人 3V3 的山东够级和经典 3 人斗地主；“功能”包含支持本地 TXT、中文编码、章节识别与技术文档模式的小说阅读器。
 
 示例网站：https://moyu.pdcat.cn
 
@@ -30,4 +30,4 @@ pnpm check
 
 生产环境请使用 `sanguosha-online/docker-compose.yml`，并在服务器本地创建 `.env`；任何密钥、数据库数据、`node_modules`、构建输出或本地发布压缩包都不应提交到 GitHub。
 
-规则实现参考 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)。公开运营前请自行确认名称、美术及第三方素材授权。
+规则实现参考 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha) 与 [alun-430/gouji](https://github.com/alun-430/gouji)。公开运营前请自行确认名称、美术及第三方素材授权。

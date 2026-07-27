@@ -95,6 +95,25 @@ const CHOICE_RULE_CONFIG: RoomRuleConfig = {
 };
 
 describe("RoomService", () => {
+  it("keeps a bounded, member-only room chat history", () => {
+    const rooms = new RoomService();
+    const created = rooms.create(owner, { name: "聊天房间", maxPlayers: 3 });
+    rooms.join(created.id, guest);
+
+    const message = rooms.sendChat(created.id, owner.id, "  大家好  ");
+    expect(message).toMatchObject({
+      senderId: owner.id,
+      senderName: owner.displayName,
+      text: "大家好",
+    });
+    expect(rooms.getForUser(guest.id)?.chatMessages).toEqual([message]);
+    expect(() => rooms.sendChat(created.id, third.id, "未加入")).toThrowError(HttpError);
+
+    const restored = new RoomService();
+    restored.restoreSnapshot(rooms.exportSnapshot());
+    expect(restored.getForUser(owner.id)?.chatMessages).toEqual([message]);
+  });
+
   it("lets one human add a ready bot and start a game that auto-plays bot prompts", () => {
     const rooms = new RoomService();
     const created = rooms.create(owner, { name: "单人机器人局", maxPlayers: 2 });
@@ -128,6 +147,7 @@ describe("RoomService", () => {
     if (!game || !bot || !botPlayer || !ownerPlayer || !thirdPlayer) throw new Error("Missing intelligence fixture");
 
     bot.isBot = true;
+    botPlayer.generalId = "gan_ning";
     game.discardPile.push(...botPlayer.hand);
     botPlayer.hand = [standardCard("smart-slash", "slash")];
     botPlayer.role = "loyalist";

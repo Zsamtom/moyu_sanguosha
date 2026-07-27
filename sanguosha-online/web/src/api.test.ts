@@ -12,7 +12,7 @@ const ruleConfig: RoomRuleConfig = {
   godFactionChoice: true,
 };
 
-function roomPayload(status: 'waiting' | 'drafting' | 'playing' = 'drafting') {
+function roomPayload(status: 'waiting' | 'drafting' | 'playing' | 'finished' = 'drafting') {
   return {
     id: 'room-1',
     name: '风火选将',
@@ -51,15 +51,39 @@ describe('room draft API', () => {
   it('keeps existing room creation calls compatible and optionally sends rule configuration', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ room: roomPayload('waiting') }))
-      .mockResolvedValueOnce(jsonResponse({ room: roomPayload('waiting') }));
+      .mockResolvedValueOnce(jsonResponse({ room: roomPayload('waiting') }))
+      .mockResolvedValueOnce(jsonResponse({
+        room: { ...roomPayload('waiting'), gameType: 'gouji', maxPlayers: 6 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        room: { ...roomPayload('waiting'), gameType: 'doudizhu', maxPlayers: 3 },
+      }));
     vi.stubGlobal('fetch', fetchMock);
 
     await api.createRoom('默认规则', 5);
     const configured = await api.createRoom('风火选将', 5, ruleConfig, 7);
+    // The lobby can still hold preserved Sanguosha fields after switching the
+    // game selector. Gouji requests must never forward that unrelated config.
+    const gouji = await api.createRoom('够级房', 6, ruleConfig, 5, 'gouji');
+    const doudizhu = await api.createRoom('斗地主房', 3, ruleConfig, 4, 'doudizhu');
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5, botIntelligence: 3 });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, botIntelligence: 7, ruleConfig });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      name: '够级房',
+      maxPlayers: 6,
+      botIntelligence: 5,
+      gameType: 'gouji',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+      name: '斗地主房',
+      maxPlayers: 3,
+      botIntelligence: 4,
+      gameType: 'doudizhu',
+    });
     expect(configured.ruleConfig).toEqual(ruleConfig);
+    expect(gouji).toMatchObject({ gameType: 'gouji', maxPlayers: 6 });
+    expect(doudizhu).toMatchObject({ gameType: 'doudizhu', maxPlayers: 3 });
   });
 
   it('returns the private room projection when starting a choice-mode room', async () => {
@@ -90,5 +114,20 @@ describe('room draft API', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ faction: 'wu' });
     expect(selected.draft?.candidates).toEqual(['cao_cao', 'liu_bei']);
     expect(started).toMatchObject({ status: 'playing' });
+  });
+
+  it('confirms a Doudizhu rematch through the room endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      room: { ...roomPayload('playing'), gameType: 'doudizhu', maxPlayers: 3 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const room = await api.rematchRoom('room/03');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rooms/room%2F03/rematch',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(room).toMatchObject({ gameType: 'doudizhu', status: 'playing' });
   });
 });

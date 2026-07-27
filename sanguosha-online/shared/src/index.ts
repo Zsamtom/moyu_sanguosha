@@ -1,4 +1,6 @@
 export * from "./types.js";
+export * from "./gouji.js";
+export * from "./doudizhu.js";
 export {
   ALL_GENERALS,
   DEFAULT_GENERALS,

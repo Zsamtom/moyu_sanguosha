@@ -3,7 +3,9 @@ import {
   FULL_GENERAL_IDS,
   FULL_GENERAL_PACKS,
   validateRoomRuleConfig,
+  type DoudizhuAction,
   type GameAction,
+  type GoujiAction,
 } from "@sanguosha/shared";
 import { z } from "zod";
 import { DEFAULT_BOT_INTELLIGENCE } from "./bot-intelligence.js";
@@ -38,10 +40,26 @@ export const roomRuleConfigSchema = z.object({
 
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(40),
+  gameType: z.enum(["sanguosha", "gouji", "doudizhu"]).optional(),
   maxPlayers: z.number().int().min(2).max(10).optional(),
   botIntelligence: botIntelligenceSchema.default(DEFAULT_BOT_INTELLIGENCE),
   ruleConfig: roomRuleConfigSchema.optional(),
-}).strict();
+}).strict().superRefine((input, context) => {
+  if (input.gameType === "gouji" && input.maxPlayers !== undefined && input.maxPlayers !== 6) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxPlayers"],
+      message: "够级固定为 6 人",
+    });
+  }
+  if (input.gameType === "doudizhu" && input.maxPlayers !== undefined && input.maxPlayers !== 3) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxPlayers"],
+      message: "斗地主固定为 3 人",
+    });
+  }
+});
 
 const generalIdSchema = z.enum(FULL_GENERAL_IDS);
 const playableFactionSchema = z.enum(["wei", "shu", "wu", "qun"]);
@@ -52,6 +70,12 @@ export const chooseGeneralPayloadSchema = chooseGeneralSchema.extend({ roomId: r
 export const chooseGodFactionPayloadSchema = chooseGodFactionSchema.extend({ roomId: roomIdSchema }).strict();
 
 export const readySchema = z.object({ ready: z.boolean() });
+export const chatMessageSchema = z.object({
+  message: z.string().trim().min(1).max(200),
+}).strict();
+export const chatMessagePayloadSchema = chatMessageSchema.extend({
+  roomId: roomIdSchema,
+}).strict();
 
 const playerId = z.string().uuid();
 const cardId = z.string().min(1).max(100);
@@ -215,10 +239,43 @@ const parsedGameActionSchema = z.discriminatedUnion("type", [
 
 export const gameActionSchema = parsedGameActionSchema.transform((action): GameAction => action);
 
+export const goujiActionSchema = z.discriminatedUnion("type", [
+  strictObject({
+    type: z.literal("gouji_play"),
+    playerId,
+    cardIds: z.array(cardId).min(1).max(40),
+  }),
+  strictObject({
+    type: z.literal("gouji_pass"),
+    playerId,
+  }),
+  strictObject({
+    type: z.literal("gouji_yield"),
+    playerId,
+  }),
+]).transform((action): GoujiAction => action);
+
+export const doudizhuActionSchema = z.discriminatedUnion("type", [
+  strictObject({
+    type: z.literal("doudizhu_bid"),
+    playerId,
+    score: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
+  }),
+  strictObject({
+    type: z.literal("doudizhu_play"),
+    playerId,
+    cardIds: z.array(cardId).min(1).max(20),
+  }),
+  strictObject({
+    type: z.literal("doudizhu_pass"),
+    playerId,
+  }),
+]).transform((action): DoudizhuAction => action);
+
 export const gameActionEnvelopeSchema = z.object({
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   expectedPromptId: promptId,
-  action: gameActionSchema,
+  action: z.union([gameActionSchema, goujiActionSchema, doudizhuActionSchema]),
 }).strict();
 
 export const gameActionPayloadSchema = gameActionEnvelopeSchema.extend({ roomId: roomIdSchema }).strict();

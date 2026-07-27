@@ -6,9 +6,11 @@ import {
   chooseGodFactionPayloadSchema,
   chooseGodFactionSchema,
   createRoomSchema,
+  doudizhuActionSchema,
   gameActionEnvelopeSchema,
   gameActionPayloadSchema,
   gameActionSchema,
+  goujiActionSchema,
   roomRuleConfigSchema,
 } from "./room-schemas.js";
 
@@ -51,6 +53,20 @@ describe("room creation and draft schemas", () => {
     expect(createRoomSchema.parse({ name: "默认房" })).toEqual({ name: "默认房", botIntelligence: 3 });
     expect(createRoomSchema.parse({ name: "军师房", botIntelligence: 7 })).toMatchObject({ botIntelligence: 7 });
     expect(createRoomSchema.safeParse({ name: "越界房", botIntelligence: 8 }).success).toBe(false);
+    expect(createRoomSchema.parse({ name: "够级房", gameType: "gouji", maxPlayers: 6 })).toMatchObject({
+      name: "够级房",
+      gameType: "gouji",
+      maxPlayers: 6,
+      botIntelligence: 3,
+    });
+    expect(createRoomSchema.safeParse({ name: "人数不足", gameType: "gouji", maxPlayers: 5 }).success).toBe(false);
+    expect(createRoomSchema.parse({ name: "斗地主房", gameType: "doudizhu", maxPlayers: 3 })).toMatchObject({
+      name: "斗地主房",
+      gameType: "doudizhu",
+      maxPlayers: 3,
+      botIntelligence: 3,
+    });
+    expect(createRoomSchema.safeParse({ name: "人数错误", gameType: "doudizhu", maxPlayers: 4 }).success).toBe(false);
 
     expect(createRoomSchema.safeParse({ name: "房间", injected: true }).success).toBe(false);
     expect(createRoomSchema.safeParse({
@@ -109,6 +125,63 @@ describe("gameActionSchema skill actions", () => {
     expect(gameActionEnvelopeSchema.safeParse({ ...envelope, expectedRevision: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
     expect(gameActionEnvelopeSchema.safeParse({ ...envelope, injected: true }).success).toBe(false);
     expect(gameActionPayloadSchema.safeParse({ roomId, ...envelope, injected: true }).success).toBe(false);
+  });
+
+  it("accepts strict Gouji play, pass, and yield actions", () => {
+    expect(goujiActionSchema.parse({
+      type: "gouji_play",
+      playerId,
+      cardIds: ["gouji-card-1", "gouji-card-2"],
+    })).toEqual({
+      type: "gouji_play",
+      playerId,
+      cardIds: ["gouji-card-1", "gouji-card-2"],
+    });
+    expect(goujiActionSchema.parse({ type: "gouji_pass", playerId })).toEqual({
+      type: "gouji_pass",
+      playerId,
+    });
+    expect(goujiActionSchema.parse({ type: "gouji_yield", playerId })).toEqual({
+      type: "gouji_yield",
+      playerId,
+    });
+    expect(goujiActionSchema.safeParse({
+      type: "gouji_play",
+      playerId,
+      cardIds: [],
+    }).success).toBe(false);
+    expect(goujiActionSchema.safeParse({
+      type: "gouji_pass",
+      playerId,
+      cardIds: ["server-must-reject"],
+    }).success).toBe(false);
+  });
+
+  it("accepts strict Doudizhu bid, play, and pass actions", () => {
+    expect(doudizhuActionSchema.parse({
+      type: "doudizhu_bid",
+      playerId,
+      score: 2,
+    })).toEqual({ type: "doudizhu_bid", playerId, score: 2 });
+    expect(doudizhuActionSchema.parse({
+      type: "doudizhu_play",
+      playerId,
+      cardIds: ["doudizhu-card-1"],
+    })).toEqual({ type: "doudizhu_play", playerId, cardIds: ["doudizhu-card-1"] });
+    expect(doudizhuActionSchema.parse({ type: "doudizhu_pass", playerId })).toEqual({
+      type: "doudizhu_pass",
+      playerId,
+    });
+    expect(doudizhuActionSchema.safeParse({
+      type: "doudizhu_bid",
+      playerId,
+      score: 4,
+    }).success).toBe(false);
+    expect(doudizhuActionSchema.safeParse({
+      type: "doudizhu_pass",
+      playerId,
+      cardIds: ["server-must-reject"],
+    }).success).toBe(false);
   });
 
   it("accepts supported active and conversion skill payloads", () => {

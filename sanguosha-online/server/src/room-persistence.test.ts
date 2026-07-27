@@ -7,6 +7,7 @@ import {
   chooseGeneral,
   chooseGodFaction,
   createDeathFrame,
+  createDoudizhuGame,
   createDyingFrame,
   createGame,
   createGameFromDraft,
@@ -41,6 +42,70 @@ function standardCard(id: string, kind: CardKind, suit: Card["suit"] = "spade"):
 }
 
 describe("room snapshot persistence", () => {
+  it("loads a complete Doudizhu room without passing it through Sanguosha migration", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    ];
+    const game = createDoudizhuGame({
+      players: playerIds.map((id, seat) => ({ id, name: `牌手${seat + 1}` })),
+      seed: "dd".repeat(32),
+    });
+    for (const player of game.players as Array<Record<string, unknown>>) {
+      delete player.beans;
+      delete player.beanDelta;
+    }
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "持久化斗地主",
+        gameType: "doudizhu",
+        ownerId: playerIds[0]!,
+        status: "playing",
+        maxPlayers: 3,
+        createdAt: new Date().toISOString(),
+        botIntelligence: 3,
+        chatMessages: [{
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          senderId: playerIds[0]!,
+          senderName: "牌手1",
+          text: "准备开始",
+          sentAt: new Date().toISOString(),
+        }],
+        ruleConfig: structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG),
+        players: playerIds.map((id, seat) => ({
+          id,
+          username: `ddz-${seat}`,
+          displayName: `牌手${seat + 1}`,
+          ready: true,
+          connected: false,
+          seat,
+          isBot: seat > 0,
+        })),
+        game,
+      }],
+    };
+
+    const result = await loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot }] }) as Pool["query"],
+    ));
+    expect(result.kind).toBe("valid");
+    if (result.kind !== "valid") throw new Error(result.reason);
+    expect(result.snapshot.rooms[0]).toMatchObject({
+      gameType: "doudizhu",
+      maxPlayers: 3,
+      chatMessages: [{ text: "准备开始" }],
+      game: { kind: "doudizhu", phase: "bidding" },
+    });
+    const restoredGame = result.snapshot.rooms[0]?.game;
+    if (!restoredGame || !("kind" in restoredGame) || restoredGame.kind !== "doudizhu") {
+      throw new Error("Missing migrated Doudizhu game");
+    }
+    expect(restoredGame.players.map((player) => player.beans)).toEqual([10_000, 10_000, 10_000]);
+  });
+
   it("migrates the legacy server rule config without changing authoritative game progress", async () => {
     const playerIds = [
       "11111111-1111-4111-8111-111111111111",

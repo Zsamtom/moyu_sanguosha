@@ -2,7 +2,7 @@ import { Badge, Button, Layout, Space, Tag } from 'antd';
 import type { AuthUser } from '../types';
 import { Brand } from './Brand';
 
-type ShellView = 'lobby' | 'admin' | 'room' | 'game';
+type ShellView = 'lobby' | 'reader' | 'admin' | 'room' | 'game';
 
 interface AppShellProps {
   user: AuthUser;
@@ -10,6 +10,7 @@ interface AppShellProps {
   connected: boolean;
   children: React.ReactNode;
   onLobby: () => void;
+  onReader: () => void;
   onAdmin: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
@@ -21,6 +22,7 @@ export function AppShell({
   connected,
   children,
   onLobby,
+  onReader,
   onAdmin,
   onChangePassword,
   onLogout,
@@ -31,13 +33,30 @@ export function AppShell({
       {!lockedInRoom && <header className="app-header">
         <Brand compact />
         <nav className="app-nav" aria-label="主导航">
-          <Button aria-current={view === 'lobby' ? 'page' : undefined} type={view === 'lobby' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onLobby}>
-            房间目录
-          </Button>
-          {user.role === 'admin' && (
-            <Button aria-current={view === 'admin' ? 'page' : undefined} type={view === 'admin' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onAdmin}>
-              账号管理
+          <section className="app-nav__section" aria-labelledby="game-navigation">
+            <span id="game-navigation" className="app-nav__label">游戏</span>
+            <Button aria-current={view === 'lobby' ? 'page' : undefined} type={view === 'lobby' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onLobby}>
+              游戏大厅
             </Button>
+            <div className="app-nav__meta" aria-label="已接入游戏">
+              <span>三国杀</span>
+              <span>够级</span>
+              <span>斗地主</span>
+            </div>
+          </section>
+          <section className="app-nav__section" aria-labelledby="function-navigation">
+            <span id="function-navigation" className="app-nav__label">功能</span>
+            <Button aria-current={view === 'reader' ? 'page' : undefined} type={view === 'reader' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onReader}>
+              TXT 小说阅读
+            </Button>
+          </section>
+          {user.role === 'admin' && (
+            <section className="app-nav__section" aria-labelledby="admin-navigation">
+              <span id="admin-navigation" className="app-nav__label">管理</span>
+              <Button aria-current={view === 'admin' ? 'page' : undefined} type={view === 'admin' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onAdmin}>
+                账号管理
+              </Button>
+            </section>
           )}
         </nav>
         <Space className="app-account" size="middle">

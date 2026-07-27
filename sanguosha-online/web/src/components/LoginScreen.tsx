@@ -18,15 +18,15 @@ export function LoginScreen({ loading, error, onLogin }: LoginScreenProps) {
       <section className="login-intro" aria-labelledby="login-title">
         <div className="login-intro__content">
           <Brand />
-          <p className="login-eyebrow">Internal workspace</p>
-          <h1 id="login-title">项目文档与<br />实时协作。</h1>
+          <p className="login-eyebrow">Games &amp; utilities</p>
+          <h1 id="login-title">游戏与功能，<br />都在墨鱼。</h1>
           <p className="login-description">
-            面向受邀成员的内部工作区。房间状态、操作记录与规则结算由服务器统一同步。
+            面向受邀成员的私人工作区。多人游戏由服务器统一同步，实用功能保留在你的浏览器中。
           </p>
-          <div className="login-features" aria-label="游戏特点">
-            <span>实时状态同步</span>
-            <span>服务端一致性</span>
-            <span>管理员账号分配</span>
+          <div className="login-features" aria-label="网站功能">
+            <span>三国杀与够级</span>
+            <span>TXT 小说阅读</span>
+            <span>私人账号访问</span>
           </div>
         </div>
         <div className="ink-orbit" aria-hidden="true">

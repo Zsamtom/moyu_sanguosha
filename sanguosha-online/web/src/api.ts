@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, FullGeneralId, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
+import type { AuthUser, BotIntelligence, FullGeneralId, GameType, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -98,10 +98,17 @@ export const api = {
     maxPlayers: number,
     ruleConfig?: RoomRuleConfig,
     botIntelligence: BotIntelligence = 3,
+    gameType: GameType = 'sanguosha',
   ): Promise<RoomDetail> {
     const result = await request<RoomDetail | { room: RoomDetail }>('/api/rooms', {
       method: 'POST',
-      ...jsonBody({ name, maxPlayers, botIntelligence, ...(ruleConfig ? { ruleConfig } : {}) }),
+      ...jsonBody({
+        name,
+        maxPlayers,
+        botIntelligence,
+        ...(gameType !== 'sanguosha' ? { gameType } : {}),
+        ...(gameType === 'sanguosha' && ruleConfig ? { ruleConfig } : {}),
+      }),
     });
     return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
   },
@@ -127,6 +134,14 @@ export const api = {
 
   async startRoom(roomId: string): Promise<RoomDetail> {
     const result = await request<RoomDetail | { room: RoomDetail }>(`/api/rooms/${encodeURIComponent(roomId)}/start`, { method: 'POST' });
+    return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
+  },
+
+  async rematchRoom(roomId: string): Promise<RoomDetail> {
+    const result = await request<RoomDetail | { room: RoomDetail }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/rematch`,
+      { method: 'POST' },
+    );
     return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
   },
 

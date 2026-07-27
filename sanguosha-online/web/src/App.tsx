@@ -4,23 +4,28 @@ import { api, ApiError, errorMessage } from './api';
 import { AdminUsersScreen } from './components/AdminUsersScreen';
 import { AppShell } from './components/AppShell';
 import { ChangePasswordModal, RequiredPasswordChangeScreen } from './components/ChangePasswordScreen';
+import { DoudizhuBoard } from './components/DoudizhuBoard';
 import { GameBoard } from './components/GameBoard';
+import { GoujiBoard } from './components/GoujiBoard';
 import { LobbyScreen } from './components/LobbyScreen';
 import { LoginScreen } from './components/LoginScreen';
+import { NovelReaderScreen } from './components/NovelReaderScreen';
 import { RoomScreen } from './components/RoomScreen';
+import { RoomChat } from './components/RoomChat';
 import { realtime } from './realtime';
 import type {
   AuthUser,
   BotIntelligence,
   FullGeneralId,
-  GameAction,
+  AnyGameAction,
   GameLogEntry,
+  GameType,
   PlayableFaction,
   RoomDetail,
   RoomRuleConfig,
   RoomSummary,
 } from './types';
-import { normalizeGameView } from './types';
+import { isDoudizhuGameView, isGoujiGameView, normalizeGameView } from './types';
 
 const documentTheme = {
   token: {
@@ -55,7 +60,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [rawGame, setRawGame] = useState<unknown | null>(null);
   const [extraLogs, setExtraLogs] = useState<GameLogEntry[]>([]);
-  const [adminMode, setAdminMode] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<'lobby' | 'reader' | 'admin'>('lobby');
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -63,10 +68,12 @@ export default function App() {
   const [passwordError, setPasswordError] = useState<string>();
 
   const game = useMemo(() => {
-    if (!rawGame || !user) return null;
+    if (!rawGame || !user || isGoujiGameView(rawGame) || isDoudizhuGameView(rawGame)) return null;
     const normalized = normalizeGameView(rawGame, { roomId: room?.id, room, userId: user.id });
     return extraLogs.length ? { ...normalized, logs: [...normalized.logs, ...extraLogs] } : normalized;
   }, [extraLogs, rawGame, room, user]);
+  const goujiGame = useMemo(() => isGoujiGameView(rawGame) ? rawGame : null, [rawGame]);
+  const doudizhuGame = useMemo(() => isDoudizhuGameView(rawGame) ? rawGame : null, [rawGame]);
 
   const refreshRooms = useCallback(async () => {
     setRoomsLoading(true);
@@ -163,7 +170,7 @@ export default function App() {
     setRawGame(null);
     setRooms([]);
     setUsers([]);
-    setAdminMode(false);
+    setWorkspaceView('lobby');
     setPasswordOpen(false);
     setPasswordError(undefined);
   };
@@ -186,13 +193,14 @@ export default function App() {
   const createRoom = async (
     name: string,
     maxPlayers: number,
-    ruleConfig: RoomRuleConfig,
+    ruleConfig: RoomRuleConfig | undefined,
     botIntelligence: BotIntelligence,
+    gameType: GameType,
   ) => {
     try {
-      const created = await api.createRoom(name, maxPlayers, ruleConfig, botIntelligence);
+      const created = await api.createRoom(name, maxPlayers, ruleConfig, botIntelligence, gameType);
       setRoom(created);
-      setAdminMode(false);
+      setWorkspaceView('lobby');
       toast.success('房间已创建');
       return created;
     } catch (error) {
@@ -204,7 +212,7 @@ export default function App() {
   const joinRoom = async (roomId: string) => {
     try {
       setRoom(await api.joinRoom(roomId));
-      setAdminMode(false);
+      setWorkspaceView('lobby');
       toast.success('已加入房间');
     } catch (error) {
       toast.error(errorMessage(error));
@@ -230,6 +238,18 @@ export default function App() {
       const updated = await api.startRoom(room.id);
       setRoom(updated);
       toast.success(updated.status === 'drafting' ? '进入选将' : '游戏开始');
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const rematchRoom = async () => {
+    if (!room) return;
+    try {
+      const updated = await api.rematchRoom(room.id);
+      setRoom(updated);
+      toast.success(updated.status === 'playing' ? '下一局已开始' : '已确认，等待其他真人玩家');
     } catch (error) {
       toast.error(errorMessage(error));
       throw error;
@@ -284,10 +304,20 @@ export default function App() {
     }
   };
 
-  const sendAction = async (action: GameAction) => {
-    if (!game) return;
+  const sendAction = async (action: AnyGameAction) => {
+    if (!game && !goujiGame && !doudizhuGame) return;
     try {
-      await realtime.sendGameAction(game.roomId || room?.id || '', action);
+      await realtime.sendGameAction(game?.roomId || room?.id || '', action);
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const sendRoomChat = async (text: string) => {
+    if (!room) return;
+    try {
+      await realtime.sendRoomChat(room.id, text);
     } catch (error) {
       toast.error(errorMessage(error));
       throw error;
@@ -393,7 +423,7 @@ export default function App() {
     );
   }
 
-  const view = game ? 'game' : room ? 'room' : adminMode ? 'admin' : 'lobby';
+  const view = game || goujiGame || doudizhuGame ? 'game' : room ? 'room' : workspaceView;
 
   return (
     <ConfigProvider
@@ -404,15 +434,34 @@ export default function App() {
         user={user}
         view={view}
         connected={connected}
-        onLobby={() => setAdminMode(false)}
-        onAdmin={() => setAdminMode(true)}
+        onLobby={() => setWorkspaceView('lobby')}
+        onReader={() => setWorkspaceView('reader')}
+        onAdmin={() => setWorkspaceView('admin')}
         onChangePassword={() => {
           setPasswordError(undefined);
           setPasswordOpen(true);
         }}
         onLogout={() => void logout()}
       >
-        {game ? (
+        {doudizhuGame ? (
+          <DoudizhuBoard
+            game={doudizhuGame}
+            room={room}
+            userId={user.id}
+            connected={connected}
+            onAction={sendAction}
+            onExit={leaveRoom}
+            onRematch={rematchRoom}
+          />
+        ) : goujiGame ? (
+          <GoujiBoard
+            game={goujiGame}
+            userId={user.id}
+            connected={connected}
+            onAction={sendAction}
+            onExit={leaveRoom}
+          />
+        ) : game ? (
           <GameBoard game={game} connected={connected} onAction={sendAction} onExit={leaveRoom} />
         ) : room ? (
           <RoomScreen
@@ -427,7 +476,9 @@ export default function App() {
             onChooseGeneral={chooseGeneral}
             onChooseGodFaction={chooseGodFaction}
           />
-        ) : adminMode && user.role === 'admin' ? (
+        ) : workspaceView === 'reader' ? (
+          <NovelReaderScreen />
+        ) : workspaceView === 'admin' && user.role === 'admin' ? (
           <AdminUsersScreen
             currentUser={user}
             users={users}
@@ -443,6 +494,15 @@ export default function App() {
           <LobbyScreen rooms={rooms} loading={roomsLoading} onRefresh={refreshRooms} onCreate={createRoom} onJoin={joinRoom} />
         )}
       </AppShell>
+      {room && (
+        <RoomChat
+          roomName={room.name}
+          messages={room.chatMessages}
+          user={user}
+          connected={connected}
+          onSend={sendRoomChat}
+        />
+      )}
       <ChangePasswordModal
         open={passwordOpen}
         loading={passwordLoading}

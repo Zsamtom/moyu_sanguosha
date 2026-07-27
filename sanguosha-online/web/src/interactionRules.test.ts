@@ -27,11 +27,13 @@ function roomWith(overrides: Partial<RoomDetail> = {}): RoomDetail {
   return {
     id: 'room-1',
     name: '测试房间',
+    gameType: 'sanguosha',
     status: 'waiting',
     hostId: 'user-1',
     hostName: '房主',
     playerCount: 2,
     maxPlayers: 5,
+    chatMessages: [],
     members: [
       { userId: 'user-1', username: 'owner', displayName: '房主', seat: 0, ready: true, online: true, isHost: true },
       { userId: 'user-2', username: 'player', displayName: '玩家', seat: 1, ready: true, online: true, isHost: false },
@@ -536,6 +538,14 @@ describe('generic standard-skill action rules', () => {
       activate: true, tokens: ['hand:0'],
     })).toMatchObject({ activate: true, tokens: ['hand:0'] });
     expect(() => createStandardSkillAction('self', mandatoryZoneChoice, { activate: true })).toThrow('技能牌');
+  });
+
+  it('requires all six seats before a Gouji room can start', () => {
+    expect(getRoomStartBlockReason(roomWith({ gameType: 'gouji', maxPlayers: 6 }), true)).toContain('6 人');
+  });
+
+  it('requires all three seats before a Doudizhu room can start', () => {
+    expect(getRoomStartBlockReason(roomWith({ gameType: 'doudizhu', maxPlayers: 3 }), true)).toContain('3 人');
   });
 
   it('submits pure mandatory choices used by Benghuai, Zhiji, Qinyin and Wumou', () => {

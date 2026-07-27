@@ -52,6 +52,15 @@ export function createRoomsRouter(users: UserStore, rooms: RoomService): Router 
     response.json({ room });
   }));
 
+  router.post("/:id/rematch", asyncHandler(async (request, response) => {
+    const room = rooms.requestRematch(
+      roomIdSchema.parse(request.params.id),
+      currentUser(response).id,
+    );
+    await rooms.waitForPersistence();
+    response.json({ room });
+  }));
+
   router.post("/:id/draft/general", asyncHandler(async (request, response) => {
     const { generalId } = chooseGeneralSchema.parse(request.body);
     const room = rooms.chooseGeneral(roomIdSchema.parse(request.params.id), currentUser(response).id, generalId);

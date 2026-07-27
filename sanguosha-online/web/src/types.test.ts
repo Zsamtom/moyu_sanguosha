@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RealtimeClient } from './realtime';
-import { normalizeGameView, normalizeRoomDetail, type GameAction } from './types';
+import { isDoudizhuGameView, isGoujiGameView, normalizeGameView, normalizeRoomDetail, type GameAction } from './types';
 
 describe('server payload adapters', () => {
   it('normalizes the server room view and identifies the owner', () => {
@@ -20,9 +20,94 @@ describe('server payload adapters', () => {
 
     expect(room.hostId).toBe('user-1');
     expect(room.hostName).toBe('玄德');
-    expect(room.botIntelligence).toBe(3);
-    expect(room.members[0]).toMatchObject({ userId: 'user-1', isHost: true, online: true });
+      expect(room.botIntelligence).toBe(3);
+      expect(room.chatMessages).toEqual([]);
+      expect(room.members[0]).toMatchObject({ userId: 'user-1', isHost: true, online: true });
     expect(room.members[1]).toMatchObject({ userId: 'user-2', isHost: false, online: false });
+  });
+
+  it('preserves the Gouji room discriminator and recognizes its private game view', () => {
+    const room = normalizeRoomDetail({
+      id: 'room-gouji',
+      name: '够级',
+      gameType: 'gouji',
+      status: 'waiting',
+      ownerId: 'user-1',
+      maxPlayers: 6,
+      players: [],
+    });
+    expect(room.gameType).toBe('gouji');
+    expect(isGoujiGameView({
+      kind: 'gouji',
+      version: 1,
+      revision: 0,
+      actionPromptId: 'gouji:0:playing:user-1',
+      status: 'playing',
+      currentPlayerId: 'user-1',
+      leadPlayerId: 'user-1',
+      players: Array.from({ length: 6 }, (_, seat) => ({
+        id: `user-${seat + 1}`,
+        seat,
+        name: `玩家${seat + 1}`,
+        team: seat % 2 === 0 ? 'A' : 'B',
+        handCount: 32,
+        openedPoint: false,
+        naturalPoint: false,
+        burnCount: 0,
+      })),
+      prompt: {
+        type: 'play',
+        playerId: 'user-1',
+        canPlay: true,
+        canPass: false,
+        canYield: false,
+        mustIncludeJoker: false,
+      },
+      logs: [],
+    })).toBe(true);
+  });
+
+  it('preserves the Doudizhu room discriminator and recognizes its private game view', () => {
+    const room = normalizeRoomDetail({
+      id: 'room-doudizhu',
+      name: '斗地主',
+      gameType: 'doudizhu',
+      status: 'playing',
+      ownerId: 'user-1',
+      maxPlayers: 3,
+      players: [],
+    });
+    expect(room.gameType).toBe('doudizhu');
+    expect(isDoudizhuGameView({
+      kind: 'doudizhu',
+      version: 1,
+      revision: 4,
+      actionPromptId: 'doudizhu:4:playing:user-1:lead',
+      status: 'playing',
+      phase: 'playing',
+      currentPlayerId: 'user-1',
+      landlordId: 'user-1',
+      players: Array.from({ length: 3 }, (_, seat) => ({
+        id: `user-${seat + 1}`,
+        seat,
+        name: `玩家${seat + 1}`,
+        role: seat === 0 ? 'landlord' : 'farmer',
+        handCount: seat === 0 ? 20 : 17,
+        playedCount: 0,
+        beans: 10_000,
+        beanDelta: 0,
+      })),
+      bottomCards: [],
+        prompt: {
+          type: 'play',
+          playerId: 'user-1',
+          bidOptions: [],
+          canPlay: true,
+          canPass: false,
+          recommendation: { type: 'play', cardIds: ['card-1'] },
+        },
+      logs: [],
+    })).toBe(true);
   });
 
   it('preserves the caller-private general draft without deriving other candidates', () => {
@@ -168,6 +253,27 @@ describe('server payload adapters', () => {
 
     internals.rememberGameView(null);
     await expect(client.sendGameAction('room-1', action)).rejects.toThrow('尚未同步');
+  });
+
+  it('sends room chat through the realtime room channel', async () => {
+    const sent: Array<{ event: string; payload: unknown }> = [];
+    const socket = {
+      connected: true,
+      timeout: () => ({
+        emit: (event: string, payload: unknown, ack: (error: Error | null, result: unknown) => void) => {
+          sent.push({ event, payload });
+          ack(null, { ok: true });
+        },
+      }),
+    };
+    const client = new RealtimeClient();
+    (client as unknown as { socket: unknown }).socket = socket;
+
+    await client.sendRoomChat('room-1', '你好');
+    expect(sent).toEqual([{
+      event: 'room:chat',
+      payload: { roomId: 'room-1', message: '你好' },
+    }]);
   });
 
   it('normalizes a dodge response prompt', () => {

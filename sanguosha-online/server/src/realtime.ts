@@ -1,5 +1,12 @@
 import type { Server as HttpServer } from "node:http";
-import { GameRuleError, type GameView } from "@sanguosha/shared";
+import {
+  DoudizhuRuleError,
+  GameRuleError,
+  GoujiRuleError,
+  type DoudizhuGameView,
+  type GameView,
+  type GoujiGameView,
+} from "@sanguosha/shared";
 import type { RequestHandler, Request } from "express";
 import { Server, type Socket } from "socket.io";
 import { ZodError, z } from "zod";
@@ -8,11 +15,12 @@ import { HttpError } from "./errors.js";
 import {
   chooseGeneralPayloadSchema,
   chooseGodFactionPayloadSchema,
+  chatMessagePayloadSchema,
   createRoomSchema,
   gameActionPayloadSchema,
   roomIdSchema,
 } from "./room-schemas.js";
-import type { RoomService, RoomSummary, RoomView } from "./rooms.js";
+import type { RoomChatMessage, RoomService, RoomSummary, RoomView } from "./rooms.js";
 import type { SecurityEvents } from "./security-events.js";
 import type { PublicUser, UserStore } from "./users.js";
 
@@ -29,19 +37,20 @@ interface ClientToServerEvents {
   "room:start": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
   "room:choose-general": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
   "room:choose-god-faction": (input: unknown, ack: Ack<{ room: RoomView }>) => void;
-  "game:action": (input: unknown, ack: Ack<{ game: GameView }>) => void;
+  "room:chat": (input: unknown, ack: Ack<{ message: RoomChatMessage }>) => void;
+  "game:action": (input: unknown, ack: Ack<{ game: GameView | GoujiGameView | DoudizhuGameView }>) => void;
 }
 
 export interface RealtimeState {
   rooms: RoomSummary[];
   room: RoomView | null;
-  game: GameView | null;
+  game: GameView | GoujiGameView | DoudizhuGameView | null;
 }
 
 interface ServerToClientEvents {
   "rooms:update": (rooms: RoomSummary[]) => void;
   "room:update": (room: RoomView | null) => void;
-  "game:view": (game: GameView | null) => void;
+  "game:view": (game: GameView | GoujiGameView | DoudizhuGameView | null) => void;
   state: (state: RealtimeState) => void;
   "server:error": (error: { code: string; message: string }) => void;
 }
@@ -62,6 +71,8 @@ function errorPayload(error: unknown): { code: string; message: string } {
   if (error instanceof HttpError) return { code: error.code, message: error.message };
   if (error instanceof ZodError) return { code: "VALIDATION_ERROR", message: "请求参数不合法" };
   if (error instanceof GameRuleError) return { code: error.code, message: error.message };
+  if (error instanceof GoujiRuleError) return { code: error.code, message: error.message };
+  if (error instanceof DoudizhuRuleError) return { code: error.code, message: error.message };
   console.error(error);
   return { code: "INTERNAL_ERROR", message: "服务器内部错误" };
 }
@@ -200,6 +211,11 @@ export function attachRealtimeServer(options: {
     socket.on("room:choose-god-faction", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
       const { roomId, faction } = chooseGodFactionPayloadSchema.parse(raw);
       return { room: rooms.chooseGodFaction(roomId, user.id, faction) };
+    }));
+
+    socket.on("room:chat", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {
+      const { roomId, message } = chatMessagePayloadSchema.parse(raw);
+      return { message: rooms.sendChat(roomId, user.id, message) };
     }));
 
     socket.on("game:action", (raw, ack) => void withAck(socket, users, rooms, ack, async (user) => {

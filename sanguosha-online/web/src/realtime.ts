@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import type { GameAction, GameLogEntry, RoomDetail, RoomSummary, ServerState } from './types';
+import type { AnyGameAction, GameLogEntry, RoomDetail, RoomSummary, ServerState } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export interface RealtimeHandlers {
@@ -120,7 +120,7 @@ export class RealtimeClient {
     this.gameActionContext = null;
   }
 
-  sendGameAction(roomId: string, action: GameAction): Promise<void> {
+  sendGameAction(roomId: string, action: AnyGameAction): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.socket?.connected) {
         reject(new Error('连接已断开，正在尝试重连'));
@@ -144,6 +144,27 @@ export class RealtimeClient {
         const result = ack as { ok?: boolean; error?: { message?: string } } | undefined;
         if (result?.ok === false) {
           reject(new Error(result.error?.message ?? '该操作当前不可用'));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  sendRoomChat(roomId: string, message: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket?.connected) {
+        reject(new Error('连接已断开，正在尝试重连'));
+        return;
+      }
+      this.socket.timeout(8_000).emit('room:chat', { roomId, message }, (error: Error | null, ack?: unknown) => {
+        if (error) {
+          reject(new Error('发送超时，请重试'));
+          return;
+        }
+        const result = ack as { ok?: boolean; error?: { message?: string } } | undefined;
+        if (result?.ok === false) {
+          reject(new Error(result.error?.message ?? '消息发送失败'));
           return;
         }
         resolve();

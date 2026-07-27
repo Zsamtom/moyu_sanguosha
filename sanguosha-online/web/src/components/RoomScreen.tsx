@@ -1,7 +1,17 @@
 import { Alert, Button, Popconfirm, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { getRoomStartBlockReason } from '../interactionRules';
-import { BOT_INTELLIGENCE_NAMES, type AuthUser, type FullGeneralId, type GameRole, type PackId, type PlayableFaction, type RoomDetail } from '../types';
+import {
+  BOT_INTELLIGENCE_NAMES,
+  DOUDIZHU_BOT_INTELLIGENCE_NAMES,
+  GOUJI_BOT_INTELLIGENCE_NAMES,
+  type AuthUser,
+  type FullGeneralId,
+  type GameRole,
+  type PackId,
+  type PlayableFaction,
+  type RoomDetail,
+} from '../types';
 
 interface RoomScreenProps {
   room: RoomDetail;
@@ -237,7 +247,9 @@ export function RoomScreen({
     <main className="page room-page">
       <section className="room-heading paper-card">
         <div>
-          <span className="section-kicker">Room / Members</span>
+          <span className="section-kicker">
+            {room.gameType === 'gouji' ? 'Gouji / 3V3' : room.gameType === 'doudizhu' ? 'Doudizhu / Classic' : 'Sanguosha / Identity'}
+          </span>
           <h1>{room.name}</h1>
           <button className="room-id" type="button" onClick={() => void copyRoomId()} title="复制房间号">
             房间号 {room.id} · 点击复制
@@ -253,7 +265,23 @@ export function RoomScreen({
         <Alert className="connection-alert" type="warning" showIcon message="实时连接暂时中断，恢复前无法准备或开始游戏。" />
       )}
 
-      {room.ruleConfig && (
+      {room.gameType === 'gouji' ? (
+        <section className="room-rule-summary" aria-label="够级房间规则">
+          <div><span>玩法</span><strong>山东够级 3V3</strong></div>
+          <div><span>牌堆</span><strong>196 张</strong></div>
+          <div><span>座位</span><strong>甲乙联邦交错</strong></div>
+          <div><span>核心规则</span><strong>憋 3 / 开点 / 烧牌</strong></div>
+          <div><span>机器人</span><strong>{botIntelligence} · {GOUJI_BOT_INTELLIGENCE_NAMES[botIntelligence]}</strong></div>
+        </section>
+      ) : room.gameType === 'doudizhu' ? (
+        <section className="room-rule-summary" aria-label="斗地主房间规则">
+          <div><span>玩法</span><strong>经典斗地主</strong></div>
+          <div><span>牌堆</span><strong>54 张</strong></div>
+          <div><span>座位</span><strong>固定 3 人</strong></div>
+          <div><span>核心规则</span><strong>叫分 / 炸弹 / 春天</strong></div>
+          <div><span>机器人</span><strong>{botIntelligence} · {DOUDIZHU_BOT_INTELLIGENCE_NAMES[botIntelligence]}</strong></div>
+        </section>
+      ) : room.ruleConfig && (
         <section className="room-rule-summary" aria-label="房间规则">
           <div><span>武将包</span><strong>{room.ruleConfig.enabledGeneralPacks.map((pack) => packNames[pack]).join(' / ')}</strong></div>
           <div><span>选将</span><strong>{room.ruleConfig.generalSelection.mode === 'random' ? '服务器随机' : `私有候选 ${room.ruleConfig.generalSelection.candidatesPerPlayer} 选 1`}</strong></div>
@@ -267,7 +295,13 @@ export function RoomScreen({
         <div className="section-title-row">
           <div>
             <h2>成员列表</h2>
-            <p>所有成员准备后，房主可以开始并进入服务器选将流程。</p>
+            <p>
+              {room.gameType === 'gouji'
+                ? '坐满 6 席并全部准备后开局；机器人会自动准备并按权威规则行动。'
+                : room.gameType === 'doudizhu'
+                  ? '坐满 3 席并全部准备后开局；机器人会自动叫分和出牌。'
+                : '所有成员准备后，房主可以开始并进入服务器选将流程。'}
+            </p>
           </div>
           <span className="ready-summary">
             {room.members.filter((member) => member.ready).length} / {room.members.length} 已就绪
@@ -285,7 +319,7 @@ export function RoomScreen({
                   <div className="player-monogram" aria-hidden="true">{member.displayName.slice(0, 1)}</div>
                   <div className="seat-card__identity">
                     <h3>{member.displayName}</h3>
-                    <p>@{member.username || 'player'}</p>
+                    <p>{member.isBot && member.botTitle ? member.botTitle : `@${member.username || 'player'}`}</p>
                   </div>
                   <div className="seat-card__tags">
                     {member.isHost && <Tag color="gold">房主</Tag>}
