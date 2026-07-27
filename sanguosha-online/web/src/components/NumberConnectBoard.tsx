@@ -44,19 +44,17 @@ export function numberConnectCompletedLineIndexes(
 function ScoreCard({
   player,
   self,
-  current,
 }: {
   player: NumberConnectPlayerView;
   self: boolean;
-  current: boolean;
 }) {
   return (
-    <article className={`number-connect-player${self ? ' is-self' : ''}${current ? ' is-current' : ''}`}>
+    <article className={`number-connect-player${self ? ' is-self' : ''}`}>
       <span className="number-connect-player__seat">{String(player.seat + 1).padStart(2, '0')}</span>
       <div>
         <small>{self ? 'YOUR BOARD' : 'OPPONENT'}</small>
         <strong>{player.name}</strong>
-        <span>{player.botTitle ?? (current ? '正在选择数字' : '等待回合')}</span>
+        <span>{self ? '自由标记中' : '实时竞速中'}</span>
       </div>
       <b>
         {player.lineCount}
@@ -138,10 +136,10 @@ export function NumberConnectBoard({
   const [busy, setBusy] = useState(false);
   const self = game.players.find((player) => player.id === userId);
   const opponent = game.players.find((player) => player.id !== userId);
-  const isMyTurn = game.status === 'playing' &&
+  const canPlay = game.status === 'playing' &&
     game.prompt.type === 'call' &&
     game.prompt.playerId === userId;
-  const canCall = connected && isMyTurn && !busy;
+  const canCall = connected && canPlay && !busy;
   const called = useMemo(() => new Set(game.calledNumbers), [game.calledNumbers]);
   const availableCount = 25 - called.size;
 
@@ -172,14 +170,11 @@ export function NumberConnectBoard({
   }
 
   const winners = new Set(game.winner?.playerIds ?? []);
-  const currentPlayer = game.players.find((player) => player.id === game.currentPlayerId);
-  const resultTitle = winners.size > 1
-    ? '双方同时完成五线'
-    : winners.has(userId)
-      ? '你率先完成五条线'
-      : game.winner?.reason === 'forfeit'
-        ? '对手赢得本局'
-        : `${opponent.name} 率先完成五条线`;
+  const resultTitle = winners.has(userId)
+    ? '你率先完成五条线'
+    : game.winner?.reason === 'forfeit'
+      ? '对手赢得本局'
+      : `${opponent.name} 率先完成五条线`;
 
   return (
     <main className={`number-connect-board${game.status === 'finished' ? ' number-connect-board--finished' : ''}`}>
@@ -188,7 +183,7 @@ export function NumberConnectBoard({
         <div>
           <span>NUMBER LINK / FIVE BY FIVE</span>
           <h1>数字连连看</h1>
-          <p>轮流叫号 · 双方同步打叉 · 横竖斜连成一线得 1 分</p>
+          <p>双方自由点选 · 只标记自己的棋盘 · 横竖斜连成一线得 1 分</p>
         </div>
         <div className="number-connect-header__tools">
           <span className={connected ? 'is-online' : ''}>
@@ -211,7 +206,6 @@ export function NumberConnectBoard({
             key={player.id}
             player={player}
             self={player.id === userId}
-            current={player.id === game.currentPlayerId}
           />
         ))}
       </section>
@@ -224,9 +218,9 @@ export function NumberConnectBoard({
             <p>
               {game.winner?.reason === 'forfeit'
                 ? '一方退出，本局提前结束；双方棋盘仍各自保密。'
-                : game.winner?.playerIds.length === 2
-                  ? `最后叫出的 ${game.lastNumber} 同时令双方达到五线，本局并列获胜。`
-                  : `最后叫出的数字是 ${game.lastNumber}；对方的数字排列不会公开。`}
+                : winners.has(userId)
+                  ? `你标记数字 ${game.lastNumber} 后率先完成五线；对方棋盘不会公开。`
+                  : '对手已经率先完成五线；双方棋盘仍各自保密。'}
             </p>
           </section>
           <section className="number-connect-reveal" aria-label="你的最终棋盘">
@@ -273,23 +267,17 @@ export function NumberConnectBoard({
               label="你的数字棋盘"
             />
             <footer>
-              <span>已叫号 <strong>{game.calledNumbers.length}</strong></span>
+              <span>已标记 <strong>{game.calledNumbers.length}</strong></span>
               <span>剩余 <strong>{availableCount}</strong></span>
               <span>上次 <strong>{game.lastNumber ?? '—'}</strong></span>
             </footer>
           </article>
 
           <aside className="number-connect-side">
-            <section className={`number-connect-turn${isMyTurn ? ' is-mine' : ''}`} aria-live="polite">
-              <span>{isMyTurn ? 'YOUR TURN' : 'WAITING'}</span>
-              <h2>{isMyTurn ? '请选择一个未打叉的数字' : `等待 ${currentPlayer?.name ?? '对手'} 叫号`}</h2>
-              <p>
-                {isMyTurn
-                  ? '你选中的数字会同时在双方棋盘上标记，提交后不能撤销。'
-                  : game.lastNumber
-                    ? `上一回合选择了 ${game.lastNumber}，棋盘已经同步更新。`
-                    : '首位玩家正在观察自己的数字排列。'}
-              </p>
+            <section className="number-connect-turn is-mine" aria-live="polite">
+              <span>LIVE RACE</span>
+              <h2>随时选择自己棋盘上的数字</h2>
+              <p>每次点击只会在你的棋盘上打叉，不会改变对手的棋盘；双方无需轮流等待。</p>
               {busy && <small>正在提交选择……</small>}
             </section>
 

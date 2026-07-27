@@ -112,15 +112,6 @@ export const DIGIT_BOMB_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> 
   6: '首席拆弹手',
   7: '零失误传奇',
 };
-export const NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
-  1: '连线新手',
-  2: '数字学徒',
-  3: '方格玩家',
-  4: '路线规划师',
-  5: '五线高手',
-  6: '棋盘大师',
-  7: '连线传奇',
-};
 export type GeneralDraftStage = 'selecting_generals' | 'selecting_factions' | 'complete';
 
 export interface RoomRuleConfig {
@@ -791,7 +782,7 @@ export interface NumberConnectPlayerView {
   name: string;
   botTitle?: string;
   lineCount: number;
-  /** Present for the viewer's own board, and for both players after the match. */
+  /** Present only for the viewer's own board. */
   board?: number[];
 }
 
@@ -803,7 +794,7 @@ export interface NumberConnectWinner {
 
 export type NumberConnectPrompt =
   | { type: 'call'; playerId: string; availableNumbers: number[] }
-  | { type: 'waiting'; playerId: string }
+  | { type: 'spectating'; playerId: null }
   | { type: 'finished'; playerId: null };
 
 export interface NumberConnectGameView {
@@ -812,7 +803,7 @@ export interface NumberConnectGameView {
   revision: number;
   actionPromptId: string;
   status: 'playing' | 'finished';
-  currentPlayerId: string | null;
+  currentPlayerId: null;
   players: NumberConnectPlayerView[];
   calledNumbers: number[];
   lastNumber: number | null;
@@ -1021,7 +1012,7 @@ export function isNumberConnectGameView(value: unknown): value is NumberConnectG
     Number.isSafeInteger(game.revision) &&
     typeof game.actionPromptId === 'string' &&
     (game.status === 'playing' || game.status === 'finished') &&
-    (game.currentPlayerId === null || typeof game.currentPlayerId === 'string') &&
+    game.currentPlayerId === null &&
     Array.isArray(game.calledNumbers) &&
     game.calledNumbers.every((number) =>
       Number.isSafeInteger(number) && number >= 1 && number <= 25
@@ -1041,7 +1032,7 @@ export function isNumberConnectGameView(value: unknown): value is NumberConnectG
       (player.board === undefined || validBoard(player.board))
     ) &&
     Boolean(prompt) &&
-    (prompt?.type === 'call' || prompt?.type === 'waiting' || prompt?.type === 'finished');
+    (prompt?.type === 'call' || prompt?.type === 'spectating' || prompt?.type === 'finished');
 }
 
 export interface ApiErrorBody {

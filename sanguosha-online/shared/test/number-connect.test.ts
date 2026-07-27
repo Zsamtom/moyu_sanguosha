@@ -5,7 +5,6 @@ import {
   NumberConnectRuleError,
   applyNumberConnectAction,
   assertRestorableNumberConnectGameState,
-  chooseNumberConnectBotAction,
   createNumberConnectGame,
   forfeitNumberConnectPlayer,
   getNumberConnectCompletedLines,
@@ -21,11 +20,12 @@ const players = [
 
 function play(
   game: NumberConnectGameState,
+  playerId: string,
   number: number,
 ): NumberConnectGameState {
   return applyNumberConnectAction(game, {
     type: "number_connect_call",
-    playerId: game.currentPlayerId!,
+    playerId,
     number,
   });
 }
@@ -67,19 +67,35 @@ describe("Number Connect authoritative engine", () => {
     expect(getNumberConnectCompletedLines(board, [5, 9, 13, 17, 21])).toBe(1);
   });
 
-  it("marks a called number for both players and alternates turns", () => {
+  it("lets both players freely mark only their own boards", () => {
     const initial = createNumberConnectGame({ players, seed });
-    const callerId = initial.currentPlayerId!;
-    const nextId = initial.players.find((player) => player.id !== callerId)!.id;
-    const game = play(initial, 13);
-    expect(game.calledNumbers).toEqual([13]);
-    expect(game.lastNumber).toBe(13);
-    expect(game.currentPlayerId).toBe(nextId);
-    expect(() => applyNumberConnectAction(game, {
+    const callerId = players[0]!.id;
+    const nextId = players[1]!.id;
+    const game = play(initial, callerId, 13);
+    expect(game.players.find((player) => player.id === callerId)?.markedNumbers).toEqual([13]);
+    expect(game.players.find((player) => player.id === nextId)?.markedNumbers).toEqual([]);
+    expect(game.lastMove).toEqual({ playerId: callerId, number: 13 });
+    expect(game.currentPlayerId).toBeNull();
+    const afterNextPlayer = applyNumberConnectAction(game, {
       type: "number_connect_call",
       playerId: nextId,
       number: 13,
+    });
+    expect(afterNextPlayer.players.find((player) => player.id === nextId)?.markedNumbers)
+      .toEqual([13]);
+    const afterAnotherCallerMark = applyNumberConnectAction(afterNextPlayer, {
+      type: "number_connect_call",
+      playerId: callerId,
+      number: 14,
+    });
+    expect(afterAnotherCallerMark.players[0]!.markedNumbers).toEqual([13, 14]);
+    expect(() => applyNumberConnectAction(afterAnotherCallerMark, {
+      type: "number_connect_call",
+      playerId: callerId,
+      number: 13,
     })).toThrow(NumberConnectRuleError);
+    expect(getNumberConnectGameView(game, callerId).calledNumbers).toEqual([13]);
+    expect(getNumberConnectGameView(game, nextId).calledNumbers).toEqual([]);
   });
 
   it("keeps the opponent board private after someone reaches five lines", () => {
@@ -88,12 +104,14 @@ describe("Number Connect authoritative engine", () => {
     expect(ownView.players[0]!.board).toEqual(game.players[0]!.board);
     expect(ownView.players[1]!.board).toBeUndefined();
 
+    const firstPlayerId = game.players[0]!.id;
     for (const number of game.players[0]!.board) {
       if (game.status === "finished") break;
-      game = play(game, number);
+      game = play(game, firstPlayerId, number);
     }
     expect(game.status).toBe("finished");
     expect(game.winner?.reason).toBe("lines");
+    expect(game.winner?.playerIds).toEqual([firstPlayerId]);
     expect(Math.max(...game.players.map((player) => player.lineCount)))
       .toBeGreaterThanOrEqual(NUMBER_CONNECT_TARGET_LINES);
     const finalView = getNumberConnectGameView(game, players[0]!.id);
@@ -102,14 +120,8 @@ describe("Number Connect authoritative engine", () => {
     expect(() => assertRestorableNumberConnectGameState(game)).not.toThrow();
   });
 
-  it("chooses legal bot calls and resolves forfeits", () => {
+  it("resolves forfeits", () => {
     const game = createNumberConnectGame({ players, seed });
-    const botId = game.currentPlayerId!;
-    const action = chooseNumberConnectBotAction(game, botId);
-    expect(action).toMatchObject({ type: "number_connect_call", playerId: botId });
-    expect(action.number).toBeGreaterThanOrEqual(1);
-    expect(action.number).toBeLessThanOrEqual(25);
-
     const forfeited = forfeitNumberConnectPlayer(game, players[0]!.id);
     expect(forfeited).toMatchObject({
       status: "finished",

@@ -6,7 +6,6 @@ import {
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
   DIGIT_BOMB_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
-  NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES,
   SPLENDOR_BOT_INTELLIGENCE_NAMES,
   type AuthUser,
   type FullGeneralId,
@@ -319,7 +318,7 @@ export function RoomScreen({
           {registration.roomRuleSummary?.map((item) => (
             <div key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>
           ))}
-          <div><span>机器人</span><strong>{botIntelligence} · {NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES[botIntelligence]} / 零 Token</strong></div>
+          <div><span>参与者</span><strong>仅限 2 名真人玩家</strong></div>
         </section>
       ) : null}
 
@@ -409,7 +408,7 @@ export function RoomScreen({
               </Button>
             </Tooltip>
           )}
-          {isHost && room.playerCount < room.maxPlayers && (
+          {isHost && room.gameType !== 'number_connect' && room.playerCount < room.maxPlayers && (
             <Button size="large" disabled={!connected} onClick={() => void onAddBot()}>添加机器人</Button>
           )}
           <Popconfirm title="确定离开房间？" description={isHost ? '房主离开后，房主身份将移交或房间关闭。' : undefined} onConfirm={() => void leave()}>

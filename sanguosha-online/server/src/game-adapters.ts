@@ -3,7 +3,6 @@ import {
   applyNumberConnectAction,
   applySplendorAction,
   chooseDigitBombBotAction,
-  chooseNumberConnectBotAction,
   chooseSplendorBotAction,
   createDigitBombGame,
   createNumberConnectGame,
@@ -107,7 +106,7 @@ export const GAME_TYPE_METADATA = {
     maximumPlayers: 2,
     defaultMaximumPlayers: 2,
     fixedPlayerCount: true,
-    supportsRuleBots: true,
+    supportsRuleBots: false,
     supportsLlmBots: false,
   },
 } as const satisfies Record<GameType, GameTypeMetadata>;
@@ -255,6 +254,8 @@ export function chooseAdapterBotAction(
   _intelligence: BotIntelligence,
 ): AdapterAction {
   if (isDigitBombGame(game)) return chooseDigitBombBotAction(game, playerId);
-  if (isNumberConnectGame(game)) return chooseNumberConnectBotAction(game, playerId);
+  if (isNumberConnectGame(game)) {
+    throw new Error("Number Connect does not support bots");
+  }
   return chooseSplendorBotAction(game, playerId);
 }

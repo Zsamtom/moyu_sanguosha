@@ -425,6 +425,12 @@ export class RoomService {
       }
       const room = structuredClone(saved) as Room;
       room.gameType = saved.gameType ?? "sanguosha";
+      if (
+        !gameTypeMetadata(room.gameType).supportsRuleBots &&
+        room.players.some((player) => player.isBot && !player.departed)
+      ) {
+        throw new Error(`Room ${saved.id} contains a bot unsupported by ${room.gameType}`);
+      }
       room.botIntelligence = saved.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE;
       room.botMode = gameTypeMetadata(room.gameType).supportsLlmBots
         ? saved.botMode ?? "rules"
@@ -458,8 +464,6 @@ export class RoomService {
               ? DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
               : room.gameType === "digit_bomb"
                 ? "拆弹专家"
-                : room.gameType === "number_connect"
-                  ? "连线高手"
                 : "宝石行家";
         }
         if (!player.isBot && !player.departed && this.roomByUser.has(player.id)) {
@@ -645,8 +649,6 @@ export class RoomService {
             ? `晶石旅人 ${room.players.filter((player) => player.isBot).length + 1}`
             : room.gameType === "digit_bomb"
               ? `拆弹员 ${room.players.filter((player) => player.isBot).length + 1}`
-              : room.gameType === "number_connect"
-                ? `连线玩家 ${room.players.filter((player) => player.isBot).length + 1}`
               : `机器人 ${room.players.filter((player) => player.isBot).length + 1}`,
       ...(room.gameType !== "sanguosha"
         ? {
@@ -656,8 +658,6 @@ export class RoomService {
                 ? DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
                 : room.gameType === "digit_bomb"
                   ? "拆弹专家"
-                  : room.gameType === "number_connect"
-                    ? "连线高手"
                   : "宝石行家",
           }
         : {}),
@@ -1023,7 +1023,13 @@ export class RoomService {
         : isAdapterGame(room.game)
           ? getAdapterGameView(room.game, userId)
           : getGameView(room.game, userId);
-    if (expectedRevision !== currentView.revision || expectedPromptId !== currentView.actionPromptId) {
+    const acceptsConcurrentNumberConnectAction =
+      isNumberConnectGame(room.game) && isNumberConnectAction(action);
+    if (
+      !acceptsConcurrentNumberConnectAction &&
+      (expectedRevision !== currentView.revision ||
+        expectedPromptId !== currentView.actionPromptId)
+    ) {
       throw new HttpError(409, "STALE_GAME_ACTION", "游戏状态已更新，请基于最新界面重试");
     }
 

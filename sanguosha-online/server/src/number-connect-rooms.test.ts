@@ -86,27 +86,41 @@ describe("Number Connect rooms", () => {
     expect(guestView.players.find((player) => player.id === owner.id)?.board).toBeUndefined();
   });
 
-  it("accepts a turn-safe call, marks it globally, and rejects another game's action", () => {
+  it("accepts concurrent marks on separate private boards and rejects another game's action", () => {
     const { rooms, roomId } = startHumanRoom();
-    const before = view(rooms, roomId, owner.id);
-    const callerId = before.currentPlayerId!;
-    const after = apply(rooms, roomId, callerId, {
+    const guestBefore = view(rooms, roomId, guest.id);
+    const after = apply(rooms, roomId, owner.id, {
       type: "number_connect_call",
-      playerId: callerId,
+      playerId: owner.id,
       number: 13,
     });
     expect(after).toMatchObject({
       calledNumbers: [13],
       lastNumber: 13,
     });
-    expect(after.currentPlayerId).not.toBe(callerId);
+    expect(after.currentPlayerId).toBeNull();
+    expect(view(rooms, roomId, guest.id)).toMatchObject({
+      calledNumbers: [],
+      lastNumber: null,
+    });
+    const guestAfter = rooms.applyAction(roomId, guest.id, {
+      expectedRevision: guestBefore.revision,
+      expectedPromptId: guestBefore.actionPromptId,
+      action: {
+        type: "number_connect_call",
+        playerId: guest.id,
+        number: 13,
+      },
+    });
+    expect(guestAfter).toMatchObject({ calledNumbers: [13], lastNumber: 13 });
 
-    expect(() => rooms.applyAction(roomId, after.currentPlayerId!, {
-      expectedRevision: after.revision,
-      expectedPromptId: after.actionPromptId,
+    const currentOwnerView = view(rooms, roomId, owner.id);
+    expect(() => rooms.applyAction(roomId, owner.id, {
+      expectedRevision: currentOwnerView.revision,
+      expectedPromptId: currentOwnerView.actionPromptId,
       action: {
         type: "digit_bomb_guess",
-        playerId: after.currentPlayerId!,
+        playerId: owner.id,
         guess: "1234",
       },
     })).toThrow(/该房间正在进行数字连连看/);
@@ -114,13 +128,14 @@ describe("Number Connect rooms", () => {
 
   it("finishes at five lines, keeps boards private, and restores the snapshot", () => {
     const { rooms, roomId } = startHumanRoom();
-    for (let number = 1; number <= 25; number += 1) {
+    for (let turn = 0; turn < 25; turn += 1) {
       const before = view(rooms, roomId, owner.id);
       if (before.status === "finished") break;
-      apply(rooms, roomId, before.currentPlayerId!, {
+      if (before.prompt.type !== "call") throw new Error("Missing Number Connect call prompt");
+      apply(rooms, roomId, owner.id, {
         type: "number_connect_call",
-        playerId: before.currentPlayerId!,
-        number,
+        playerId: owner.id,
+        number: before.prompt.availableNumbers[0]!,
       });
     }
     const finished = view(rooms, roomId, owner.id);
@@ -141,28 +156,27 @@ describe("Number Connect rooms", () => {
     expect(view(restored, roomId, owner.id)).toEqual(finished);
   });
 
-  it("lets a rule bot play from its own board and resolves a departure", () => {
+  it("does not allow rule bots", () => {
     const rooms = new RoomService();
     rooms.setConnected(owner.id, true);
     const created = rooms.create(owner, {
-      name: "机器人数字连线",
+      name: "真人数字连线",
       gameType: "number_connect",
       botMode: "llm",
     });
-    rooms.addBot(created.id, owner.id);
-    rooms.setReady(created.id, owner.id, true);
-    rooms.start(created.id, owner.id);
+    expect(() => rooms.addBot(created.id, owner.id)).toThrow(/不支持规则机器人/);
     expect(rooms.get(created.id)).toMatchObject({
+      status: "waiting",
+      playerCount: 1,
       botMode: "rules",
-      players: expect.arrayContaining([
-        expect.objectContaining({ isBot: true, botTitle: "连线高手" }),
-      ]),
     });
-    const active = view(rooms, created.id, owner.id);
-    expect(active.currentPlayerId).toBe(owner.id);
 
-    rooms.leave(created.id, owner.id);
-    expect(rooms.get(created.id)).toBeUndefined();
+    const activeRoom = startHumanRoom();
+    const snapshot = activeRoom.rooms.exportSnapshot();
+    snapshot.rooms[0]!.players[1]!.isBot = true;
+    expect(() => new RoomService().restoreSnapshot(snapshot)).toThrow(
+      /contains a bot unsupported by number_connect/,
+    );
   });
 
   it("awards the match to the remaining human when the opponent leaves", () => {

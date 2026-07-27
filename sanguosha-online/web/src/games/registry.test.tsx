@@ -127,9 +127,9 @@ describe('game registry', () => {
       kind: 'number_connect',
       version: 1,
       revision: 0,
-      actionPromptId: 'number-connect:0:playing:player-0',
+      actionPromptId: 'number-connect:0:playing',
       status: 'playing',
-      currentPlayerId: 'player-0',
+      currentPlayerId: null,
       players: players.map((player) => ({
         id: player.id,
         seat: player.seat,

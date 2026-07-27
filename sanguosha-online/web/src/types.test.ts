@@ -246,9 +246,9 @@ describe('server payload adapters', () => {
       kind: 'number_connect',
       version: 1,
       revision: 2,
-      actionPromptId: 'number-connect:2:playing:user-1',
+      actionPromptId: 'number-connect:2:playing',
       status: 'playing',
-      currentPlayerId: 'user-1',
+      currentPlayerId: null,
       players: [
         { id: 'user-1', seat: 0, name: '玩家一', lineCount: 0, board },
         { id: 'user-2', seat: 1, name: '玩家二', lineCount: 0 },

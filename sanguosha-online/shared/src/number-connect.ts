@@ -20,6 +20,7 @@ export interface NumberConnectPlayerState {
   readonly name: string;
   readonly botTitle?: string;
   readonly board: number[];
+  markedNumbers: number[];
   lineCount: number;
 }
 
@@ -40,9 +41,11 @@ export interface NumberConnectGameState {
   revision: number;
   status: "playing" | "finished";
   players: NumberConnectPlayerState[];
-  currentPlayerId: string | null;
-  calledNumbers: number[];
-  lastNumber: number | null;
+  currentPlayerId: null;
+  lastMove: {
+    readonly playerId: string;
+    readonly number: number;
+  } | null;
   winner: NumberConnectWinner | null;
 }
 
@@ -68,7 +71,7 @@ export type NumberConnectPrompt =
       readonly playerId: string;
       readonly availableNumbers: number[];
     }
-  | { readonly type: "waiting"; readonly playerId: string }
+  | { readonly type: "spectating"; readonly playerId: null }
   | { readonly type: "finished"; readonly playerId: null };
 
 export interface NumberConnectGameView {
@@ -77,9 +80,11 @@ export interface NumberConnectGameView {
   readonly revision: number;
   readonly actionPromptId: string;
   readonly status: "playing" | "finished";
-  readonly currentPlayerId: string | null;
+  readonly currentPlayerId: null;
   readonly players: NumberConnectPlayerView[];
+  /** Numbers marked on the viewer's own board. */
   readonly calledNumbers: number[];
+  /** The last number marked by the viewer. */
   readonly lastNumber: number | null;
   readonly winner: NumberConnectWinner | null;
   readonly prompt: NumberConnectPrompt;
@@ -88,7 +93,6 @@ export interface NumberConnectGameView {
 export type NumberConnectRuleErrorCode =
   | "NUMBER_CONNECT_GAME_FINISHED"
   | "NUMBER_CONNECT_UNKNOWN_PLAYER"
-  | "NUMBER_CONNECT_NOT_YOUR_TURN"
   | "NUMBER_CONNECT_INVALID_NUMBER"
   | "NUMBER_CONNECT_NUMBER_ALREADY_CALLED";
 
@@ -207,16 +211,15 @@ function actionPromptId(game: NumberConnectGameState): string {
     "number-connect",
     game.revision,
     game.status,
-    game.currentPlayerId ?? "finished",
   ].join(":");
 }
 
-function availableNumbers(game: NumberConnectGameState): number[] {
-  const called = new Set(game.calledNumbers);
+function availableNumbers(player: NumberConnectPlayerState): number[] {
+  const marked = new Set(player.markedNumbers);
   return Array.from(
     { length: NUMBER_CONNECT_CELL_COUNT },
     (_, index) => index + 1,
-  ).filter((number) => !called.has(number));
+  ).filter((number) => !marked.has(number));
 }
 
 export function createNumberConnectGame(input: {
@@ -238,13 +241,12 @@ export function createNumberConnectGame(input: {
   const firstBoard = shuffleBoard(rng);
   rng = firstBoard.state;
   const secondBoard = shuffleBoard(rng);
-  rng = secondBoard.state;
   ensurePositionallyDistinctBoards(firstBoard.board, secondBoard.board);
-  const firstPlayer = randomInteger(rng, 2).value;
   const players = input.players.map((player, seat): NumberConnectPlayerState => ({
     ...player,
     seat,
     board: seat === 0 ? firstBoard.board : secondBoard.board,
+    markedNumbers: [],
     lineCount: 0,
   }));
   return {
@@ -253,9 +255,8 @@ export function createNumberConnectGame(input: {
     revision: 0,
     status: "playing",
     players,
-    currentPlayerId: players[firstPlayer]!.id,
-    calledNumbers: [],
-    lastNumber: null,
+    currentPlayerId: null,
+    lastMove: null,
     winner: null,
   };
 }
@@ -272,41 +273,30 @@ export function applyNumberConnectAction(
   if (!player) {
     throw new NumberConnectRuleError("NUMBER_CONNECT_UNKNOWN_PLAYER", "玩家不在本局中");
   }
-  if (game.currentPlayerId !== action.playerId) {
-    throw new NumberConnectRuleError("NUMBER_CONNECT_NOT_YOUR_TURN", "还没有轮到该玩家");
-  }
   if (!isValidNumber(action.number)) {
     throw new NumberConnectRuleError(
       "NUMBER_CONNECT_INVALID_NUMBER",
       "只能选择 1 至 25 的整数",
     );
   }
-  if (game.calledNumbers.includes(action.number)) {
+  if (player.markedNumbers.includes(action.number)) {
     throw new NumberConnectRuleError(
       "NUMBER_CONNECT_NUMBER_ALREADY_CALLED",
-      "该数字已经被选择",
+      "你已经标记过该数字",
     );
   }
 
-  game.calledNumbers.push(action.number);
-  game.lastNumber = action.number;
-  const called = new Set(game.calledNumbers);
-  for (const candidate of game.players) {
-    candidate.lineCount = getNumberConnectCompletedLines(candidate.board, called);
-  }
-  const winners = game.players.filter(
-    (candidate) => candidate.lineCount >= NUMBER_CONNECT_TARGET_LINES,
-  );
-  if (winners.length > 0) {
+  player.markedNumbers.push(action.number);
+  player.lineCount = getNumberConnectCompletedLines(player.board, player.markedNumbers);
+  game.lastMove = { playerId: player.id, number: action.number };
+  if (player.lineCount >= NUMBER_CONNECT_TARGET_LINES) {
     game.status = "finished";
     game.currentPlayerId = null;
     game.winner = {
       reason: "lines",
-      playerIds: winners.map((candidate) => candidate.id),
+      playerIds: [player.id],
       rankings: rankings(game),
     };
-  } else {
-    game.currentPlayerId = otherPlayer(game, player.id).id;
   }
   game.revision += 1;
   return game;
@@ -321,13 +311,15 @@ export function getNumberConnectGameView(
   }
   const prompt: NumberConnectPrompt = game.status === "finished"
     ? { type: "finished", playerId: null }
-    : viewerId === game.currentPlayerId
+    : viewerId !== null
       ? {
           type: "call",
-          playerId: viewerId!,
-          availableNumbers: availableNumbers(game),
+          playerId: viewerId,
+          availableNumbers: availableNumbers(
+            game.players.find((player) => player.id === viewerId)!,
+          ),
         }
-      : { type: "waiting", playerId: game.currentPlayerId! };
+      : { type: "spectating", playerId: null };
   return {
     kind: "number_connect",
     version: 1,
@@ -345,46 +337,15 @@ export function getNumberConnectGameView(
         ? { board: [...player.board] }
         : {}),
     })),
-    calledNumbers: [...game.calledNumbers],
-    lastNumber: game.lastNumber,
+    calledNumbers: viewerId === null
+      ? []
+      : [...game.players.find((player) => player.id === viewerId)!.markedNumbers],
+    lastNumber: viewerId === null
+      ? null
+      : (game.players.find((player) => player.id === viewerId)!.markedNumbers.at(-1) ?? null),
     winner: game.winner ? structuredClone(game.winner) : null,
     prompt,
   };
-}
-
-export function chooseNumberConnectBotAction(
-  game: NumberConnectGameState,
-  playerId: string,
-): NumberConnectAction {
-  if (game.status === "finished") {
-    throw new NumberConnectRuleError("NUMBER_CONNECT_GAME_FINISHED", "游戏已经结束");
-  }
-  const player = game.players.find((candidate) => candidate.id === playerId);
-  if (!player) {
-    throw new NumberConnectRuleError("NUMBER_CONNECT_UNKNOWN_PLAYER", "玩家不在本局中");
-  }
-  if (game.currentPlayerId !== playerId) {
-    throw new NumberConnectRuleError("NUMBER_CONNECT_NOT_YOUR_TURN", "还没有轮到该玩家");
-  }
-  const alreadyCalled = new Set(game.calledNumbers);
-  const candidates = availableNumbers(game);
-  let bestNumber = candidates[0]!;
-  let bestScore = -1;
-  for (const number of candidates) {
-    const nextCalled = new Set(alreadyCalled);
-    nextCalled.add(number);
-    let score = getNumberConnectCompletedLines(player.board, nextCalled) * 100;
-    for (const line of WINNING_LINES) {
-      const values = line.map((index) => player.board[index]!);
-      if (!values.includes(number)) continue;
-      score += values.filter((value) => nextCalled.has(value)).length ** 2;
-    }
-    if (score > bestScore || (score === bestScore && number < bestNumber)) {
-      bestNumber = number;
-      bestScore = score;
-    }
-  }
-  return { type: "number_connect_call", playerId, number: bestNumber };
 }
 
 export function forfeitNumberConnectPlayer(
@@ -431,7 +392,7 @@ export function assertRestorableNumberConnectGameState(
 ): asserts value is NumberConnectGameState {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "kind", "version", "revision", "status", "players", "currentPlayerId",
-    "calledNumbers", "lastNumber", "winner",
+    "lastMove", "winner",
   ])) {
     throw new Error("数字连连看存档结构无效");
   }
@@ -444,19 +405,15 @@ export function assertRestorableNumberConnectGameState(
   if (!Array.isArray(value.players) || value.players.length !== 2) {
     throw new Error("数字连连看玩家数量无效");
   }
-  if (
-    !Array.isArray(value.calledNumbers) ||
-    !value.calledNumbers.every((number) => typeof number === "number" && isValidNumber(number)) ||
-    new Set(value.calledNumbers).size !== value.calledNumbers.length
-  ) {
-    throw new Error("数字连连看已选数字无效");
-  }
-  const calledNumbers = value.calledNumbers as number[];
   const playerIds = new Set<string>();
   for (const [seat, rawPlayer] of value.players.entries()) {
     if (
       !isRecord(rawPlayer) ||
-      !hasOnlyKeys(rawPlayer, ["id", "seat", "name", "board", "lineCount"], ["botTitle"]) ||
+      !hasOnlyKeys(
+        rawPlayer,
+        ["id", "seat", "name", "board", "markedNumbers", "lineCount"],
+        ["botTitle"],
+      ) ||
       typeof rawPlayer.id !== "string" ||
       rawPlayer.id.length === 0 ||
       playerIds.has(rawPlayer.id) ||
@@ -468,10 +425,15 @@ export function assertRestorableNumberConnectGameState(
       !Array.isArray(rawPlayer.board) ||
       !rawPlayer.board.every((number) => typeof number === "number") ||
       !isPermutation(rawPlayer.board as number[]) ||
+      !Array.isArray(rawPlayer.markedNumbers) ||
+      !rawPlayer.markedNumbers.every(
+        (number) => typeof number === "number" && isValidNumber(number),
+      ) ||
+      new Set(rawPlayer.markedNumbers).size !== rawPlayer.markedNumbers.length ||
       !Number.isSafeInteger(rawPlayer.lineCount) ||
       rawPlayer.lineCount !== getNumberConnectCompletedLines(
         rawPlayer.board as number[],
-        calledNumbers,
+        rawPlayer.markedNumbers as number[],
       )
     ) {
       throw new Error("数字连连看玩家状态无效");
@@ -482,16 +444,37 @@ export function assertRestorableNumberConnectGameState(
   if (players[0]!.board.some((number, index) => players[1]!.board[index] === number)) {
     throw new Error("数字连连看双方棋盘同一位置不能出现相同数字");
   }
+  const totalMarkedNumbers = players.reduce(
+    (total, player) => total + player.markedNumbers.length,
+    0,
+  );
   if (
-    value.lastNumber !== (calledNumbers.at(-1) ?? null) ||
     (value.status !== "playing" && value.status !== "finished")
   ) {
     throw new Error("数字连连看阶段无效");
   }
+  if (totalMarkedNumbers === 0) {
+    if (value.lastMove !== null) {
+      throw new Error("数字连连看最后一步无效");
+    }
+  } else {
+    const lastMove = value.lastMove;
+    if (
+      !isRecord(lastMove) ||
+      !hasOnlyKeys(lastMove, ["playerId", "number"]) ||
+      typeof lastMove.playerId !== "string" ||
+      !playerIds.has(lastMove.playerId) ||
+      typeof lastMove.number !== "number" ||
+      !isValidNumber(lastMove.number) ||
+      players.find((player) => player.id === lastMove.playerId)
+        ?.markedNumbers.at(-1) !== lastMove.number
+    ) {
+      throw new Error("数字连连看最后一步无效");
+    }
+  }
   if (value.status === "playing") {
     if (
-      typeof value.currentPlayerId !== "string" ||
-      !playerIds.has(value.currentPlayerId) ||
+      value.currentPlayerId !== null ||
       value.winner !== null ||
       players.some((player) => player.lineCount >= NUMBER_CONNECT_TARGET_LINES)
     ) {
@@ -522,15 +505,20 @@ export function assertRestorableNumberConnectGameState(
   ) {
     throw new Error("数字连连看胜负结果无效");
   }
+  const winnerPlayerIds = winner.playerIds as string[];
   if (
     winner.reason === "lines" &&
-    (winner.playerIds as string[]).some((id) =>
-      players.find((player) => player.id === id)!.lineCount < NUMBER_CONNECT_TARGET_LINES
-    )
+    (winnerPlayerIds.length !== 1 ||
+      players.find((player) => player.id === winnerPlayerIds[0])!.lineCount <
+        NUMBER_CONNECT_TARGET_LINES ||
+      players.some((player) =>
+        player.id !== winnerPlayerIds[0] &&
+        player.lineCount >= NUMBER_CONNECT_TARGET_LINES
+      ))
   ) {
     throw new Error("数字连连看连线胜负无效");
   }
-  if (winner.reason === "forfeit" && winner.playerIds.length !== 1) {
+  if (winner.reason === "forfeit" && winnerPlayerIds.length !== 1) {
     throw new Error("数字连连看判负结果无效");
   }
 }
