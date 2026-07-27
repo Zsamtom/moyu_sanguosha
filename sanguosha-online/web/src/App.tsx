@@ -1,15 +1,10 @@
 import { ConfigProvider, Spin, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, errorMessage } from './api';
-import { AdminUsersScreen } from './components/AdminUsersScreen';
 import { AppShell } from './components/AppShell';
 import { ChangePasswordModal, RequiredPasswordChangeScreen } from './components/ChangePasswordScreen';
-import { DoudizhuBoard } from './components/DoudizhuBoard';
-import { GameBoard } from './components/GameBoard';
-import { GoujiBoard } from './components/GoujiBoard';
 import { LobbyScreen } from './components/LobbyScreen';
 import { LoginScreen } from './components/LoginScreen';
-import { NovelReaderScreen } from './components/NovelReaderScreen';
 import { RoomScreen } from './components/RoomScreen';
 import { RoomChat } from './components/RoomChat';
 import { realtime } from './realtime';
@@ -32,6 +27,17 @@ import type {
   UpdateLlmSettings,
 } from './types';
 import { isDoudizhuGameView, isGoujiGameView, normalizeGameView } from './types';
+
+const AdminUsersScreen = lazy(() => import('./components/AdminUsersScreen')
+  .then(({ AdminUsersScreen: component }) => ({ default: component })));
+const DoudizhuBoard = lazy(() => import('./components/DoudizhuBoard')
+  .then(({ DoudizhuBoard: component }) => ({ default: component })));
+const GameBoard = lazy(() => import('./components/GameBoard')
+  .then(({ GameBoard: component }) => ({ default: component })));
+const GoujiBoard = lazy(() => import('./components/GoujiBoard')
+  .then(({ GoujiBoard: component }) => ({ default: component })));
+const NovelReaderScreen = lazy(() => import('./components/NovelReaderScreen')
+  .then(({ NovelReaderScreen: component }) => ({ default: component })));
 
 const llmFallbackMessages: Record<LlmFailureReason, string> = {
   timeout: '大模型请求超时，已提供规则推荐',
@@ -512,7 +518,7 @@ export default function App() {
         }}
         onLogout={() => void logout()}
       >
-        {doudizhuGame ? (
+        <Suspense fallback={<Spin size="large" />}>{doudizhuGame ? (
           <DoudizhuBoard
             game={doudizhuGame}
             room={room}
@@ -567,7 +573,7 @@ export default function App() {
           />
         ) : (
           <LobbyScreen rooms={rooms} loading={roomsLoading} onRefresh={refreshRooms} onCreate={createRoom} onJoin={joinRoom} />
-        )}
+        )}</Suspense>
       </AppShell>
       {room && (
         <RoomChat
