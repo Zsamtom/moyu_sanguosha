@@ -99,6 +99,15 @@ describe('room start rules', () => {
       members: [roomWith().members[0]!],
     }), true)).toContain('坐满 2 人');
   });
+
+  it('requires exactly two players for Number Connect', () => {
+    expect(getRoomStartBlockReason(roomWith({ gameType: 'number_connect', maxPlayers: 2 }), true)).toBeUndefined();
+    expect(getRoomStartBlockReason(roomWith({
+      gameType: 'number_connect',
+      maxPlayers: 2,
+      members: [roomWith().members[0]!],
+    }), true)).toContain('坐满 2 人');
+  });
 });
 
 describe('active-game exit copy', () => {

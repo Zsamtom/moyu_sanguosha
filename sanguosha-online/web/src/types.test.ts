@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { RealtimeClient } from './realtime';
-import { isDigitBombGameView, isDoudizhuGameView, isGoujiGameView, isSplendorGameView, normalizeGameView, normalizeRoomDetail, type GameAction } from './types';
+import {
+  isDigitBombGameView,
+  isDoudizhuGameView,
+  isGoujiGameView,
+  isNumberConnectGameView,
+  isSplendorGameView,
+  normalizeGameView,
+  normalizeRoomDetail,
+  type GameAction,
+} from './types';
 
 describe('server payload adapters', () => {
   it('normalizes the server room view and identifies the owner', () => {
@@ -218,6 +227,51 @@ describe('server payload adapters', () => {
       players: gameView.players.map((player, index) =>
         index === 1 ? { ...player, secret: '999999' } : player),
     })).toBe(false);
+  });
+
+  it('preserves Number Connect rooms and recognizes a private board view', () => {
+    const room = normalizeRoomDetail({
+      id: 'room-connect',
+      name: '五线对决',
+      gameType: 'number_connect',
+      status: 'playing',
+      ownerId: 'user-1',
+      maxPlayers: 2,
+      players: [],
+    });
+    expect(room).toMatchObject({ gameType: 'number_connect', maxPlayers: 2 });
+
+    const board = Array.from({ length: 25 }, (_, index) => index + 1);
+    const gameView = {
+      kind: 'number_connect',
+      version: 1,
+      revision: 2,
+      actionPromptId: 'number-connect:2:playing:user-1',
+      status: 'playing',
+      currentPlayerId: 'user-1',
+      players: [
+        { id: 'user-1', seat: 0, name: '玩家一', lineCount: 0, board },
+        { id: 'user-2', seat: 1, name: '玩家二', lineCount: 0 },
+      ],
+      calledNumbers: [3, 7],
+      lastNumber: 7,
+      winner: null,
+      prompt: {
+        type: 'call',
+        playerId: 'user-1',
+        availableNumbers: board.filter((number) => number !== 3 && number !== 7),
+      },
+    };
+    expect(isNumberConnectGameView(gameView)).toBe(true);
+    expect(isNumberConnectGameView({
+      ...gameView,
+      players: gameView.players.map((player) => ({ ...player, board })),
+    })).toBe(true);
+    expect(isNumberConnectGameView({
+      ...gameView,
+      players: [{ ...gameView.players[0], board: [...board.slice(0, 24), 24] }, gameView.players[1]],
+    })).toBe(false);
+    expect(isNumberConnectGameView({ ...gameView, calledNumbers: [3, 3] })).toBe(false);
   });
 
   it('preserves the caller-private general draft without deriving other candidates', () => {

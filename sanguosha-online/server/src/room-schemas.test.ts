@@ -12,6 +12,7 @@ import {
   gameActionPayloadSchema,
   gameActionSchema,
   goujiActionSchema,
+  numberConnectActionSchema,
   roomRuleConfigSchema,
   splendorActionSchema,
 } from "./room-schemas.js";
@@ -141,6 +142,25 @@ describe("room creation and draft schemas", () => {
     expect(createRoomSchema.safeParse({
       name: "大模型数字炸弹",
       gameType: "digit_bomb",
+      botMode: "llm",
+    }).success).toBe(false);
+    expect(createRoomSchema.parse({
+      name: "数字连连看",
+      gameType: "number_connect",
+      maxPlayers: 2,
+    })).toMatchObject({
+      gameType: "number_connect",
+      maxPlayers: 2,
+      botMode: "rules",
+    });
+    expect(createRoomSchema.safeParse({
+      name: "三人数字连连看",
+      gameType: "number_connect",
+      maxPlayers: 3,
+    }).success).toBe(false);
+    expect(createRoomSchema.safeParse({
+      name: "大模型数字连连看",
+      gameType: "number_connect",
       botMode: "llm",
     }).success).toBe(false);
 
@@ -339,6 +359,28 @@ describe("gameActionSchema skill actions", () => {
       type: "digit_bomb_vote",
       playerId,
       vote: "settle",
+      injected: true,
+    }).success).toBe(false);
+  });
+
+  it("accepts strict Number Connect calls and rejects malformed payloads", () => {
+    const action = { type: "number_connect_call", playerId, number: 25 } as const;
+    expect(numberConnectActionSchema.parse(action)).toEqual(action);
+    expect(gameActionEnvelopeSchema.parse({
+      expectedRevision: 2,
+      expectedPromptId: "number-connect:2:playing",
+      action,
+    }).action).toEqual(action);
+    expect(numberConnectActionSchema.safeParse({
+      ...action,
+      number: 0,
+    }).success).toBe(false);
+    expect(numberConnectActionSchema.safeParse({
+      ...action,
+      number: 26,
+    }).success).toBe(false);
+    expect(numberConnectActionSchema.safeParse({
+      ...action,
       injected: true,
     }).success).toBe(false);
   });

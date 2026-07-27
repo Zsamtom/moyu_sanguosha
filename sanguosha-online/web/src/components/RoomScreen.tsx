@@ -6,6 +6,7 @@ import {
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
   DIGIT_BOMB_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
+  NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES,
   SPLENDOR_BOT_INTELLIGENCE_NAMES,
   type AuthUser,
   type FullGeneralId,
@@ -312,6 +313,13 @@ export function RoomScreen({
           <div><span>密码</span><strong>{room.digitBombDigits ?? 4} 位 / 可重复 / 可 0 开头</strong></div>
           <div><span>赛制</span><strong>多局积分 / 双方投票结算</strong></div>
           <div><span>机器人</span><strong>{botIntelligence} · {DIGIT_BOMB_BOT_INTELLIGENCE_NAMES[botIntelligence]} / 零 Token</strong></div>
+        </section>
+      ) : room.gameType === 'number_connect' ? (
+        <section className="room-rule-summary room-rule-summary--number_connect" aria-label="数字连连看房间规则">
+          {registration.roomRuleSummary?.map((item) => (
+            <div key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>
+          ))}
+          <div><span>机器人</span><strong>{botIntelligence} · {NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES[botIntelligence]} / 零 Token</strong></div>
         </section>
       ) : null}
 

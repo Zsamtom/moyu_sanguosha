@@ -112,6 +112,15 @@ export const DIGIT_BOMB_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> 
   6: '首席拆弹手',
   7: '零失误传奇',
 };
+export const NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES: Record<BotIntelligence, string> = {
+  1: '连线新手',
+  2: '数字学徒',
+  3: '方格玩家',
+  4: '路线规划师',
+  5: '五线高手',
+  6: '棋盘大师',
+  7: '连线传奇',
+};
 export type GeneralDraftStage = 'selecting_generals' | 'selecting_factions' | 'complete';
 
 export interface RoomRuleConfig {
@@ -152,7 +161,14 @@ export interface GeneralDraftView {
 }
 
 export type RoomStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
-export type GameType = 'sanguosha' | 'gouji' | 'doudizhu' | 'splendor' | 'splendor_pokemon' | 'digit_bomb';
+export type GameType =
+  | 'sanguosha'
+  | 'gouji'
+  | 'doudizhu'
+  | 'splendor'
+  | 'splendor_pokemon'
+  | 'digit_bomb'
+  | 'number_connect';
 export type BotMode = 'rules' | 'llm';
 
 export interface RoomSummary {
@@ -769,6 +785,47 @@ export type DigitBombAction =
   | { type: 'digit_bomb_feedback'; playerId: string; correctPositions: number }
   | { type: 'digit_bomb_vote'; playerId: string; vote: DigitBombVote };
 
+export interface NumberConnectPlayerView {
+  id: string;
+  seat: number;
+  name: string;
+  botTitle?: string;
+  lineCount: number;
+  /** Present for the viewer's own board, and for both players after the match. */
+  board?: number[];
+}
+
+export interface NumberConnectWinner {
+  playerIds: string[];
+  reason: 'lines' | 'forfeit';
+  rankings: Array<{ playerId: string; lineCount: number }>;
+}
+
+export type NumberConnectPrompt =
+  | { type: 'call'; playerId: string; availableNumbers: number[] }
+  | { type: 'waiting'; playerId: string }
+  | { type: 'finished'; playerId: null };
+
+export interface NumberConnectGameView {
+  kind: 'number_connect';
+  version: 1;
+  revision: number;
+  actionPromptId: string;
+  status: 'playing' | 'finished';
+  currentPlayerId: string | null;
+  players: NumberConnectPlayerView[];
+  calledNumbers: number[];
+  lastNumber: number | null;
+  winner: NumberConnectWinner | null;
+  prompt: NumberConnectPrompt;
+}
+
+export type NumberConnectAction = {
+  type: 'number_connect_call';
+  playerId: string;
+  number: number;
+};
+
 export interface DoudizhuLlmRecommendation {
   action: DoudizhuAction;
   source: 'llm' | 'rules';
@@ -792,7 +849,13 @@ const LLM_FAILURE_REASONS: readonly LlmFailureReason[] = [
   'invalid_candidate',
 ];
 
-export type AnyGameAction = GameAction | GoujiAction | DoudizhuAction | SplendorAction | DigitBombAction;
+export type AnyGameAction =
+  | GameAction
+  | GoujiAction
+  | DoudizhuAction
+  | SplendorAction
+  | DigitBombAction
+  | NumberConnectAction;
 
 export function isGoujiGameView(value: unknown): value is GoujiGameView {
   if (!value || typeof value !== 'object') return false;
@@ -943,6 +1006,44 @@ export function isDigitBombGameView(value: unknown): value is DigitBombGameView 
       prompt?.type === 'finished');
 }
 
+export function isNumberConnectGameView(value: unknown): value is NumberConnectGameView {
+  if (!value || typeof value !== 'object') return false;
+  const game = value as Partial<NumberConnectGameView>;
+  const players = Array.isArray(game.players) ? game.players : [];
+  const prompt = game.prompt as Partial<NumberConnectPrompt> | undefined;
+  const validBoard = (board: unknown): board is number[] =>
+    Array.isArray(board) &&
+    board.length === 25 &&
+    board.every((number) => Number.isSafeInteger(number) && number >= 1 && number <= 25) &&
+    new Set(board).size === 25;
+  return game.kind === 'number_connect' &&
+    game.version === 1 &&
+    Number.isSafeInteger(game.revision) &&
+    typeof game.actionPromptId === 'string' &&
+    (game.status === 'playing' || game.status === 'finished') &&
+    (game.currentPlayerId === null || typeof game.currentPlayerId === 'string') &&
+    Array.isArray(game.calledNumbers) &&
+    game.calledNumbers.every((number) =>
+      Number.isSafeInteger(number) && number >= 1 && number <= 25
+    ) &&
+    new Set(game.calledNumbers).size === game.calledNumbers.length &&
+    (game.lastNumber === null ||
+      (Number.isSafeInteger(game.lastNumber) &&
+        Number(game.lastNumber) >= 1 &&
+        Number(game.lastNumber) <= 25)) &&
+    players.length === 2 &&
+    players.every((player) =>
+      player && typeof player === 'object' &&
+      typeof player.id === 'string' &&
+      Number.isInteger(player.seat) &&
+      typeof player.name === 'string' &&
+      Number.isSafeInteger(player.lineCount) &&
+      (player.board === undefined || validBoard(player.board))
+    ) &&
+    Boolean(prompt) &&
+    (prompt?.type === 'call' || prompt?.type === 'waiting' || prompt?.type === 'finished');
+}
+
 export interface ApiErrorBody {
   code?: string;
   message?: string;
@@ -957,7 +1058,14 @@ export interface SocketAck<T = unknown> {
 export interface ServerState {
   rooms?: RoomSummary[];
   room?: RoomDetail | null;
-  game?: GameView | GoujiGameView | DoudizhuGameView | SplendorGameView | DigitBombGameView | null;
+  game?:
+    | GameView
+    | GoujiGameView
+    | DoudizhuGameView
+    | SplendorGameView
+    | DigitBombGameView
+    | NumberConnectGameView
+    | null;
 }
 
 type EngineCardKind = StandardCardKind;
@@ -1713,7 +1821,8 @@ export function normalizeRoomSummary(room: Partial<RoomSummary> & Record<string,
       room.gameType === 'doudizhu' ||
       room.gameType === 'splendor' ||
       room.gameType === 'splendor_pokemon' ||
-      room.gameType === 'digit_bomb'
+      room.gameType === 'digit_bomb' ||
+      room.gameType === 'number_connect'
       ? room.gameType
       : 'sanguosha',
     status: (room.status as RoomStatus | undefined) ?? 'waiting',

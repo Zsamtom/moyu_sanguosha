@@ -34,6 +34,9 @@ import {
   type DigitBombAction,
   type DigitBombGameState,
   type DigitBombGameView,
+  type NumberConnectAction,
+  type NumberConnectGameState,
+  type NumberConnectGameView,
   type GameAction,
   type GameSession,
   type GameView,
@@ -60,6 +63,8 @@ import {
   isAdapterGameType,
   isDigitBombAction,
   isDigitBombGame,
+  isNumberConnectAction,
+  isNumberConnectGame,
   isSplendorAction,
   isSplendorGame,
   isSplendorGameType,
@@ -172,7 +177,13 @@ interface Room {
   doudizhuLlmUsage: DoudizhuLlmUsage;
   chatMessages: RoomChatMessage[];
   draft?: GeneralDraftState;
-  game?: GameSession | GoujiGameState | DoudizhuGameState | SplendorGameState | DigitBombGameState;
+  game?:
+    | GameSession
+    | GoujiGameState
+    | DoudizhuGameState
+    | SplendorGameState
+    | DigitBombGameState
+    | NumberConnectGameState;
 }
 
 const GOUJI_BOT_NICKNAMES = [
@@ -250,7 +261,13 @@ export interface RoomServiceSnapshot {
     doudizhuLlmUsage?: DoudizhuLlmUsage;
     chatMessages?: RoomChatMessage[];
     draft?: GeneralDraftState;
-    game?: GameSession | GoujiGameState | DoudizhuGameState | SplendorGameState | DigitBombGameState;
+    game?:
+      | GameSession
+      | GoujiGameState
+      | DoudizhuGameState
+      | SplendorGameState
+      | DigitBombGameState
+      | NumberConnectGameState;
   }>;
 }
 
@@ -275,19 +292,22 @@ type AuthorityGame =
   | GoujiGameState
   | DoudizhuGameState
   | SplendorGameState
-  | DigitBombGameState;
+  | DigitBombGameState
+  | NumberConnectGameState;
 type AuthorityAction =
   | GameAction
   | GoujiAction
   | DoudizhuAction
   | SplendorAction
-  | DigitBombAction;
+  | DigitBombAction
+  | NumberConnectAction;
 type AuthorityGameView =
   | GameView
   | GoujiGameView
   | DoudizhuGameView
   | SplendorGameView
-  | DigitBombGameView;
+  | DigitBombGameView
+  | NumberConnectGameView;
 
 function isGoujiGame(game: AuthorityGame): game is GoujiGameState {
   return "kind" in game && game.kind === "gouji";
@@ -438,6 +458,8 @@ export class RoomService {
               ? DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
               : room.gameType === "digit_bomb"
                 ? "拆弹专家"
+                : room.gameType === "number_connect"
+                  ? "连线高手"
                 : "宝石行家";
         }
         if (!player.isBot && !player.departed && this.roomByUser.has(player.id)) {
@@ -469,6 +491,8 @@ export class RoomService {
               ? isSplendorGame(room.game) && room.game.kind === room.gameType
               : room.gameType === "digit_bomb"
                 ? isDigitBombGame(room.game)
+                : room.gameType === "number_connect"
+                  ? isNumberConnectGame(room.game)
               : !isGoujiGame(room.game) &&
                 !isDoudizhuGame(room.game) &&
                 !isAdapterGame(room.game);
@@ -621,6 +645,8 @@ export class RoomService {
             ? `晶石旅人 ${room.players.filter((player) => player.isBot).length + 1}`
             : room.gameType === "digit_bomb"
               ? `拆弹员 ${room.players.filter((player) => player.isBot).length + 1}`
+              : room.gameType === "number_connect"
+                ? `连线玩家 ${room.players.filter((player) => player.isBot).length + 1}`
               : `机器人 ${room.players.filter((player) => player.isBot).length + 1}`,
       ...(room.gameType !== "sanguosha"
         ? {
@@ -630,6 +656,8 @@ export class RoomService {
                 ? DOUDIZHU_BOT_INTELLIGENCE_NAMES[room.botIntelligence]
                 : room.gameType === "digit_bomb"
                   ? "拆弹专家"
+                  : room.gameType === "number_connect"
+                    ? "连线高手"
                   : "宝石行家",
           }
         : {}),
@@ -992,10 +1020,8 @@ export class RoomService {
       ? getGoujiGameView(room.game, userId)
       : isDoudizhuGame(room.game)
         ? getDoudizhuGameView(room.game, userId)
-        : isSplendorGame(room.game)
+        : isAdapterGame(room.game)
           ? getAdapterGameView(room.game, userId)
-          : isDigitBombGame(room.game)
-            ? getAdapterGameView(room.game, userId)
           : getGameView(room.game, userId);
     if (expectedRevision !== currentView.revision || expectedPromptId !== currentView.actionPromptId) {
       throw new HttpError(409, "STALE_GAME_ACTION", "游戏状态已更新，请基于最新界面重试");
@@ -1021,12 +1047,18 @@ export class RoomService {
         throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行数字炸弹");
       }
       room.game = applyAdapterAction(room.game, action);
+    } else if (isNumberConnectGame(room.game)) {
+      if (!isNumberConnectAction(action)) {
+        throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行数字连连看");
+      }
+      room.game = applyAdapterAction(room.game, action);
     } else {
       if (
         isGoujiAction(action) ||
         isDoudizhuAction(action) ||
         isSplendorAction(action) ||
-        isDigitBombAction(action)
+        isDigitBombAction(action) ||
+        isNumberConnectAction(action)
       ) {
         throw new HttpError(409, "GAME_TYPE_MISMATCH", "该房间正在进行三国杀");
       }
@@ -1042,10 +1074,8 @@ export class RoomService {
       ? getGoujiGameView(room.game, userId)
       : isDoudizhuGame(room.game)
         ? getDoudizhuGameView(room.game, userId)
-        : isSplendorGame(room.game)
+        : isAdapterGame(room.game)
           ? getAdapterGameView(room.game, userId)
-          : isDigitBombGame(room.game)
-            ? getAdapterGameView(room.game, userId)
           : getGameView(room.game, userId);
   }
 
@@ -1180,10 +1210,8 @@ export class RoomService {
       ? getGoujiGameView(room.game, userId)
       : isDoudizhuGame(room.game)
         ? getDoudizhuGameView(room.game, userId)
-        : isSplendorGame(room.game)
+        : isAdapterGame(room.game)
           ? getAdapterGameView(room.game, userId)
-          : isDigitBombGame(room.game)
-            ? getAdapterGameView(room.game, userId)
           : getGameView(room.game, userId);
   }
 

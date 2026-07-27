@@ -7,6 +7,7 @@ import {
   type DigitBombAction,
   type GameAction,
   type GoujiAction,
+  type NumberConnectAction,
   type SplendorAction,
 } from "@sanguosha/shared";
 import { z } from "zod";
@@ -43,7 +44,8 @@ export const roomRuleConfigSchema = z.object({
 export const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(40),
   gameType: z.enum([
-    "sanguosha", "gouji", "doudizhu", "splendor", "splendor_pokemon", "digit_bomb",
+    "sanguosha", "gouji", "doudizhu", "splendor", "splendor_pokemon",
+    "digit_bomb", "number_connect",
   ]).optional(),
   maxPlayers: z.number().int().min(2).max(10).optional(),
   digitBombDigits: z.number().int().min(1).max(8).optional(),
@@ -83,6 +85,13 @@ export const createRoomSchema = z.object({
       message: "数字炸弹固定为 2 人",
     });
   }
+  if (input.gameType === "number_connect" && input.maxPlayers !== undefined && input.maxPlayers !== 2) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxPlayers"],
+      message: "数字连连看固定为 2 人",
+    });
+  }
   if (input.botMode === "llm" && input.gameType === "gouji") {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -100,11 +109,14 @@ export const createRoomSchema = z.object({
       message: "LLM bot mode is not available for Splendor rooms",
     });
   }
-  if (input.botMode === "llm" && input.gameType === "digit_bomb") {
+  if (
+    input.botMode === "llm" &&
+    (input.gameType === "digit_bomb" || input.gameType === "number_connect")
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["botMode"],
-      message: "LLM bot mode is not available for Digit Bomb rooms",
+      message: "LLM bot mode is not available for this game type",
     });
   }
   if (input.digitBombDigits !== undefined && input.gameType !== "digit_bomb") {
@@ -413,6 +425,12 @@ export const digitBombActionSchema = z.discriminatedUnion("type", [
   }),
 ]).transform((action): DigitBombAction => action);
 
+export const numberConnectActionSchema = strictObject({
+  type: z.literal("number_connect_call"),
+  playerId,
+  number: z.number().int().min(1).max(25),
+}).transform((action): NumberConnectAction => action);
+
 export const gameActionEnvelopeSchema = z.object({
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   expectedPromptId: promptId,
@@ -422,6 +440,7 @@ export const gameActionEnvelopeSchema = z.object({
     doudizhuActionSchema,
     splendorActionSchema,
     digitBombActionSchema,
+    numberConnectActionSchema,
   ]),
 }).strict();
 

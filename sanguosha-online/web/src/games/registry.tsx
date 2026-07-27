@@ -1,5 +1,14 @@
-import type { DigitBombGameView, GameType, SplendorGameView } from '../types';
-import { isDigitBombGameView, isSplendorGameView } from '../types';
+import type {
+  DigitBombGameView,
+  GameType,
+  NumberConnectGameView,
+  SplendorGameView,
+} from '../types';
+import {
+  isDigitBombGameView,
+  isNumberConnectGameView,
+  isSplendorGameView,
+} from '../types';
 
 export interface GameRegistration {
   readonly label: string;
@@ -143,6 +152,28 @@ export const GAME_REGISTRY = {
     ],
     waitingCopy: '坐满 2 席并全部准备后开局；双方将先秘密设置本局数字。',
   },
+  number_connect: {
+    label: '数字连连看',
+    createLabel: '数字连连看 · 双人五线对决',
+    kicker: 'Number Connect / 5×5',
+    minimumPlayers: 2,
+    maximumPlayers: 2,
+    defaultPlayers: 2,
+    fixedPlayers: true,
+    supportsLlmBots: false,
+    noteTitle: '数字连连看固定 2 人',
+    noteLines: [
+      '双方各有一张随机且不同的 5×5 数字棋盘，轮流叫出 1—25 中尚未选择的数字。',
+      '叫出的数字会在双方棋盘同时打叉；横、竖或斜向连满一线得 1 分，先到 5 分获胜。',
+    ],
+    roomRuleSummary: [
+      { label: '玩法', value: '双人数字连线' },
+      { label: '棋盘', value: '5×5 / 随机排列' },
+      { label: '计分', value: '横 / 竖 / 双斜线' },
+      { label: '目标', value: '率先完成 5 条线' },
+    ],
+    waitingCopy: '坐满 2 席并全部准备后开局；对局结束前，对手的数字排列保持隐藏。',
+  },
 } as const satisfies Record<GameType, GameRegistration>;
 
 export function gameRegistration(gameType: GameType): GameRegistration {
@@ -167,4 +198,12 @@ export function digitBombViewForRoom(
 ): DigitBombGameView | null {
   if (!isDigitBombGameView(value)) return null;
   return roomGameType === 'digit_bomb' ? value : null;
+}
+
+export function numberConnectViewForRoom(
+  value: unknown,
+  roomGameType: GameType | undefined,
+): NumberConnectGameView | null {
+  if (!isNumberConnectGameView(value)) return null;
+  return roomGameType === 'number_connect' ? value : null;
 }

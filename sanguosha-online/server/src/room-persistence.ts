@@ -22,6 +22,7 @@ import {
   assertRestorableDigitBombGameState,
   assertRestorableDoudizhuGameState,
   assertRestorableGoujiGameState,
+  assertRestorableNumberConnectGameState,
   assertRestorableSplendorGameState,
   currentDyingEntrySaveSkill,
   currentDyingOwnerResponseSkill,
@@ -48,6 +49,7 @@ import {
   type GeneralDraftState,
   type GameSession,
   type GoujiGameState,
+  type NumberConnectGameState,
   type LifePlayerState,
   type PendingNullificationResponse,
   type PendingDeathResolution,
@@ -4590,6 +4592,15 @@ const digitBombGameStateSchema = z.custom<DigitBombGameState>((value) => {
   }
 }, "Invalid Digit Bomb game state");
 
+const numberConnectGameStateSchema = z.custom<NumberConnectGameState>((value) => {
+  try {
+    assertRestorableNumberConnectGameState(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Invalid Number Connect game state");
+
 const playerSchema = z.object({
   id: playerIdSchema,
   username: z.string().min(1).max(32),
@@ -4621,7 +4632,8 @@ const roomSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(40),
   gameType: z.enum([
-    "sanguosha", "gouji", "doudizhu", "splendor", "splendor_pokemon", "digit_bomb",
+    "sanguosha", "gouji", "doudizhu", "splendor", "splendor_pokemon",
+    "digit_bomb", "number_connect",
   ]).default("sanguosha"),
   ownerId: playerIdSchema,
   status: z.enum(["waiting", "drafting", "playing", "finished"]),
@@ -4660,6 +4672,7 @@ const roomSchema = z.object({
     doudizhuGameStateSchema,
     splendorGameStateSchema,
     digitBombGameStateSchema,
+    numberConnectGameStateSchema,
   ]).optional(),
 }).superRefine((room, context) => {
   const issue = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
@@ -4673,6 +4686,9 @@ const roomSchema = z.object({
   if (room.gameType === "doudizhu" && room.maxPlayers !== 3) issue("Doudizhu room must have exactly 3 seats");
   if (room.gameType === "digit_bomb" && room.maxPlayers !== 2) {
     issue("Digit Bomb room must have exactly 2 seats");
+  }
+  if (room.gameType === "number_connect" && room.maxPlayers !== 2) {
+    issue("Number Connect room must have exactly 2 seats");
   }
   if (room.gameType === "digit_bomb" && room.digitBombDigits === undefined) {
     issue("Digit Bomb room must persist its configured digits");
@@ -4691,7 +4707,8 @@ const roomSchema = z.object({
     (room.gameType === "gouji" ||
       room.gameType === "splendor" ||
       room.gameType === "splendor_pokemon" ||
-      room.gameType === "digit_bomb")
+      room.gameType === "digit_bomb" ||
+      room.gameType === "number_connect")
   ) {
     issue("LLM bot mode is not available for this game type");
   }
@@ -4735,6 +4752,9 @@ const roomSchema = z.object({
         issue("Room game type and game state disagree");
       }
       if (room.game.kind === "digit_bomb" && room.gameType !== "digit_bomb") {
+        issue("Room game type and game state disagree");
+      }
+      if (room.game.kind === "number_connect" && room.gameType !== "number_connect") {
         issue("Room game type and game state disagree");
       }
       if (
@@ -4941,9 +4961,11 @@ function migrateRoomSnapshot(value: unknown): unknown {
       room.gameType === "splendor" ||
       room.gameType === "splendor_pokemon" ||
       room.gameType === "digit_bomb" ||
+      room.gameType === "number_connect" ||
       game.kind === "splendor" ||
       game.kind === "splendor_pokemon" ||
-      game.kind === "digit_bomb"
+      game.kind === "digit_bomb" ||
+      game.kind === "number_connect"
     ) continue;
     if (game.revision === undefined) game.revision = 0;
     if (game.nextUseId === undefined) game.nextUseId = 1;

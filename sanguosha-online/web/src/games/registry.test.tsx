@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { digitBombViewForRoom, GAME_REGISTRY, gameRegistration, splendorViewForRoom } from './registry';
+import {
+  digitBombViewForRoom,
+  GAME_REGISTRY,
+  gameRegistration,
+  numberConnectViewForRoom,
+  splendorViewForRoom,
+} from './registry';
 
 const players = Array.from({ length: 2 }, (_, seat) => ({
   id: `player-${seat}`,
@@ -44,7 +50,7 @@ const pokemonView = {
 } as const;
 
 describe('game registry', () => {
-  it('defines authoritative create-room limits for all six games', () => {
+  it('defines authoritative create-room limits for all seven games', () => {
     expect(Object.keys(GAME_REGISTRY)).toEqual([
       'sanguosha',
       'gouji',
@@ -52,6 +58,7 @@ describe('game registry', () => {
       'splendor',
       'splendor_pokemon',
       'digit_bomb',
+      'number_connect',
     ]);
     expect(gameRegistration('splendor')).toMatchObject({
       minimumPlayers: 2,
@@ -62,6 +69,14 @@ describe('game registry', () => {
     expect(gameRegistration('splendor_pokemon').label).toBe('璀璨宝石宝可梦');
     expect(gameRegistration('digit_bomb')).toMatchObject({
       label: '数字炸弹',
+      minimumPlayers: 2,
+      maximumPlayers: 2,
+      defaultPlayers: 2,
+      fixedPlayers: true,
+      supportsLlmBots: false,
+    });
+    expect(gameRegistration('number_connect')).toMatchObject({
+      label: '数字连连看',
       minimumPlayers: 2,
       maximumPlayers: 2,
       defaultPlayers: 2,
@@ -105,5 +120,35 @@ describe('game registry', () => {
     } as const;
     expect(digitBombViewForRoom(view, 'digit_bomb')).toBe(view);
     expect(digitBombViewForRoom(view, 'sanguosha')).toBeNull();
+  });
+
+  it('matches a Number Connect view only to a Number Connect room', () => {
+    const view = {
+      kind: 'number_connect',
+      version: 1,
+      revision: 0,
+      actionPromptId: 'number-connect:0:playing:player-0',
+      status: 'playing',
+      currentPlayerId: 'player-0',
+      players: players.map((player) => ({
+        id: player.id,
+        seat: player.seat,
+        name: player.name,
+        lineCount: 0,
+        ...(player.seat === 0
+          ? { board: Array.from({ length: 25 }, (_, index) => index + 1) }
+          : {}),
+      })),
+      calledNumbers: [],
+      lastNumber: null,
+      winner: null,
+      prompt: {
+        type: 'call',
+        playerId: 'player-0',
+        availableNumbers: Array.from({ length: 25 }, (_, index) => index + 1),
+      },
+    } as const;
+    expect(numberConnectViewForRoom(view, 'number_connect')).toBe(view);
+    expect(numberConnectViewForRoom(view, 'digit_bomb')).toBeNull();
   });
 });

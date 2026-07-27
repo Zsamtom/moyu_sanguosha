@@ -7,7 +7,11 @@ import { LobbyScreen } from './components/LobbyScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { RoomScreen } from './components/RoomScreen';
 import { RoomChat } from './components/RoomChat';
-import { digitBombViewForRoom, splendorViewForRoom } from './games/registry';
+import {
+  digitBombViewForRoom,
+  numberConnectViewForRoom,
+  splendorViewForRoom,
+} from './games/registry';
 import { realtime } from './realtime';
 import type {
   AuthUser,
@@ -27,7 +31,14 @@ import type {
   RoomSummary,
   UpdateLlmSettings,
 } from './types';
-import { isDigitBombGameView, isDoudizhuGameView, isGoujiGameView, isSplendorGameView, normalizeGameView } from './types';
+import {
+  isDigitBombGameView,
+  isDoudizhuGameView,
+  isGoujiGameView,
+  isNumberConnectGameView,
+  isSplendorGameView,
+  normalizeGameView,
+} from './types';
 
 const AdminUsersScreen = lazy(() => import('./components/AdminUsersScreen')
   .then(({ AdminUsersScreen: component }) => ({ default: component })));
@@ -39,6 +50,8 @@ const GameBoard = lazy(() => import('./components/GameBoard')
   .then(({ GameBoard: component }) => ({ default: component })));
 const GoujiBoard = lazy(() => import('./components/GoujiBoard')
   .then(({ GoujiBoard: component }) => ({ default: component })));
+const NumberConnectBoard = lazy(() => import('./components/NumberConnectBoard')
+  .then(({ NumberConnectBoard: component }) => ({ default: component })));
 const SplendorBoard = lazy(() => import('./components/SplendorBoard')
   .then(({ SplendorBoard: component }) => ({ default: component })));
 const NovelReaderScreen = lazy(() => import('./components/NovelReaderScreen')
@@ -96,7 +109,15 @@ export default function App() {
   const [passwordError, setPasswordError] = useState<string>();
 
   const game = useMemo(() => {
-    if (!rawGame || !user || isGoujiGameView(rawGame) || isDoudizhuGameView(rawGame) || isSplendorGameView(rawGame) || isDigitBombGameView(rawGame)) return null;
+    if (
+      !rawGame ||
+      !user ||
+      isGoujiGameView(rawGame) ||
+      isDoudizhuGameView(rawGame) ||
+      isSplendorGameView(rawGame) ||
+      isDigitBombGameView(rawGame) ||
+      isNumberConnectGameView(rawGame)
+    ) return null;
     const normalized = normalizeGameView(rawGame, { roomId: room?.id, room, userId: user.id });
     return extraLogs.length ? { ...normalized, logs: [...normalized.logs, ...extraLogs] } : normalized;
   }, [extraLogs, rawGame, room, user]);
@@ -108,6 +129,10 @@ export default function App() {
   );
   const digitBombGame = useMemo(
     () => digitBombViewForRoom(rawGame, room?.gameType),
+    [rawGame, room?.gameType],
+  );
+  const numberConnectGame = useMemo(
+    () => numberConnectViewForRoom(rawGame, room?.gameType),
     [rawGame, room?.gameType],
   );
 
@@ -354,7 +379,14 @@ export default function App() {
   };
 
   const sendAction = async (action: AnyGameAction) => {
-    if (!game && !goujiGame && !doudizhuGame && !splendorGame && !digitBombGame) return;
+    if (
+      !game &&
+      !goujiGame &&
+      !doudizhuGame &&
+      !splendorGame &&
+      !digitBombGame &&
+      !numberConnectGame
+    ) return;
     try {
       await realtime.sendGameAction(game?.roomId || room?.id || '', action);
     } catch (error) {
@@ -512,7 +544,16 @@ export default function App() {
     );
   }
 
-  const view = game || goujiGame || doudizhuGame || splendorGame || digitBombGame ? 'game' : room ? 'room' : workspaceView;
+  const view = game ||
+    goujiGame ||
+    doudizhuGame ||
+    splendorGame ||
+    digitBombGame ||
+    numberConnectGame
+    ? 'game'
+    : room
+      ? 'room'
+      : workspaceView;
 
   return (
     <ConfigProvider
@@ -532,7 +573,15 @@ export default function App() {
         }}
         onLogout={() => void logout()}
       >
-        <Suspense fallback={<Spin size="large" />}>{digitBombGame ? (
+        <Suspense fallback={<Spin size="large" />}>{numberConnectGame ? (
+          <NumberConnectBoard
+            game={numberConnectGame}
+            userId={user.id}
+            connected={connected}
+            onAction={sendAction}
+            onExit={leaveRoom}
+          />
+        ) : digitBombGame ? (
           <DigitBombBoard
             game={digitBombGame}
             userId={user.id}

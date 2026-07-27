@@ -113,6 +113,7 @@ export const api = {
           gameType !== 'splendor' &&
           gameType !== 'splendor_pokemon' &&
           gameType !== 'digit_bomb' &&
+          gameType !== 'number_connect' &&
           botMode === 'llm'
           ? { botMode }
           : {}),

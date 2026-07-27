@@ -13,6 +13,7 @@ import {
   createGame,
   createGameFromDraft,
   createGeneralDraft,
+  createNumberConnectGame,
   createSplendorGame,
   forfeitPlayer,
   getCardDefinition,
@@ -44,6 +45,72 @@ function standardCard(id: string, kind: CardKind, suit: Card["suit"] = "spade"):
 }
 
 describe("room snapshot persistence", () => {
+  it("round-trips private Number Connect boards and rejects tampering", async () => {
+    const playerIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const game = createNumberConnectGame({
+      players: playerIds.map((id, seat) => ({ id, name: `连线玩家${seat + 1}` })),
+      seed: "42".repeat(32),
+    });
+    const snapshot: RoomServiceSnapshot = {
+      version: 1,
+      rooms: [{
+        id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        name: "持久化数字连连看",
+        gameType: "number_connect",
+        ownerId: playerIds[0]!,
+        status: "playing",
+        maxPlayers: 2,
+        createdAt: new Date().toISOString(),
+        botIntelligence: 3,
+        botMode: "rules",
+        ruleConfig: structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG),
+        players: playerIds.map((id, seat) => ({
+          id,
+          username: `connect-${seat}`,
+          displayName: `连线玩家${seat + 1}`,
+          ready: true,
+          connected: false,
+          seat,
+          isBot: false,
+        })),
+        game,
+      }],
+    };
+    const load = (candidate: unknown) => loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({ rows: [{ snapshot: candidate }] }) as Pool["query"],
+    ));
+
+    expect(await load(JSON.parse(JSON.stringify(snapshot)))).toMatchObject({
+      kind: "valid",
+      snapshot: {
+        rooms: [{
+          gameType: "number_connect",
+          game: { kind: "number_connect", version: 1 },
+        }],
+      },
+    });
+
+    const duplicateNumber = structuredClone(snapshot);
+    const tamperedGame = duplicateNumber.rooms[0]!.game;
+    if (!tamperedGame || !("kind" in tamperedGame) || tamperedGame.kind !== "number_connect") {
+      throw new Error("Missing Number Connect game");
+    }
+    tamperedGame.players[0]!.board[0] = tamperedGame.players[0]!.board[1]!;
+    expect(await load(duplicateNumber)).toMatchObject({ kind: "invalid" });
+
+    const wrongType = structuredClone(snapshot);
+    wrongType.rooms[0]!.gameType = "digit_bomb";
+    wrongType.rooms[0]!.digitBombDigits = 4;
+    expect(await load(wrongType)).toMatchObject({ kind: "invalid" });
+
+    const llm = structuredClone(snapshot);
+    llm.rooms[0]!.botMode = "llm";
+    expect(await load(llm)).toMatchObject({ kind: "invalid" });
+  });
+
   it("round-trips private Digit Bomb state and rejects digits, secrets, and type tampering", async () => {
     const playerIds = [
       "11111111-1111-4111-8111-111111111111",

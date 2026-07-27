@@ -1,17 +1,25 @@
 import {
   applyDigitBombAction,
+  applyNumberConnectAction,
   applySplendorAction,
   chooseDigitBombBotAction,
+  chooseNumberConnectBotAction,
   chooseSplendorBotAction,
   createDigitBombGame,
+  createNumberConnectGame,
   createSplendorGame,
   forfeitDigitBombPlayer,
+  forfeitNumberConnectPlayer,
   forfeitSplendorPlayer,
   getDigitBombGameView,
+  getNumberConnectGameView,
   getSplendorGameView,
   type DigitBombAction,
   type DigitBombGameState,
   type DigitBombGameView,
+  type NumberConnectAction,
+  type NumberConnectGameState,
+  type NumberConnectGameView,
   type SplendorAction,
   type SplendorGameKind,
   type SplendorGameState,
@@ -24,10 +32,17 @@ export type GameType =
   | "gouji"
   | "doudizhu"
   | SplendorGameKind
-  | "digit_bomb";
-export type AdapterGameState = SplendorGameState | DigitBombGameState;
-export type AdapterAction = SplendorAction | DigitBombAction;
-export type AdapterGameView = SplendorGameView | DigitBombGameView;
+  | "digit_bomb"
+  | "number_connect";
+export type AdapterGameState =
+  | SplendorGameState
+  | DigitBombGameState
+  | NumberConnectGameState;
+export type AdapterAction = SplendorAction | DigitBombAction | NumberConnectAction;
+export type AdapterGameView =
+  | SplendorGameView
+  | DigitBombGameView
+  | NumberConnectGameView;
 
 export interface GameTypeMetadata {
   readonly minimumPlayers: number;
@@ -87,6 +102,14 @@ export const GAME_TYPE_METADATA = {
     supportsRuleBots: true,
     supportsLlmBots: false,
   },
+  number_connect: {
+    minimumPlayers: 2,
+    maximumPlayers: 2,
+    defaultMaximumPlayers: 2,
+    fixedPlayerCount: true,
+    supportsRuleBots: true,
+    supportsLlmBots: false,
+  },
 } as const satisfies Record<GameType, GameTypeMetadata>;
 
 export function gameTypeMetadata(gameType: GameType): GameTypeMetadata {
@@ -99,8 +122,10 @@ export function isSplendorGameType(gameType: GameType): gameType is SplendorGame
 
 export function isAdapterGameType(
   gameType: GameType,
-): gameType is SplendorGameKind | "digit_bomb" {
-  return isSplendorGameType(gameType) || gameType === "digit_bomb";
+): gameType is SplendorGameKind | "digit_bomb" | "number_connect" {
+  return isSplendorGameType(gameType) ||
+    gameType === "digit_bomb" ||
+    gameType === "number_connect";
 }
 
 export function isSplendorGame(game: unknown): game is SplendorGameState {
@@ -117,8 +142,17 @@ export function isDigitBombGame(game: unknown): game is DigitBombGameState {
   );
 }
 
+export function isNumberConnectGame(game: unknown): game is NumberConnectGameState {
+  return Boolean(
+    game &&
+    typeof game === "object" &&
+    "kind" in game &&
+    game.kind === "number_connect",
+  );
+}
+
 export function isAdapterGame(game: unknown): game is AdapterGameState {
-  return isSplendorGame(game) || isDigitBombGame(game);
+  return isSplendorGame(game) || isDigitBombGame(game) || isNumberConnectGame(game);
 }
 
 const SPLENDOR_ACTION_TYPES: ReadonlySet<SplendorAction["type"]> = new Set([
@@ -151,6 +185,12 @@ export function isDigitBombAction(
   return DIGIT_BOMB_ACTION_TYPES.has(action.type as DigitBombAction["type"]);
 }
 
+export function isNumberConnectAction(
+  action: { readonly type: string },
+): action is NumberConnectAction {
+  return action.type === "number_connect_call";
+}
+
 export function createAdapterGame(
   gameType: GameType,
   players: Array<{ readonly id: string; readonly name: string; readonly botTitle?: string }>,
@@ -167,6 +207,9 @@ export function createAdapterGame(
       digits: options.digitBombDigits ?? 4,
     });
   }
+  if (gameType === "number_connect") {
+    return createNumberConnectGame({ players, seed });
+  }
   return undefined;
 }
 
@@ -178,6 +221,12 @@ export function applyAdapterAction(
     if (!isDigitBombAction(action)) throw new Error("Digit Bomb action type mismatch");
     return applyDigitBombAction(game, action);
   }
+  if (isNumberConnectGame(game)) {
+    if (!isNumberConnectAction(action)) {
+      throw new Error("Number Connect action type mismatch");
+    }
+    return applyNumberConnectAction(game, action);
+  }
   if (!isSplendorAction(action)) throw new Error("Splendor action type mismatch");
   return applySplendorAction(game, action);
 }
@@ -186,18 +235,18 @@ export function getAdapterGameView(
   game: AdapterGameState,
   viewerId: string,
 ): AdapterGameView {
-  return isDigitBombGame(game)
-    ? getDigitBombGameView(game, viewerId)
-    : getSplendorGameView(game, viewerId);
+  if (isDigitBombGame(game)) return getDigitBombGameView(game, viewerId);
+  if (isNumberConnectGame(game)) return getNumberConnectGameView(game, viewerId);
+  return getSplendorGameView(game, viewerId);
 }
 
 export function forfeitAdapterPlayer(
   game: AdapterGameState,
   playerId: string,
 ): AdapterGameState {
-  return isDigitBombGame(game)
-    ? forfeitDigitBombPlayer(game, playerId)
-    : forfeitSplendorPlayer(game, playerId);
+  if (isDigitBombGame(game)) return forfeitDigitBombPlayer(game, playerId);
+  if (isNumberConnectGame(game)) return forfeitNumberConnectPlayer(game, playerId);
+  return forfeitSplendorPlayer(game, playerId);
 }
 
 export function chooseAdapterBotAction(
@@ -205,7 +254,7 @@ export function chooseAdapterBotAction(
   playerId: string,
   _intelligence: BotIntelligence,
 ): AdapterAction {
-  return isDigitBombGame(game)
-    ? chooseDigitBombBotAction(game, playerId)
-    : chooseSplendorBotAction(game, playerId);
+  if (isDigitBombGame(game)) return chooseDigitBombBotAction(game, playerId);
+  if (isNumberConnectGame(game)) return chooseNumberConnectBotAction(game, playerId);
+  return chooseSplendorBotAction(game, playerId);
 }

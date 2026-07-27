@@ -6,6 +6,7 @@ import {
   DIGIT_BOMB_BOT_INTELLIGENCE_NAMES,
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
+  NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES,
   SPLENDOR_BOT_INTELLIGENCE_NAMES,
   type BotIntelligence,
   type BotMode,
@@ -375,6 +376,23 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                 extra="机器人会秘密出题、猜测和反馈，不调用大模型。"
               >
                 <Select options={Object.entries(DIGIT_BOMB_BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
+                  value: Number(value),
+                  label: `${value} · ${label}`,
+                }))} />
+              </Form.Item>
+            </>
+          ) : gameType === 'number_connect' ? (
+            <>
+              <div className="game-type-note game-type-note--number_connect">
+                <strong>{gameRegistration(gameType).noteTitle}</strong>
+                {gameRegistration(gameType).noteLines.map((line) => <p key={line}>{line}</p>)}
+              </div>
+              <Form.Item
+                label="机器人水平"
+                name="botIntelligence"
+                extra="机器人只根据自己的棋盘规划叫号，不调用大模型。"
+              >
+                <Select options={Object.entries(NUMBER_CONNECT_BOT_INTELLIGENCE_NAMES).map(([value, label]) => ({
                   value: Number(value),
                   label: `${value} · ${label}`,
                 }))} />

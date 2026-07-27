@@ -72,6 +72,9 @@ describe('room draft API', () => {
           maxPlayers: 2,
           digitBombDigits: 6,
         },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        room: { ...roomPayload('waiting'), gameType: 'number_connect', maxPlayers: 2 },
       }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -85,6 +88,7 @@ describe('room draft API', () => {
     const splendor = await api.createRoom('璀璨宝石房', 4, ruleConfig, 4, 'splendor', 'llm');
     const pokemon = await api.createRoom('璀璨宝石宝可梦房', 4, ruleConfig, 4, 'splendor_pokemon', 'llm');
     const digitBomb = await api.createRoom('数字炸弹房', 2, ruleConfig, 5, 'digit_bomb', 'llm', 6);
+    const numberConnect = await api.createRoom('数字连连看房', 2, ruleConfig, 4, 'number_connect', 'llm');
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5, botIntelligence: 3 });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, botIntelligence: 7, ruleConfig });
@@ -127,6 +131,12 @@ describe('room draft API', () => {
       gameType: 'digit_bomb',
       digitBombDigits: 6,
     });
+    expect(JSON.parse(String(fetchMock.mock.calls[8]?.[1]?.body))).toEqual({
+      name: '数字连连看房',
+      maxPlayers: 2,
+      botIntelligence: 4,
+      gameType: 'number_connect',
+    });
     expect(configured.ruleConfig).toEqual(ruleConfig);
     expect(gouji).toMatchObject({ gameType: 'gouji', maxPlayers: 6 });
     expect(doudizhu).toMatchObject({ gameType: 'doudizhu', maxPlayers: 3 });
@@ -137,6 +147,11 @@ describe('room draft API', () => {
       maxPlayers: 2,
       botMode: 'rules',
       digitBombDigits: 6,
+    });
+    expect(numberConnect).toMatchObject({
+      gameType: 'number_connect',
+      maxPlayers: 2,
+      botMode: 'rules',
     });
   });
 
