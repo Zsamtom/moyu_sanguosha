@@ -1,9 +1,10 @@
-import { Button, Modal, Popconfirm, Switch, Tag } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { Button, Modal, Popconfirm, Select, Tag } from 'antd';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AnyGameAction,
   DoudizhuCard,
   DoudizhuGameView,
+  DoudizhuLlmRecommendation,
   DoudizhuPatternType,
   DoudizhuRank,
   RoomDetail,
@@ -15,6 +16,7 @@ interface DoudizhuBoardProps {
   userId: string;
   connected: boolean;
   onAction: (action: AnyGameAction) => Promise<void>;
+  onLlmRecommendation: () => Promise<DoudizhuLlmRecommendation>;
   onExit: () => Promise<void>;
   onRematch: () => Promise<void>;
 }
@@ -78,13 +80,19 @@ export function DoudizhuBoard({
   userId,
   connected,
   onAction,
+  onLlmRecommendation,
   onExit,
   onRematch,
 }: DoudizhuBoardProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [recommendationsEnabled, setRecommendationsEnabled] = useState(false);
+  const [recommendationMode, setRecommendationMode] =
+    useState<'off' | 'rules' | 'llm'>('off');
   const [recommendationActive, setRecommendationActive] = useState(false);
-  const [busy, setBusy] = useState<'bid' | 'play' | 'pass' | 'exit' | 'rematch'>();
+  const [recommendationLabel, setRecommendationLabel] = useState<string>();
+  const [recommendedBid, setRecommendedBid] = useState<0 | 1 | 2 | 3>();
+  const [busy, setBusy] =
+    useState<'bid' | 'play' | 'pass' | 'recommend' | 'exit' | 'rematch'>();
+  const llmRecommendationPromptRef = useRef<string | undefined>(undefined);
   const self = game.players.find((player) => player.id === userId);
   const hand = self?.hand ?? [];
   const isTurn = game.status === 'playing' && game.currentPlayerId === userId;
@@ -97,10 +105,70 @@ export function DoudizhuBoard({
   const selfReadyForRematch = room?.members.find((member) => member.userId === userId)?.ready ?? false;
 
   useEffect(() => {
-    const recommendation = recommendationsEnabled ? game.prompt.recommendation : null;
+    const recommendation =
+      recommendationMode === 'rules' ? game.prompt.recommendation : null;
     setSelectedIds(recommendation?.type === 'play' ? [...recommendation.cardIds] : []);
     setRecommendationActive(game.prompt.type === 'play' && recommendation !== null);
-  }, [game.actionPromptId, recommendationsEnabled]);
+    setRecommendationLabel(
+      recommendation?.type === 'pass'
+        ? '推荐：不出'
+        : recommendation?.type === 'play'
+          ? `推荐：已选 ${recommendation.cardIds.length} 张`
+          : undefined,
+    );
+    setRecommendedBid(undefined);
+  }, [game.actionPromptId, recommendationMode]);
+
+  const requestLlmRecommendation = useCallback(async () => {
+    setBusy('recommend');
+    try {
+      const { action } = await onLlmRecommendation();
+      setRecommendationActive(true);
+      if (action.type === 'doudizhu_bid') {
+        setSelectedIds([]);
+        setRecommendedBid(action.score);
+        setRecommendationLabel(
+          action.score === 0 ? '大模型推荐：不叫' : `大模型推荐：${action.score} 分`,
+        );
+      } else if (action.type === 'doudizhu_pass') {
+        setSelectedIds([]);
+        setRecommendedBid(undefined);
+        setRecommendationLabel('大模型推荐：不出');
+      } else {
+        setSelectedIds([...action.cardIds]);
+        setRecommendedBid(undefined);
+        setRecommendationLabel(`大模型推荐：已选 ${action.cardIds.length} 张`);
+      }
+    } finally {
+      setBusy(undefined);
+    }
+  }, [onLlmRecommendation]);
+
+  useEffect(() => {
+    if (recommendationMode !== 'llm') {
+      llmRecommendationPromptRef.current = undefined;
+      return;
+    }
+    if (
+      !connected ||
+      !isTurn ||
+      !room?.llmBot.available ||
+      busy !== undefined ||
+      llmRecommendationPromptRef.current === game.actionPromptId
+    ) {
+      return;
+    }
+    llmRecommendationPromptRef.current = game.actionPromptId;
+    void requestLlmRecommendation().catch(() => undefined);
+  }, [
+    busy,
+    connected,
+    game.actionPromptId,
+    isTurn,
+    recommendationMode,
+    requestLlmRecommendation,
+    room?.llmBot.available,
+  ]);
 
   if (!self) {
     return (
@@ -170,13 +238,16 @@ export function DoudizhuBoard({
         </div>
         <div className="ddz-header__meta">
           <label className="ddz-recommendation-toggle">
-            <span>出牌推荐</span>
-            <Switch
+            <span>推荐方式</span>
+            <Select
               size="small"
-              checked={recommendationsEnabled}
-              checkedChildren="开"
-              unCheckedChildren="关"
-              onChange={setRecommendationsEnabled}
+              value={recommendationMode}
+              options={[
+                { value: 'off', label: '关闭' },
+                { value: 'rules', label: '规则推荐' },
+                { value: 'llm', label: '大模型推荐' },
+              ]}
+              onChange={setRecommendationMode}
             />
           </label>
           <Tag color={connected ? 'green' : 'orange'}>{connected ? '实时同步' : '正在重连'}</Tag>
@@ -205,7 +276,11 @@ export function DoudizhuBoard({
               {opponents.map((player) => (
                 <article
                   key={player.id}
-                  className={`ddz-player${player.id === game.currentPlayerId ? ' ddz-player--current' : ''}`}
+                  className={[
+                    'ddz-player',
+                    player.id === game.currentPlayerId ? 'ddz-player--current' : '',
+                    room?.llmBot.thinkingPlayerId === player.id ? 'ddz-player--llm-thinking' : '',
+                  ].filter(Boolean).join(' ')}
                 >
                   <div className="ddz-player__avatar">{player.name.slice(0, 1)}</div>
                   <div>
@@ -215,6 +290,12 @@ export function DoudizhuBoard({
                       {player.handCount} 张 · {formatBeans(player.beans)} 豆
                       {game.status === 'finished' ? `（${formatBeanDelta(player.beanDelta)}）` : ''}
                     </span>
+                    {room?.llmBot.thinkingPlayerId === player.id && (
+                      <span className="ddz-player__thinking" role="status" aria-live="polite">
+                        <i aria-hidden="true" />
+                        {player.name} 思考中...
+                      </span>
+                    )}
                   </div>
                   {player.role && <Tag color={player.role === 'landlord' ? 'gold' : 'blue'}>{player.role === 'landlord' ? '地主' : '农民'}</Tag>}
                   <div className="ddz-card-backs" aria-label={`${player.handCount} 张手牌`}>
@@ -259,14 +340,18 @@ export function DoudizhuBoard({
                 <strong>{self.name} · 我</strong>
                 <span>
                   {isTurn ? game.phase === 'bidding' ? '轮到你叫分' : '轮到你出牌' : `等待 ${current?.name ?? '其他玩家'}`}
-                  {recommendationActive
-                    ? game.prompt.recommendation?.type === 'pass'
-                      ? ' · 推荐：不出'
-                      : ` · 推荐：已选 ${selectedCards.length} 张`
+                  {recommendationActive && recommendationLabel
+                    ? ` · ${recommendationLabel}`
                     : selectedCards.length
                       ? ` · 已选 ${selectedCards.length} 张`
                       : ''}
                 </span>
+                {room?.llmBot.thinkingPlayerId === userId && (
+                  <span className="ddz-player__thinking" role="status" aria-live="polite">
+                    <i aria-hidden="true" />
+                    大模型正在推荐...
+                  </span>
+                )}
               </div>
               <span>
                 {hand.length} 张 · {formatBeans(self.beans)} 豆
@@ -281,6 +366,8 @@ export function DoudizhuBoard({
                   selected={selectedIds.includes(card.id)}
                   onClick={() => {
                     setRecommendationActive(false);
+                    setRecommendationLabel(undefined);
+                    setRecommendedBid(undefined);
                     setSelectedIds((ids) =>
                       ids.includes(card.id) ? ids.filter((id) => id !== card.id) : [...ids, card.id]
                     );
@@ -293,7 +380,9 @@ export function DoudizhuBoard({
                 game.prompt.bidOptions.map((score) => (
                   <Button
                     key={score}
-                    type={score === 3 ? 'primary' : 'default'}
+                    type={score === recommendedBid || (recommendedBid === undefined && score === 3)
+                      ? 'primary'
+                      : 'default'}
                     disabled={!connected || busy !== undefined}
                     loading={busy === 'bid'}
                     onClick={() => void bid(score)}
@@ -308,6 +397,8 @@ export function DoudizhuBoard({
                     onClick={() => {
                       setSelectedIds([]);
                       setRecommendationActive(false);
+                      setRecommendationLabel(undefined);
+                      setRecommendedBid(undefined);
                     }}
                   >
                     {recommendationActive ? '取消推荐' : '清空选择'}
@@ -345,19 +436,6 @@ export function DoudizhuBoard({
               </p>
             </section>
           )}
-          <section className="paper-card ddz-rules">
-            <span className="section-kicker">Rules / Reference</span>
-            <h2>规则摘要</h2>
-            <ul>
-              <li>叫分只能高于当前分数；3 分立即成为地主。</li>
-              <li>支持单张、对子、三带、顺子、连对、飞机和四带二。</li>
-              <li>炸弹可压普通牌型，王炸最大；每次炸弹使倍率翻倍。</li>
-              <li>叫分和出牌均按牌桌逆时针顺序进行。</li>
-              <li>连续两家不出后，由上一手玩家重新领牌。</li>
-              <li>房间首局每人 10,000 欢乐豆；余额会带入下一局继续结算。</li>
-              <li>单份输赢为底分 × 倍率 × 100，地主按两份、农民各一份。</li>
-            </ul>
-          </section>
           <section className="paper-card ddz-log">
             <div className="section-title-row">
               <div>

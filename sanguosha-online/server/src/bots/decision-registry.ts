@@ -44,6 +44,11 @@ export class BotDecisionRegistry {
     return this;
   }
 
+  unregister(game: BotGameKind): this {
+    this.providers.delete(game);
+    return this;
+  }
+
   supports(game: BotGameKind): boolean {
     return this.providers.has(game);
   }

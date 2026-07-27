@@ -312,11 +312,11 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
               <Form.Item
                 label="机器人决策引擎"
                 name="botMode"
-                extra="大模型采用混合策略：仅在关键决策调用，并受每局 Token 预算限制；不可用或超时时自动回退规则机器人。"
+                extra="选择大模型后，机器人每次叫分和出牌都会请求当前模型；短上下文和分级提示词负责节省 Token，调用失败时回退规则机器人。"
               >
                 <Select options={[
                   { value: 'rules', label: '规则机器人（零 Token）' },
-                  { value: 'llm', label: '大模型优先（自动节省 Token）' },
+                  { value: 'llm', label: '大模型全程决策' },
                 ]} />
               </Form.Item>
             </>

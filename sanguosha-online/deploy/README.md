@@ -62,13 +62,12 @@ APP_ORIGIN=https://moyu.pdcat.cn
 APP_VERSION=2026.07.20
 BUILD_SHA=替换为main分支的Git提交SHA
 
-# 可选：斗地主大模型机器人；三项全部留空时禁用
-DOUDIZHU_LLM_ENDPOINT=https://供应商地址/v1/chat/completions
+# 可选：斗地主 DeepSeek 机器人首次启动引导；三项全部留空时禁用
+DOUDIZHU_LLM_ENDPOINT=https://api.deepseek.com/chat/completions
 DOUDIZHU_LLM_API_KEY=替换为服务端密钥
-DOUDIZHU_LLM_MODEL=替换为低成本模型名
+DOUDIZHU_LLM_MODEL=deepseek-v4-flash
 DOUDIZHU_LLM_TIMEOUT_MS=4000
 DOUDIZHU_LLM_MAX_OUTPUT_TOKENS=16
-DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME=3500
 ```
 
 可在本机生成随机值：

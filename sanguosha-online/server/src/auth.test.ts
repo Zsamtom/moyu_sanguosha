@@ -1,10 +1,15 @@
 import bcrypt from "bcryptjs";
 import session from "express-session";
 import request from "supertest";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApplication } from "./app.js";
+import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
+import {
+  LlmSettingsService,
+  MemoryLlmSettingsStore,
+} from "./llm-settings.js";
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
 import type {
@@ -166,9 +171,28 @@ const config: AppConfig = {
 describe("account allocation and authorization", () => {
   let users: MemoryUserStore;
   let app: ReturnType<typeof createApplication>;
+  let botDecisions: BotDecisionRegistry;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     users = new MemoryUserStore();
+    botDecisions = new BotDecisionRegistry();
+    const llmSettings = new LlmSettingsService(
+      new MemoryLlmSettingsStore(),
+      botDecisions,
+      config.sessionSecret,
+      undefined,
+      vi.fn(async () => new Response(JSON.stringify({
+        object: "list",
+        data: [
+          { id: "deepseek-v4-flash", object: "model", owned_by: "deepseek" },
+          { id: "deepseek-v4-pro", object: "model", owned_by: "deepseek" },
+        ],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })),
+    );
+    await llmSettings.initialize();
     app = createApplication({
       config,
       pool: { query: async () => ({ rows: [{ "?column?": 1 }] }) } as never,
@@ -176,6 +200,7 @@ describe("account allocation and authorization", () => {
       users,
       rooms: new RoomService(),
       securityEvents: new SecurityEvents(),
+      llmSettings,
     });
   });
 
@@ -205,6 +230,7 @@ describe("account allocation and authorization", () => {
       .send({ username: "player", password: "player-password" })
       .expect(200);
     await playerAgent.get("/api/admin/users").expect(403);
+    await playerAgent.get("/api/admin/llm-settings").expect(403);
 
     const adminAgent = request.agent(app);
     await adminAgent.post("/api/auth/login")
@@ -243,6 +269,102 @@ describe("account allocation and authorization", () => {
     expect(disabledResponse.body.error.code).toBe("ACCOUNT_DISABLED");
     expect(JSON.stringify(users.audits)).not.toContain("replacement-password");
     expect(JSON.stringify(users.audits)).not.toContain("passwordHash");
+  });
+
+  it("lets admins hot-update DeepSeek settings without ever returning the API key", async () => {
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+
+    const defaults = await adminAgent.get("/api/admin/llm-settings").expect(200);
+    expect(defaults.headers["cache-control"]).toBe("no-store");
+    expect(defaults.body.settings).toMatchObject({
+      provider: "deepseek",
+      enabled: false,
+      endpoint: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash",
+      apiKeyConfigured: false,
+      thinkingEnabled: false,
+      maximumOutputTokens: 16,
+    });
+    expect(botDecisions.supports("doudizhu")).toBe(false);
+
+    await adminAgent.put("/api/admin/llm-settings")
+      .send({
+        enabled: false,
+        model: "invalid model id",
+        thinkingEnabled: false,
+        timeoutMs: 4_000,
+        maximumOutputTokens: 16,
+      })
+      .expect(400);
+
+    await adminAgent.put("/api/admin/llm-settings")
+      .send({
+        enabled: true,
+        model: "deepseek-v4-pro",
+        thinkingEnabled: false,
+        timeoutMs: 4_000,
+        maximumOutputTokens: 16,
+      })
+      .expect(400);
+
+    const saved = await adminAgent.put("/api/admin/llm-settings")
+      .send({
+        enabled: true,
+        model: "deepseek-v4-pro",
+        apiKey: "sk-private-deepseek-key",
+        thinkingEnabled: false,
+        timeoutMs: 3_000,
+        maximumOutputTokens: 12,
+      })
+      .expect(200);
+    expect(saved.body.settings).toMatchObject({
+      enabled: true,
+      model: "deepseek-v4-pro",
+      apiKeyConfigured: true,
+      thinkingEnabled: false,
+      timeoutMs: 3_000,
+      maximumOutputTokens: 12,
+    });
+    expect(saved.text).not.toContain("sk-private-deepseek-key");
+    expect(botDecisions.supports("doudizhu")).toBe(true);
+
+    const reloaded = await adminAgent.get("/api/admin/llm-settings").expect(200);
+    expect(reloaded.text).not.toContain("sk-private-deepseek-key");
+    expect(reloaded.body.settings.apiKeyConfigured).toBe(true);
+    const connection = await adminAgent.post("/api/admin/llm-settings/test")
+      .send({ model: "deepseek-v4-pro" })
+      .expect(200);
+    expect(connection.headers["cache-control"]).toBe("no-store");
+    expect(connection.body.result).toMatchObject({
+      ok: true,
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+    });
+    expect(connection.text).not.toContain("sk-private-deepseek-key");
+    expect(users.audits.at(-1)).toMatchObject({
+      action: "settings.llm.update",
+      details: {
+        provider: "deepseek",
+        enabled: true,
+        apiKeyChanged: true,
+      },
+    });
+
+    const cleared = await adminAgent.put("/api/admin/llm-settings")
+      .send({
+        enabled: false,
+        model: "deepseek-v4-pro",
+        clearApiKey: true,
+        thinkingEnabled: false,
+        timeoutMs: 3_000,
+        maximumOutputTokens: 12,
+      })
+      .expect(200);
+    expect(cleared.body.settings.apiKeyConfigured).toBe(false);
+    expect(botDecisions.supports("doudizhu")).toBe(false);
   });
 
   it("lets an admin rename and delete another account but not itself", async () => {

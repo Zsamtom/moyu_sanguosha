@@ -36,6 +36,7 @@ function roomWith(overrides: Partial<RoomDetail> = {}): RoomDetail {
     botMode: 'rules',
     llmBot: {
       available: false,
+      thinkingPlayerId: null,
       usage: { calls: 0, promptTokens: 0, completionTokens: 0, fallbacks: 0 },
     },
     chatMessages: [],

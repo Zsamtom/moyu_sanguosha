@@ -2,9 +2,9 @@ import type { AppConfig } from "../config.js";
 import { BotDecisionRegistry } from "./decision-registry.js";
 import { OpenAiCompatibleDoudizhuProvider } from "./doudizhu-llm.js";
 
-export function createBotDecisionRegistry(config: AppConfig): BotDecisionRegistry {
+export function createBotDecisionRegistry(config?: AppConfig): BotDecisionRegistry {
   const registry = new BotDecisionRegistry();
-  if (config.doudizhuLlm) {
+  if (config?.doudizhuLlm) {
     registry.register(
       "doudizhu",
       new OpenAiCompatibleDoudizhuProvider({

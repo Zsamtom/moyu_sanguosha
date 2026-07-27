@@ -5,6 +5,11 @@ import session from "express-session";
 import type { Pool } from "pg";
 import { createApplication } from "./app.js";
 import type { AppConfig } from "./config.js";
+import { createBotDecisionRegistry } from "./bots/index.js";
+import {
+  LlmSettingsService,
+  MemoryLlmSettingsStore,
+} from "./llm-settings.js";
 import { attachRealtimeServer } from "./realtime.js";
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
@@ -139,7 +144,20 @@ async function main(): Promise<void> {
   };
   const users = new LocalMemoryUserStore();
   await ensureInitialAdmin(users, config.initialAdmin);
-  const rooms = new RoomService(90_000, 200, 350);
+  const botDecisions = createBotDecisionRegistry();
+  const llmSettings = new LlmSettingsService(
+    new MemoryLlmSettingsStore(),
+    botDecisions,
+    config.sessionSecret,
+  );
+  await llmSettings.initialize();
+  const rooms = new RoomService(
+    90_000,
+    200,
+    350,
+    [1_000, 5_000],
+    botDecisions,
+  );
   rooms.setSnapshotPersistence(async () => undefined);
   const securityEvents = new SecurityEvents();
   const sessionMiddleware = session({
@@ -165,6 +183,7 @@ async function main(): Promise<void> {
     users,
     rooms,
     securityEvents,
+    llmSettings,
   });
   const httpServer = createServer(app);
   const io = attachRealtimeServer({

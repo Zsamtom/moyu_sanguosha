@@ -2,10 +2,9 @@ import { createDoudizhuGame } from "@sanguosha/shared";
 import { describe, expect, it, vi } from "vitest";
 import { BotDecisionRegistry } from "./decision-registry.js";
 import {
-  EMPTY_DOUDIZHU_LLM_USAGE,
   OpenAiCompatibleDoudizhuProvider,
   createDoudizhuDecision,
-  doudizhuLlmBudgetAvailable,
+  systemPrompt,
 } from "./doudizhu-llm.js";
 
 const players = [
@@ -59,31 +58,65 @@ describe("Dou Dizhu LLM decision adapter", () => {
     };
     expect(body.max_tokens).toBe(12);
     const compactState = body.messages.find((message) => message.role === "user")?.content ?? "";
-    expect(compactState.length).toBeLessThan(1_000);
+    expect(compactState.length).toBeLessThan(500);
     expect(compactState).not.toContain("room-secret-id");
     for (const player of players) expect(compactState).not.toContain(player.id);
     expect(String((init?.headers as Record<string, string>).Authorization)).toBe("Bearer server-secret");
   });
 
-  it("skips low-value calls and enforces per-level call and token budgets", () => {
+  it("uses DeepSeek JSON output with thinking disabled for the token-saving preset", async () => {
+    const game = createDoudizhuGame({
+      players,
+      seed: "ef".repeat(32),
+    });
+    const decision = createDoudizhuDecision(
+      "room",
+      game,
+      game.currentPlayerId,
+      7,
+    );
+    if (!decision) throw new Error("Expected a bidding decision");
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "{\"i\":0}" } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const provider = new OpenAiCompatibleDoudizhuProvider({
+      endpoint: "https://api.deepseek.com/chat/completions",
+      apiKey: "sk-test",
+      model: "deepseek-v4-flash",
+      timeoutMs: 1_000,
+      maximumOutputTokens: 16,
+      thinkingEnabled: false,
+      jsonOutput: true,
+    }, fetcher);
+
+    await provider.decide(decision.input);
+
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      model: "deepseek-v4-flash",
+      max_tokens: 16,
+      thinking: { type: "disabled" },
+      response_format: { type: "json_object" },
+    });
+  });
+
+  it("creates a model decision for every level and varies intelligence only by prompt", () => {
     const game = createDoudizhuGame({
       players,
       seed: "cd".repeat(32),
     });
-    expect(createDoudizhuDecision("room", game, game.currentPlayerId, 1)).toBeNull();
-    expect(doudizhuLlmBudgetAvailable(7, {
-      ...EMPTY_DOUDIZHU_LLM_USAGE,
-      calls: 9,
-      promptTokens: 3_499,
-    })).toBe(true);
-    expect(doudizhuLlmBudgetAvailable(7, {
-      ...EMPTY_DOUDIZHU_LLM_USAGE,
-      calls: 10,
-    })).toBe(false);
-    expect(doudizhuLlmBudgetAvailable(7, {
-      ...EMPTY_DOUDIZHU_LLM_USAGE,
-      promptTokens: 3_500,
-    })).toBe(false);
+    const levels = [1, 2, 3, 4, 5, 6, 7] as const;
+    const decisions = levels.map((level) =>
+      createDoudizhuDecision("room", game, game.currentPlayerId, level)
+    );
+    expect(decisions.every(Boolean)).toBe(true);
+    const candidateSets = decisions.map((decision) =>
+      JSON.stringify(decision?.input.candidates)
+    );
+    expect(new Set(candidateSets)).toHaveLength(1);
+    expect(new Set(levels.map(systemPrompt))).toHaveLength(7);
+    expect(systemPrompt(1)).toContain("novice");
+    expect(systemPrompt(7)).toContain("expert");
   });
 
   it("rejects a provider index outside the authoritative candidate list", async () => {

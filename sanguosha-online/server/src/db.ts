@@ -39,6 +39,13 @@ export async function migrateDatabase(pool: Pool): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key VARCHAR(64) PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS room_state (
       id SMALLINT PRIMARY KEY CHECK (id = 1),
       snapshot JSONB NOT NULL,

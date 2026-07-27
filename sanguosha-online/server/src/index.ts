@@ -4,6 +4,10 @@ import { createApplication } from "./app.js";
 import { createBotDecisionRegistry } from "./bots/index.js";
 import { loadConfig } from "./config.js";
 import { createDatabasePool, migrateDatabase } from "./db.js";
+import {
+  LlmSettingsService,
+  PostgresLlmSettingsStore,
+} from "./llm-settings.js";
 import { attachRealtimeServer } from "./realtime.js";
 import {
   loadRoomSnapshot,
@@ -33,13 +37,20 @@ async function main(): Promise<void> {
     const users = new PostgresUserStore(pool);
     await ensureInitialAdmin(users, config.initialAdmin);
 
+    const botDecisions = createBotDecisionRegistry();
+    const llmSettings = new LlmSettingsService(
+      new PostgresLlmSettingsStore(pool),
+      botDecisions,
+      config.sessionSecret,
+      config.doudizhuLlm,
+    );
+    await llmSettings.initialize();
     const rooms = new RoomService(
       90_000,
       200,
       700,
       [1_000, 5_000],
-      createBotDecisionRegistry(config),
-      config.doudizhuLlm?.maximumPromptTokensPerGame ?? 3_500,
+      botDecisions,
     );
     const savedRooms = await loadRoomSnapshot(pool);
     if (savedRooms.kind === "valid") {
@@ -63,7 +74,15 @@ async function main(): Promise<void> {
     await roomPersistence.enqueue(rooms.exportSnapshot());
     const securityEvents = new SecurityEvents();
     const sessionMiddleware = createSessionMiddleware(config, pool);
-    const app = createApplication({ config, pool, sessionMiddleware, users, rooms, securityEvents });
+    const app = createApplication({
+      config,
+      pool,
+      sessionMiddleware,
+      users,
+      rooms,
+      securityEvents,
+      llmSettings,
+    });
     const httpServer = createServer(app);
     const io = attachRealtimeServer({
       httpServer,

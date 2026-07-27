@@ -7,6 +7,7 @@ import type { Pool } from "pg";
 import type { AppConfig } from "./config.js";
 import { checkDatabase } from "./db.js";
 import { errorHandler, HttpError, notFoundHandler } from "./errors.js";
+import type { LlmSettingsService } from "./llm-settings.js";
 import { requireAuth, requirePasswordChangeComplete } from "./middleware/auth.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createAuthRouter } from "./routes/auth.js";
@@ -22,8 +23,17 @@ export function createApplication(options: {
   users: UserStore;
   rooms: RoomService;
   securityEvents: SecurityEvents;
+  llmSettings?: LlmSettingsService;
 }): Express {
-  const { config, pool, sessionMiddleware, users, rooms, securityEvents } = options;
+  const {
+    config,
+    pool,
+    sessionMiddleware,
+    users,
+    rooms,
+    securityEvents,
+    llmSettings,
+  } = options;
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", config.trustProxy);
@@ -58,7 +68,7 @@ export function createApplication(options: {
   });
 
   app.use("/api/auth", createAuthRouter(users, securityEvents, rooms));
-  app.use("/api/admin", createAdminRouter(users, securityEvents, rooms));
+  app.use("/api/admin", createAdminRouter(users, securityEvents, rooms, llmSettings));
   app.use("/api/rooms", requireAuth(users), requirePasswordChangeComplete, createRoomsRouter(users, rooms));
 
   const webDist = fileURLToPath(new URL("../../web/dist/", import.meta.url));

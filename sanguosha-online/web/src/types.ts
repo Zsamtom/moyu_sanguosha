@@ -20,6 +20,37 @@ export interface AuthUser {
   updatedAt?: string;
 }
 
+export type DeepSeekModel = string;
+
+export interface LlmSettings {
+  provider: 'deepseek';
+  enabled: boolean;
+  endpoint: 'https://api.deepseek.com/chat/completions';
+  model: DeepSeekModel;
+  apiKeyConfigured: boolean;
+  thinkingEnabled: boolean;
+  timeoutMs: number;
+  maximumOutputTokens: number;
+  updatedAt: string | null;
+}
+
+export interface UpdateLlmSettings {
+  enabled: boolean;
+  model: DeepSeekModel;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  thinkingEnabled: boolean;
+  timeoutMs: number;
+  maximumOutputTokens: number;
+}
+
+export interface LlmConnectionTestResult {
+  ok: true;
+  provider: 'deepseek';
+  model: DeepSeekModel;
+  latencyMs: number;
+}
+
 export type FullGeneralId =
   | 'cao_cao' | 'guo_jia' | 'si_ma_yi' | 'xia_hou_dun' | 'xu_chu' | 'zhang_liao' | 'zhen_ji'
   | 'guan_yu' | 'huang_yue_ying' | 'liu_bei' | 'ma_chao' | 'zhang_fei' | 'zhao_yun' | 'zhu_ge_liang'
@@ -144,6 +175,7 @@ export interface RoomDetail extends RoomSummary {
   botMode: BotMode;
   llmBot: {
     available: boolean;
+    thinkingPlayerId: string | null;
     usage: {
       calls: number;
       promptTokens: number;
@@ -534,6 +566,11 @@ export type DoudizhuAction =
   | { type: 'doudizhu_bid'; playerId: string; score: 0 | 1 | 2 | 3 }
   | { type: 'doudizhu_play'; playerId: string; cardIds: string[] }
   | { type: 'doudizhu_pass'; playerId: string };
+
+export interface DoudizhuLlmRecommendation {
+  action: DoudizhuAction;
+  source: 'llm' | 'rules';
+}
 
 export type AnyGameAction = GameAction | GoujiAction | DoudizhuAction;
 
@@ -1460,6 +1497,11 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
         typeof room.llmBot === 'object' &&
         (room.llmBot as { available?: unknown }).available,
       ),
+      thinkingPlayerId: typeof (
+        room.llmBot as { thinkingPlayerId?: unknown } | undefined
+      )?.thinkingPlayerId === 'string'
+        ? (room.llmBot as { thinkingPlayerId: string }).thinkingPlayerId
+        : null,
       usage: {
         calls: Number((room.llmBot as { usage?: { calls?: unknown } } | undefined)?.usage?.calls ?? 0),
         promptTokens: Number((room.llmBot as { usage?: { promptTokens?: unknown } } | undefined)?.usage?.promptTokens ?? 0),

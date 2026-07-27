@@ -32,7 +32,6 @@ const environmentSchema = z.object({
   DOUDIZHU_LLM_MODEL: optionalTrimmedString,
   DOUDIZHU_LLM_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(4_000),
   DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(8).max(64).default(16),
-  DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME: z.coerce.number().int().min(100).max(50_000).default(3_500),
 }).superRefine((environment, context) => {
   const providerValues = [
     environment.DOUDIZHU_LLM_ENDPOINT,
@@ -68,7 +67,6 @@ export interface AppConfig {
     model: string;
     timeoutMs: number;
     maximumOutputTokens: number;
-    maximumPromptTokensPerGame: number;
   };
 }
 
@@ -110,7 +108,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
             model: parsed.DOUDIZHU_LLM_MODEL,
             timeoutMs: parsed.DOUDIZHU_LLM_TIMEOUT_MS,
             maximumOutputTokens: parsed.DOUDIZHU_LLM_MAX_OUTPUT_TOKENS,
-            maximumPromptTokensPerGame: parsed.DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME,
           },
         }
       : {}),

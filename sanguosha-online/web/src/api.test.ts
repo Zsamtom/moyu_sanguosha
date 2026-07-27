@@ -131,4 +131,25 @@ describe('room draft API', () => {
     );
     expect(room).toMatchObject({ gameType: 'doudizhu', status: 'playing' });
   });
+
+  it('requests a private Doudizhu LLM recommendation without submitting an action', async () => {
+    const recommendation = {
+      action: {
+        type: 'doudizhu_play' as const,
+        playerId: 'user-1',
+        cardIds: ['card-1'],
+      },
+      source: 'llm' as const,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ recommendation }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.getDoudizhuLlmRecommendation('room/03');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rooms/room%2F03/llm-recommendation',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(result).toEqual(recommendation);
+  });
 });

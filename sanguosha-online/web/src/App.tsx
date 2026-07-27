@@ -17,14 +17,18 @@ import type {
   AuthUser,
   BotIntelligence,
   BotMode,
+  DeepSeekModel,
+  DoudizhuLlmRecommendation,
   FullGeneralId,
   AnyGameAction,
   GameLogEntry,
   GameType,
+  LlmSettings,
   PlayableFaction,
   RoomDetail,
   RoomRuleConfig,
   RoomSummary,
+  UpdateLlmSettings,
 } from './types';
 import { isDoudizhuGameView, isGoujiGameView, normalizeGameView } from './types';
 
@@ -64,6 +68,8 @@ export default function App() {
   const [workspaceView, setWorkspaceView] = useState<'lobby' | 'reader' | 'admin'>('lobby');
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [llmSettings, setLlmSettings] = useState<LlmSettings>();
+  const [llmSettingsLoading, setLlmSettingsLoading] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string>();
@@ -97,6 +103,17 @@ export default function App() {
       toast.error(errorMessage(error));
     } finally {
       setUsersLoading(false);
+    }
+  }, [toast]);
+
+  const refreshLlmSettings = useCallback(async () => {
+    setLlmSettingsLoading(true);
+    try {
+      setLlmSettings(await api.getLlmSettings());
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setLlmSettingsLoading(false);
     }
   }, [toast]);
 
@@ -391,6 +408,42 @@ export default function App() {
     }
   };
 
+  const getDoudizhuLlmRecommendation =
+    async (): Promise<DoudizhuLlmRecommendation> => {
+      if (!room) throw new Error('当前不在房间中');
+      try {
+        const recommendation = await api.getDoudizhuLlmRecommendation(room.id);
+        if (recommendation.source === 'rules') {
+          toast.warning('大模型未返回有效建议，已提供规则推荐');
+        }
+        return recommendation;
+      } catch (error) {
+        toast.error(errorMessage(error));
+        throw error;
+      }
+    };
+
+  const saveLlmSettings = async (values: UpdateLlmSettings) => {
+    try {
+      const updated = await api.updateLlmSettings(values);
+      setLlmSettings(updated);
+      toast.success(updated.enabled ? 'DeepSeek 机器人已启用' : '大模型机器人配置已保存');
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const testLlmConnection = async (apiKey?: string, model?: DeepSeekModel) => {
+    try {
+      const result = await api.testLlmConnection(apiKey, model);
+      toast.success(`${result.model} 连接成功 · ${result.latencyMs} ms`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
   if (booting) {
     return (
       <div className="boot-screen">
@@ -452,6 +505,7 @@ export default function App() {
             userId={user.id}
             connected={connected}
             onAction={sendAction}
+            onLlmRecommendation={getDoudizhuLlmRecommendation}
             onExit={leaveRoom}
             onRematch={rematchRoom}
           />
@@ -485,7 +539,12 @@ export default function App() {
             currentUser={user}
             users={users}
             loading={usersLoading}
+            llmSettings={llmSettings}
+            llmSettingsLoading={llmSettingsLoading}
             onRefresh={refreshUsers}
+            onRefreshLlmSettings={refreshLlmSettings}
+            onSaveLlmSettings={saveLlmSettings}
+            onTestLlmConnection={testLlmConnection}
             onCreate={createUser}
             onDisplayName={changeUserDisplayName}
             onStatus={changeUserStatus}

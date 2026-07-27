@@ -49,7 +49,6 @@ describe("optional Dou Dizhu LLM bot configuration", () => {
       DOUDIZHU_LLM_MODEL: "small-model",
       DOUDIZHU_LLM_TIMEOUT_MS: "2500",
       DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: "12",
-      DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME: "1200",
     });
 
     expect(config.doudizhuLlm).toEqual({
@@ -58,7 +57,6 @@ describe("optional Dou Dizhu LLM bot configuration", () => {
       model: "small-model",
       timeoutMs: 2500,
       maximumOutputTokens: 12,
-      maximumPromptTokensPerGame: 1200,
     });
   });
 

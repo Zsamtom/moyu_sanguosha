@@ -285,7 +285,7 @@ export function RoomScreen({
             <strong>
               {room.botMode === 'llm'
                 ? room.llmBot.available
-                  ? `大模型优先 · ${room.llmBot.usage.calls} 次 / ${room.llmBot.usage.promptTokens + room.llmBot.usage.completionTokens} Token`
+                  ? `大模型全程 · ${room.llmBot.usage.calls} 次 / ${room.llmBot.usage.promptTokens + room.llmBot.usage.completionTokens} Token`
                   : '大模型未配置 · 规则回退'
                 : '规则机器人 · 零 Token'}
             </strong>

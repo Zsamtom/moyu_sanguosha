@@ -98,5 +98,14 @@ export function createRoomsRouter(users: UserStore, rooms: RoomService): Router 
     response.json({ game });
   }));
 
+  router.post("/:id/llm-recommendation", asyncHandler(async (request, response) => {
+    const recommendation = await rooms.recommendDoudizhuAction(
+      roomIdSchema.parse(request.params.id),
+      currentUser(response).id,
+    );
+    await rooms.waitForPersistence();
+    response.set("Cache-Control", "no-store").json({ recommendation });
+  }));
+
   return router;
 }

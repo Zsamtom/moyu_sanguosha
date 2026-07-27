@@ -178,12 +178,12 @@ describe("Doudizhu rooms", () => {
       usage: { promptTokens: 73, completionTokens: 4 },
     }));
     const registry = new BotDecisionRegistry().register("doudizhu", { decide });
-    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry, 3_500);
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry);
     rooms.setConnected(owner.id, true);
     const created = rooms.create(owner, {
       name: "大模型斗地主",
       gameType: "doudizhu",
-      botIntelligence: 7,
+      botIntelligence: 1,
       botMode: "llm",
     });
     rooms.addBot(created.id, owner.id);
@@ -218,13 +218,145 @@ describe("Doudizhu rooms", () => {
     });
   });
 
+  it("lets the current human request an LLM recommendation without auto-playing it", async () => {
+    let resolveDecision!: (result: {
+      candidateIndex: number;
+      usage: { promptTokens: number; completionTokens: number };
+    }) => void;
+    const decide = vi.fn(() => new Promise<{
+      candidateIndex: number;
+      usage: { promptTokens: number; completionTokens: number };
+    }>((resolve) => {
+      resolveDecision = resolve;
+    }));
+    const registry = new BotDecisionRegistry().register("doudizhu", { decide });
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry);
+    rooms.setConnected(owner.id, true);
+    const created = rooms.create(owner, {
+      name: "真人推荐",
+      gameType: "doudizhu",
+      botIntelligence: 4,
+      botMode: "rules",
+    });
+    rooms.addBot(created.id, owner.id);
+    rooms.addBot(created.id, owner.id);
+    rooms.setReady(created.id, owner.id, true);
+    rooms.start(created.id, owner.id);
+
+    await vi.waitFor(() => {
+      const view = rooms.getGameView(created.id, owner.id);
+      expect(view && "currentPlayerId" in view ? view.currentPlayerId : null)
+        .toBe(owner.id);
+      expect(rooms.get(created.id)?.llmBot.thinkingPlayerId).toBeNull();
+    });
+    const before = rooms.getGameView(created.id, owner.id);
+    if (!before || !("kind" in before) || before.kind !== "doudizhu") {
+      throw new Error("Missing Doudizhu view");
+    }
+
+    const recommendationPromise = rooms.recommendDoudizhuAction(
+      created.id,
+      owner.id,
+    );
+    await vi.waitFor(() => {
+      expect(rooms.get(created.id)?.llmBot.thinkingPlayerId).toBe(owner.id);
+    });
+    resolveDecision({
+      candidateIndex: 0,
+      usage: { promptTokens: 61, completionTokens: 4 },
+    });
+    const recommendation = await recommendationPromise;
+    const after = rooms.getGameView(created.id, owner.id);
+
+    expect(recommendation.source).toBe("llm");
+    expect(recommendation.action.playerId).toBe(owner.id);
+    expect(after?.revision).toBe(before.revision);
+    expect(rooms.get(created.id)?.llmBot.thinkingPlayerId).toBeNull();
+    expect(decide).toHaveBeenCalledWith(expect.objectContaining({
+      playerId: owner.id,
+      intelligence: 4,
+    }));
+    expect(rooms.get(created.id)?.llmBot.usage).toMatchObject({
+      calls: 1,
+      promptTokens: expect.any(Number),
+      completionTokens: 4,
+      fallbacks: 0,
+    });
+  });
+
+  it("publishes the exact bot that is currently waiting for an LLM decision", async () => {
+    let resolveDecision!: (result: {
+      candidateIndex: number;
+      usage: { promptTokens: number; completionTokens: number };
+    }) => void;
+    let firstDecision = true;
+    const decide = vi.fn(() => {
+      if (!firstDecision) {
+        return Promise.resolve({
+          candidateIndex: 0,
+          usage: { promptTokens: 73, completionTokens: 4 },
+        });
+      }
+      firstDecision = false;
+      return new Promise<{
+        candidateIndex: number;
+        usage: { promptTokens: number; completionTokens: number };
+      }>((resolve) => {
+        resolveDecision = resolve;
+      });
+    });
+    const registry = new BotDecisionRegistry().register("doudizhu", { decide });
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry);
+    rooms.setConnected(owner.id, true);
+    const created = rooms.create(owner, {
+      name: "思考状态",
+      gameType: "doudizhu",
+      botIntelligence: 7,
+      botMode: "llm",
+    });
+    rooms.addBot(created.id, owner.id);
+    rooms.addBot(created.id, owner.id);
+    rooms.setReady(created.id, owner.id, true);
+    rooms.start(created.id, owner.id);
+
+    for (let step = 0; step < 3 && decide.mock.calls.length === 0; step += 1) {
+      const view = rooms.getGameView(created.id, owner.id);
+      const saved = rooms.exportSnapshot().rooms.find((room) => room.id === created.id)?.game;
+      if (
+        !view || !("kind" in view) || view.kind !== "doudizhu" ||
+        !saved || !("kind" in saved) || saved.kind !== "doudizhu"
+      ) throw new Error("Missing Doudizhu state");
+      if (view.currentPlayerId !== owner.id) break;
+      rooms.applyAction(created.id, owner.id, {
+        expectedRevision: view.revision,
+        expectedPromptId: view.actionPromptId,
+        action: chooseDoudizhuBotAction(saved, owner.id, 1),
+      });
+    }
+
+    await vi.waitFor(() => expect(decide).toHaveBeenCalled());
+    const thinkingPlayerId = rooms.get(created.id)?.llmBot.thinkingPlayerId;
+    expect(thinkingPlayerId).toBeTruthy();
+    expect(
+      rooms.get(created.id)?.players.find((player) => player.id === thinkingPlayerId)?.isBot,
+    ).toBe(true);
+
+    resolveDecision({
+      candidateIndex: 0,
+      usage: { promptTokens: 73, completionTokens: 4 },
+    });
+    await vi.waitFor(() => {
+      expect(rooms.get(created.id)?.llmBot.thinkingPlayerId).toBeNull();
+    });
+  });
+
   it("falls back to the rule bot when the optional provider fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const decide = vi.fn(async () => {
       throw new Error("provider unavailable");
     });
     const registry = new BotDecisionRegistry().register("doudizhu", { decide });
-    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry, 3_500);
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry);
     rooms.setConnected(owner.id, true);
     const created = rooms.create(owner, {
       name: "自动回退",

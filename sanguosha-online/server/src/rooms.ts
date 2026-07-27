@@ -52,7 +52,6 @@ import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import {
   EMPTY_DOUDIZHU_LLM_USAGE,
   createDoudizhuDecision,
-  doudizhuLlmBudgetAvailable,
   type DoudizhuLlmUsage,
 } from "./bots/doudizhu-llm.js";
 import type { PublicUser } from "./users.js";
@@ -109,6 +108,7 @@ export interface RoomView extends RoomSummary {
   botMode: BotMode;
   llmBot: {
     available: boolean;
+    thinkingPlayerId: string | null;
     usage: DoudizhuLlmUsage;
   };
   chatMessages: RoomChatMessage[];
@@ -119,6 +119,11 @@ export interface RoomView extends RoomSummary {
 interface RoomPlayer extends RoomPlayerView {
   /** Retained only so a started game's immutable seat roster can be restored. */
   departed: boolean;
+}
+
+export interface DoudizhuLlmRecommendation {
+  readonly action: DoudizhuAction;
+  readonly source: "llm" | "rules";
 }
 
 interface Room {
@@ -260,6 +265,10 @@ export class RoomService {
   private readonly botRuns = new Set<string>();
   private readonly botContinuations = new Map<string, NodeJS.Timeout>();
   private readonly llmBotRuns = new Map<string, { revision: number; playerId: string }>();
+  private readonly llmRecommendationRuns = new Map<
+    string,
+    { revision: number; playerId: string }
+  >();
   private readonly lastChatAtByUser = new Map<string, number>();
   private readonly events = new EventEmitter();
   private snapshotPersistence?: (snapshot: RoomServiceSnapshot) => Promise<void>;
@@ -271,7 +280,6 @@ export class RoomService {
     private readonly botActionDelayMs = 0,
     private readonly doudizhuBotDelayRangeMs: readonly [number, number] = [1_000, 5_000],
     private readonly botDecisions = new BotDecisionRegistry(),
-    private readonly doudizhuMaximumPromptTokensPerGame = 3_500,
   ) {
     if (!Number.isSafeInteger(botBatchSize) || botBatchSize < 1) {
       throw new Error("botBatchSize must be a positive safe integer");
@@ -287,12 +295,6 @@ export class RoomService {
       maximumDoudizhuDelay < minimumDoudizhuDelay
     ) {
       throw new Error("doudizhuBotDelayRangeMs must be an ordered pair of non-negative safe integers");
-    }
-    if (
-      !Number.isSafeInteger(doudizhuMaximumPromptTokensPerGame) ||
-      doudizhuMaximumPromptTokensPerGame < 100
-    ) {
-      throw new Error("doudizhuMaximumPromptTokensPerGame must be a safe integer of at least 100");
     }
   }
 
@@ -870,6 +872,116 @@ export class RoomService {
         : getGameView(room.game, userId);
   }
 
+  async recommendDoudizhuAction(
+    roomId: string,
+    userId: string,
+  ): Promise<DoudizhuLlmRecommendation> {
+    const room = this.requireMember(roomId, userId);
+    if (
+      room.status !== "playing" ||
+      !room.game ||
+      !isDoudizhuGame(room.game)
+    ) {
+      throw new HttpError(
+        409,
+        "DOUDIZHU_NOT_PLAYING",
+        "当前没有进行中的斗地主牌局",
+      );
+    }
+    if (room.game.currentPlayerId !== userId) {
+      throw new HttpError(409, "NOT_YOUR_TURN", "当前还没有轮到你");
+    }
+    if (!this.botDecisions.supports("doudizhu")) {
+      throw new HttpError(
+        409,
+        "LLM_UNAVAILABLE",
+        "管理员尚未启用大模型推荐",
+      );
+    }
+    if (
+      this.llmBotRuns.has(room.id) ||
+      this.llmRecommendationRuns.has(room.id)
+    ) {
+      throw new HttpError(409, "LLM_BUSY", "大模型正在处理当前牌局");
+    }
+
+    const decision = createDoudizhuDecision(
+      room.id,
+      room.game,
+      userId,
+      room.botIntelligence,
+    );
+    if (!decision) {
+      throw new HttpError(409, "NO_LEGAL_ACTION", "当前没有可推荐的合法动作");
+    }
+
+    const request = {
+      revision: room.game.revision,
+      playerId: userId,
+    };
+    room.doudizhuLlmUsage.calls += 1;
+    room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
+    this.llmRecommendationRuns.set(room.id, request);
+    this.changed();
+
+    const currentGame = (): DoudizhuGameState => {
+      const currentRoom = this.rooms.get(room.id);
+      if (
+        currentRoom !== room ||
+        this.llmRecommendationRuns.get(room.id) !== request ||
+        !currentRoom.game ||
+        !isDoudizhuGame(currentRoom.game) ||
+        currentRoom.game.revision !== request.revision ||
+        currentRoom.game.currentPlayerId !== request.playerId
+      ) {
+        throw new HttpError(
+          409,
+          "LLM_RECOMMENDATION_STALE",
+          "牌局状态已变化，请重新获取推荐",
+        );
+      }
+      return currentRoom.game;
+    };
+
+    try {
+      const result = await this.botDecisions.decide(
+        "doudizhu",
+        decision.input,
+      );
+      currentGame();
+      if (result) {
+        room.doudizhuLlmUsage.promptTokens += Math.max(
+          0,
+          result.usage.promptTokens - decision.estimatedPromptTokens,
+        );
+        room.doudizhuLlmUsage.completionTokens += result.usage.completionTokens;
+      }
+      const selected = result?.candidateIndex === null ||
+          result?.candidateIndex === undefined
+        ? undefined
+        : decision.input.candidates[result.candidateIndex];
+      if (!selected) {
+        room.doudizhuLlmUsage.fallbacks += 1;
+        return { action: decision.fallback, source: "rules" };
+      }
+      return { action: selected, source: "llm" };
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      currentGame();
+      room.doudizhuLlmUsage.fallbacks += 1;
+      console.error(
+        `LLM recommendation failed in room ${room.id}; using rule fallback`,
+        error,
+      );
+      return { action: decision.fallback, source: "rules" };
+    } finally {
+      if (this.llmRecommendationRuns.get(room.id) === request) {
+        this.llmRecommendationRuns.delete(room.id);
+        this.changed();
+      }
+    }
+  }
+
   getGameView(roomId: string, userId: string): AuthorityGameView | undefined {
     const room = this.requireMember(roomId, userId);
     if (!room.game) return undefined;
@@ -935,6 +1047,10 @@ export class RoomService {
       botMode: room.botMode,
       llmBot: {
         available: this.botDecisions.supports("doudizhu"),
+        thinkingPlayerId:
+          this.llmBotRuns.get(room.id)?.playerId ??
+          this.llmRecommendationRuns.get(room.id)?.playerId ??
+          null,
         usage: { ...room.doudizhuLlmUsage },
       },
       chatMessages: room.chatMessages.map((message) => ({ ...message })),
@@ -1075,15 +1191,6 @@ export class RoomService {
       room.botIntelligence,
     );
     if (!decision) return false;
-    if (!doudizhuLlmBudgetAvailable(
-      room.botIntelligence,
-      room.doudizhuLlmUsage,
-      this.doudizhuMaximumPromptTokensPerGame,
-      decision.estimatedPromptTokens,
-    )) {
-      return false;
-    }
-
     const request = { revision: game.revision, playerId: bot.id };
     room.doudizhuLlmUsage.calls += 1;
     room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
@@ -1172,7 +1279,10 @@ export class RoomService {
         if (this.llmBotRuns.get(room.id) !== request) return;
         this.llmBotRuns.delete(room.id);
         const currentRoom = this.rooms.get(room.id);
-        if (currentRoom) this.runBots(currentRoom, true);
+        if (currentRoom) {
+          this.runBots(currentRoom, true);
+          this.changed();
+        }
       });
     return true;
   }
@@ -1629,6 +1739,7 @@ export class RoomService {
     this.cancelBotContinuation(room.id);
     this.botRuns.delete(room.id);
     this.llmBotRuns.delete(room.id);
+    this.llmRecommendationRuns.delete(room.id);
     for (const player of room.players) {
       this.clearDisconnectTimer(player.id);
       if (this.roomByUser.get(player.id) === room.id) this.roomByUser.delete(player.id);

@@ -1,7 +1,7 @@
-import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tag } from 'antd';
+import { AutoComplete, Button, Form, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
-import type { AuthUser } from '../types';
+import type { AuthUser, DeepSeekModel, LlmSettings, UpdateLlmSettings } from '../types';
 
 interface CreateUserValues {
   username: string;
@@ -19,11 +19,20 @@ interface DisplayNameValues {
   displayName: string;
 }
 
+interface LlmSettingsValues extends Omit<UpdateLlmSettings, 'clearApiKey'> {
+  apiKey?: string;
+}
+
 interface AdminUsersScreenProps {
   currentUser: AuthUser;
   users: AuthUser[];
   loading: boolean;
+  llmSettings?: LlmSettings;
+  llmSettingsLoading: boolean;
   onRefresh: () => Promise<void>;
+  onRefreshLlmSettings: () => Promise<void>;
+  onSaveLlmSettings: (values: UpdateLlmSettings) => Promise<void>;
+  onTestLlmConnection: (apiKey?: string, model?: DeepSeekModel) => Promise<void>;
   onCreate: (values: Pick<CreateUserValues, 'username' | 'displayName' | 'password'>) => Promise<void>;
   onDisplayName: (userId: string, displayName: string) => Promise<void>;
   onStatus: (userId: string, disabled: boolean) => Promise<void>;
@@ -35,7 +44,12 @@ export function AdminUsersScreen({
   currentUser,
   users,
   loading,
+  llmSettings,
+  llmSettingsLoading,
   onRefresh,
+  onRefreshLlmSettings,
+  onSaveLlmSettings,
+  onTestLlmConnection,
   onCreate,
   onDisplayName,
   onStatus,
@@ -47,9 +61,13 @@ export function AdminUsersScreen({
   const [displayNameTarget, setDisplayNameTarget] = useState<AuthUser>();
   const [submitting, setSubmitting] = useState(false);
   const [statusUserId, setStatusUserId] = useState<string>();
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [llmTesting, setLlmTesting] = useState(false);
   const [createForm] = Form.useForm<CreateUserValues>();
   const [resetForm] = Form.useForm<ResetPasswordValues>();
   const [displayNameForm] = Form.useForm<DisplayNameValues>();
+  const [llmForm] = Form.useForm<LlmSettingsValues>();
+  const pendingLlmApiKey = Form.useWatch('apiKey', llmForm);
 
   const closeCreate = () => {
     createForm.resetFields();
@@ -68,7 +86,20 @@ export function AdminUsersScreen({
 
   useEffect(() => {
     void onRefresh();
-  }, [onRefresh]);
+    void onRefreshLlmSettings();
+  }, [onRefresh, onRefreshLlmSettings]);
+
+  useEffect(() => {
+    if (!llmSettings) return;
+    llmForm.setFieldsValue({
+      enabled: llmSettings.enabled,
+      model: llmSettings.model,
+      apiKey: undefined,
+      thinkingEnabled: llmSettings.thinkingEnabled,
+      timeoutMs: llmSettings.timeoutMs,
+      maximumOutputTokens: llmSettings.maximumOutputTokens,
+    });
+  }, [llmForm, llmSettings]);
 
   const createUser = async (values: CreateUserValues) => {
     setSubmitting(true);
@@ -113,6 +144,49 @@ export function AdminUsersScreen({
       await onStatus(user.id, !user.disabled);
     } finally {
       setStatusUserId(undefined);
+    }
+  };
+
+  const saveLlmSettings = async (values: LlmSettingsValues) => {
+    setLlmSaving(true);
+    try {
+      await onSaveLlmSettings({
+        ...values,
+        ...(values.apiKey?.trim() ? { apiKey: values.apiKey.trim() } : {}),
+      });
+      llmForm.setFieldValue('apiKey', undefined);
+    } finally {
+      setLlmSaving(false);
+    }
+  };
+
+  const clearLlmApiKey = async () => {
+    if (!llmSettings) return;
+    setLlmSaving(true);
+    try {
+      await onSaveLlmSettings({
+        enabled: false,
+        model: llmSettings.model,
+        clearApiKey: true,
+        thinkingEnabled: llmSettings.thinkingEnabled,
+        timeoutMs: llmSettings.timeoutMs,
+        maximumOutputTokens: llmSettings.maximumOutputTokens,
+      });
+      llmForm.setFieldsValue({ enabled: false, apiKey: undefined });
+    } finally {
+      setLlmSaving(false);
+    }
+  };
+
+  const testLlmConnection = async () => {
+    setLlmTesting(true);
+    try {
+      await onTestLlmConnection(
+        llmForm.getFieldValue('apiKey'),
+        llmForm.getFieldValue('model'),
+      );
+    } finally {
+      setLlmTesting(false);
     }
   };
 
@@ -208,6 +282,103 @@ export function AdminUsersScreen({
         <Button className="primary-ink-button" type="primary" size="large" onClick={() => setCreateOpen(true)}>
           分配新账号
         </Button>
+      </section>
+
+      <section className="paper-card llm-settings-section">
+        <div className="section-toolbar">
+          <div>
+            <h2>大模型机器人</h2>
+            <p>当前仅应用于斗地主；三国杀和够级继续使用原有规则机器人。</p>
+          </div>
+          <Space>
+            <Tag color={llmSettings?.enabled ? 'green' : 'default'}>
+              {llmSettings?.enabled ? '运行中' : '未启用'}
+            </Tag>
+            <Button loading={llmSettingsLoading} onClick={() => void onRefreshLlmSettings()}>刷新</Button>
+          </Space>
+        </div>
+
+        <Form<LlmSettingsValues>
+          className="llm-settings-form"
+          form={llmForm}
+          layout="vertical"
+          requiredMark={false}
+          disabled={!llmSettings || llmSettingsLoading}
+          onFinish={saveLlmSettings}
+        >
+          <div className="llm-settings-grid">
+            <Form.Item label="供应商">
+              <Input value="DeepSeek" readOnly />
+            </Form.Item>
+            <Form.Item label="接口地址">
+              <Input value={llmSettings?.endpoint ?? 'https://api.deepseek.com/chat/completions'} readOnly />
+            </Form.Item>
+            <Form.Item label="模型" name="model" rules={[{ required: true }]}>
+              <AutoComplete
+                options={[
+                  { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash（默认）' },
+                  { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+                ]}
+                placeholder="输入 DeepSeek 模型 ID"
+              />
+            </Form.Item>
+            <Form.Item
+              label="DeepSeek API Key"
+              name="apiKey"
+              extra={llmSettings?.apiKeyConfigured ? '已配置；留空将保留现有密钥' : '尚未配置'}
+            >
+              <Input.Password autoComplete="new-password" placeholder="sk-••••••••" />
+            </Form.Item>
+            <Form.Item
+              label="单次最大输出 Token"
+              name="maximumOutputTokens"
+              rules={[{ required: true }]}
+            >
+              <InputNumber min={8} max={64} />
+            </Form.Item>
+            <Form.Item label="请求超时（毫秒）" name="timeoutMs" rules={[{ required: true }]}>
+              <InputNumber min={500} max={30_000} step={500} />
+            </Form.Item>
+            <Form.Item
+              label="思考模式"
+              name="thinkingEnabled"
+              valuePropName="checked"
+              extra="关闭更省 Token；仅在确有必要时开启"
+            >
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+          </div>
+          <div className="llm-settings-actions">
+            <Form.Item name="enabled" valuePropName="checked" noStyle>
+              <Switch checkedChildren="已启用" unCheckedChildren="未启用" />
+            </Form.Item>
+            <span>允许斗地主机器人全程使用大模型，并支持真人主动获取大模型出牌推荐；调用失败会回退规则策略。</span>
+            <Space>
+              {llmSettings?.apiKeyConfigured && (
+                <Popconfirm
+                  title="清除已保存的 API Key？"
+                  description="大模型机器人会同时停用。"
+                  okText="清除"
+                  cancelText="取消"
+                  onConfirm={() => void clearLlmApiKey()}
+                >
+                  <Button danger disabled={llmSaving}>清除密钥</Button>
+                </Popconfirm>
+              )}
+              <Button
+                loading={llmTesting}
+                disabled={
+                  llmSaving ||
+                  (!llmSettings?.apiKeyConfigured && !pendingLlmApiKey?.trim())
+                }
+                onClick={() => void testLlmConnection()}
+              >
+                测试连接
+              </Button>
+              <Button type="primary" htmlType="submit" loading={llmSaving}>保存大模型配置</Button>
+            </Space>
+          </div>
+        </Form>
       </section>
 
       <section className="admin-stats">

@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, FullGeneralId, GameType, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -176,9 +176,52 @@ export const api = {
     return normalizeRoomDetail(extractRoom(result) as RoomDetail & Record<string, unknown>);
   },
 
+  async getDoudizhuLlmRecommendation(
+    roomId: string,
+  ): Promise<DoudizhuLlmRecommendation> {
+    const result = await request<
+      DoudizhuLlmRecommendation |
+      { recommendation: DoudizhuLlmRecommendation }
+    >(
+      `/api/rooms/${encodeURIComponent(roomId)}/llm-recommendation`,
+      { method: 'POST' },
+    );
+    return 'recommendation' in result ? result.recommendation : result;
+  },
+
   async listUsers(): Promise<AuthUser[]> {
     const result = await request<AuthUser[] | { users: AuthUser[] }>('/api/admin/users');
     return Array.isArray(result) ? result : result.users;
+  },
+
+  async getLlmSettings(): Promise<LlmSettings> {
+    const result = await request<LlmSettings | { settings: LlmSettings }>('/api/admin/llm-settings');
+    return 'settings' in result ? result.settings : result;
+  },
+
+  async updateLlmSettings(input: UpdateLlmSettings): Promise<LlmSettings> {
+    const result = await request<LlmSettings | { settings: LlmSettings }>('/api/admin/llm-settings', {
+      method: 'PUT',
+      ...jsonBody(input),
+    });
+    return 'settings' in result ? result.settings : result;
+  },
+
+  async testLlmConnection(
+    apiKey?: string,
+    model?: DeepSeekModel,
+  ): Promise<LlmConnectionTestResult> {
+    const result = await request<LlmConnectionTestResult | { result: LlmConnectionTestResult }>(
+      '/api/admin/llm-settings/test',
+      {
+        method: 'POST',
+        ...jsonBody({
+          ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(model ? { model } : {}),
+        }),
+      },
+    );
+    return 'result' in result ? result.result : result;
   },
 
   async createUser(input: {

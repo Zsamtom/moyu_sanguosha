@@ -30,39 +30,23 @@ export const EMPTY_DOUDIZHU_LLM_USAGE: DoudizhuLlmUsage = {
   fallbacks: 0,
 };
 
-const CALL_BUDGET_BY_INTELLIGENCE: Record<DoudizhuBotIntelligence, number> = {
-  1: 1,
-  2: 2,
-  3: 3,
-  4: 4,
-  5: 6,
-  6: 8,
-  7: 10,
-};
-
-const CANDIDATE_LIMIT_BY_INTELLIGENCE: Record<DoudizhuBotIntelligence, number> = {
-  1: 3,
-  2: 4,
-  3: 5,
-  4: 6,
-  5: 7,
-  6: 8,
-  7: 10,
-};
+const MAX_LLM_CANDIDATES = 10;
+const STABLE_CANDIDATE_ORDERING_LEVEL: DoudizhuBotIntelligence = 7;
 
 export interface DoudizhuCompactState {
   readonly phase: "bid" | "play";
   readonly role: DoudizhuRole | null;
+  readonly seat: number;
   readonly hand: readonly DoudizhuCard[];
   readonly players: readonly {
     readonly seat: number;
     readonly role: DoudizhuRole | null;
     readonly handCount: number;
-    readonly playedCount: number;
   }[];
   readonly currentBid: 0 | 1 | 2 | 3;
   readonly multiplier: number;
   readonly trick: {
+    readonly ownerSeat: number;
     readonly ownerRole: DoudizhuRole | null;
     readonly type: DoudizhuPatternType;
     readonly rank: DoudizhuRank;
@@ -76,43 +60,6 @@ export interface DoudizhuDecision {
   readonly estimatedPromptTokens: number;
 }
 
-export function doudizhuLlmBudgetAvailable(
-  intelligence: DoudizhuBotIntelligence,
-  usage: DoudizhuLlmUsage,
-  maximumPromptTokens = 3_500,
-  nextPromptTokens = 1,
-): boolean {
-  return usage.calls < CALL_BUDGET_BY_INTELLIGENCE[intelligence] &&
-    usage.promptTokens + nextPromptTokens <= maximumPromptTokens;
-}
-
-function shouldConsult(
-  state: DoudizhuCompactState,
-  intelligence: DoudizhuBotIntelligence,
-  candidates: readonly DoudizhuAction[],
-): boolean {
-  if (candidates.length <= 1) return false;
-  if (state.phase === "bid") return intelligence >= 3;
-  const ownCount = state.hand.length;
-  const opponentCounts = state.players
-    .filter((player) => player.role !== state.role)
-    .map((player) => player.handCount);
-  const closestOpponent = Math.min(...opponentCounts);
-  const hasBombChoice = candidates.some((action) => {
-    if (action.type !== "doudizhu_play") return false;
-    const cards = action.cardIds
-      .map((id) => state.hand.find((card) => card.id === id))
-      .filter((card): card is DoudizhuCard => Boolean(card));
-    const type = parseDoudizhuPattern(cards)?.type;
-    return type === "bomb" || type === "rocket";
-  });
-  const endgameThreshold = Math.max(2, intelligence);
-  return ownCount <= endgameThreshold ||
-    closestOpponent <= Math.max(2, intelligence - 2) ||
-    (intelligence >= 4 && hasBombChoice) ||
-    (intelligence >= 6 && candidates.length >= 3);
-}
-
 export function createDoudizhuDecision(
   roomId: string,
   game: DoudizhuGameState,
@@ -122,11 +69,17 @@ export function createDoudizhuDecision(
   const view = getDoudizhuGameView(game, playerId);
   const own = view.players.find((player) => player.id === playerId);
   if (!own?.hand) return null;
-  const ordered = listDoudizhuBotActions(game, playerId, intelligence);
+  // Keep the legal candidate boundary identical at every intelligence level.
+  // Intelligence affects only the model instruction, never whether it is
+  // called or which local heuristic happens to order its candidate set.
+  const ordered = listDoudizhuBotActions(
+    game,
+    playerId,
+    STABLE_CANDIDATE_ORDERING_LEVEL,
+  );
   const fallback = ordered[0];
   if (!fallback) return null;
-  const limit = CANDIDATE_LIMIT_BY_INTELLIGENCE[intelligence];
-  const candidates = ordered.slice(0, limit);
+  const candidates = ordered.slice(0, MAX_LLM_CANDIDATES);
   const pass = ordered.find((action) => action.type === "doudizhu_pass");
   if (
     pass &&
@@ -141,25 +94,25 @@ export function createDoudizhuDecision(
   const state: DoudizhuCompactState = {
     phase: view.phase === "bidding" ? "bid" : "play",
     role: own.role ?? null,
+    seat: own.seat,
     hand: own.hand,
     players: view.players.map((player) => ({
       seat: player.seat,
       role: player.role ?? null,
       handCount: player.handCount,
-      playedCount: player.playedCount,
     })),
     currentBid: view.bid.currentBid,
     multiplier: view.multiplier,
     trick: view.trick
       ? {
+          ownerSeat: trickOwner?.seat ?? -1,
           ownerRole: trickOwner?.role ?? null,
           type: view.trick.pattern.type,
           rank: view.trick.pattern.primaryRank,
           length: view.trick.pattern.length,
-        }
+      }
       : null,
   };
-  if (!shouldConsult(state, intelligence, candidates)) return null;
   const input = {
     roomId,
     playerId,
@@ -170,7 +123,9 @@ export function createDoudizhuDecision(
   return {
     input,
     fallback,
-    estimatedPromptTokens: estimateTokens(`${SYSTEM_PROMPT}\n${compactPrompt(input)}`),
+    estimatedPromptTokens: estimateTokens(
+      `${systemPrompt(intelligence)}\n${compactPrompt(input)}`,
+    ),
   };
 }
 
@@ -180,11 +135,77 @@ export interface OpenAiCompatibleDoudizhuConfig {
   readonly model: string;
   readonly timeoutMs: number;
   readonly maximumOutputTokens: number;
+  readonly thinkingEnabled?: boolean;
+  readonly jsonOutput?: boolean;
 }
 
 type FetchLike = typeof fetch;
 
-const SYSTEM_PROMPT = "Choose one legal Dou Dizhu option. Reply JSON only: {\"i\":0}. Lower option indexes are locally preferred. Cooperate with a farmer teammate, preserve bombs, and prioritize an immediate win or block.";
+const BASE_SYSTEM_PROMPT =
+  "Choose one legal Dou Dizhu option index. Reply JSON only: {\"i\":0}.";
+
+const INTELLIGENCE_PROMPTS: Record<DoudizhuBotIntelligence, string> = {
+  1: "L1 novice: prefer the first simple low-rank option; avoid bombs.",
+  2: "L2 basic: prefer low-cost plays and do not waste strong cards.",
+  3: "L3 capable: balance shedding cards, rank cost, and sensible bidding.",
+  4: "L4 skilled: track public hand counts; preserve bombs unless decisive.",
+  5: "L5 team: as farmer, cooperate and avoid overtaking a safe teammate lead.",
+  6: "L6 advanced: block near-out opponents and compare remaining hand structure.",
+  7: "L7 expert: minimize turns to finish, coordinate farmers, preserve bombs unless decisive, and stop immediate threats.",
+};
+
+export function systemPrompt(
+  intelligence: DoudizhuBotIntelligence,
+): string {
+  return `${BASE_SYSTEM_PROMPT} ${INTELLIGENCE_PROMPTS[intelligence]}`;
+}
+
+const RANK_CODES: Record<DoudizhuRank, string> = {
+  "3": "3",
+  "4": "4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9": "9",
+  "10": "T",
+  J: "J",
+  Q: "Q",
+  K: "K",
+  A: "A",
+  "2": "2",
+  small_joker: "x",
+  big_joker: "X",
+};
+
+const PATTERN_CODES: Record<DoudizhuPatternType, string> = {
+  single: "s",
+  pair: "p",
+  triple: "t",
+  triple_single: "t1",
+  triple_pair: "t2",
+  straight: "q",
+  consecutive_pairs: "c",
+  airplane: "a",
+  airplane_singles: "a1",
+  airplane_pairs: "a2",
+  four_two_singles: "f1",
+  four_two_pairs: "f2",
+  bomb: "b",
+  rocket: "r",
+};
+
+function roleCode(role: DoudizhuRole | null): string {
+  return role === "landlord" ? "l" : role === "farmer" ? "f" : "-";
+}
+
+function rankCode(rank: DoudizhuRank): string {
+  return RANK_CODES[rank];
+}
+
+function cardRanks(cards: readonly DoudizhuCard[]): string {
+  return cards.map((card) => rankCode(card.rank)).join("");
+}
 
 function estimateTokens(value: string): number {
   return Math.max(1, Math.ceil(value.length / 4));
@@ -195,16 +216,15 @@ function compactAction(
   handById: ReadonlyMap<string, DoudizhuCard>,
 ): unknown {
   if (action.type === "doudizhu_bid") return ["b", action.score];
-  if (action.type === "doudizhu_pass") return ["x"];
+  if (action.type === "doudizhu_pass") return "x";
   const cards = action.cardIds
     .map((id) => handById.get(id))
     .filter((card): card is DoudizhuCard => Boolean(card));
   const pattern = parseDoudizhuPattern(cards);
   return [
-    "p",
-    pattern?.type ?? "?",
-    pattern?.primaryRank ?? "?",
-    cards.map((card) => card.rank),
+    pattern ? PATTERN_CODES[pattern.type] : "?",
+    pattern ? rankCode(pattern.primaryRank) : "?",
+    cardRanks(cards),
   ];
 }
 
@@ -214,26 +234,26 @@ function compactPrompt(
   const { state } = input;
   const handById = new Map(state.hand.map((card) => [card.id, card]));
   return JSON.stringify({
-    l: input.intelligence,
-    p: state.phase,
-    r: state.role,
-    h: state.hand.map((card) => card.rank),
+    p: state.phase === "bid" ? "b" : "p",
+    r: roleCode(state.role),
+    s: state.seat,
+    h: cardRanks(state.hand),
     n: state.players.map((player) => [
       player.seat,
-      player.role,
+      roleCode(player.role),
       player.handCount,
-      player.playedCount,
     ]),
     b: state.currentBid,
     m: state.multiplier,
     t: state.trick
       ? [
-          state.trick.ownerRole,
-          state.trick.type,
-          state.trick.rank,
+          state.trick.ownerSeat,
+          roleCode(state.trick.ownerRole),
+          PATTERN_CODES[state.trick.type],
+          rankCode(state.trick.rank),
           state.trick.length,
         ]
-      : null,
+      : 0,
     o: input.candidates.map((action) => compactAction(action, handById)),
   });
 }
@@ -279,6 +299,7 @@ export class OpenAiCompatibleDoudizhuProvider implements
     input: BotDecisionInput<DoudizhuCompactState, DoudizhuAction>,
   ): Promise<BotDecisionResult> {
     const prompt = compactPrompt(input);
+    const instruction = systemPrompt(input.intelligence);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
     timeout.unref();
@@ -295,12 +316,22 @@ export class OpenAiCompatibleDoudizhuProvider implements
           messages: [
             {
               role: "system",
-              content: SYSTEM_PROMPT,
+              content: instruction,
             },
             { role: "user", content: prompt },
           ],
           temperature: 0,
           max_tokens: this.config.maximumOutputTokens,
+          ...(this.config.thinkingEnabled === undefined
+            ? {}
+            : {
+                thinking: {
+                  type: this.config.thinkingEnabled ? "enabled" : "disabled",
+                },
+              }),
+          ...(this.config.jsonOutput
+            ? { response_format: { type: "json_object" } }
+            : {}),
         }),
         signal: controller.signal,
       });
@@ -312,7 +343,7 @@ export class OpenAiCompatibleDoudizhuProvider implements
       clearTimeout(timeout);
     }
     const completion = responseText(payload) ?? "";
-    const usage = responseUsage(payload, `${SYSTEM_PROMPT}\n${prompt}`, completion);
+    const usage = responseUsage(payload, `${instruction}\n${prompt}`, completion);
     let candidateIndex: number | null = null;
     try {
       const parsed = JSON.parse(completion) as { i?: unknown };

@@ -774,6 +774,38 @@ p {
   margin-bottom: 20px;
 }
 
+.llm-settings-section {
+  margin-bottom: 20px;
+  padding: 24px;
+}
+
+.llm-settings-form {
+  margin-top: 20px;
+}
+
+.llm-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+}
+
+.llm-settings-grid .ant-input-number {
+  width: 100%;
+}
+
+.llm-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  padding-top: 4px;
+}
+
+.llm-settings-actions > span {
+  flex: 1;
+  color: var(--ink-muted);
+}
+
 .password-change-actions {
   display: flex;
   justify-content: center;
@@ -1639,6 +1671,20 @@ p {
   .lobby-list-section,
   .user-table-section {
     padding: 18px;
+  }
+
+  .llm-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .llm-settings-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .llm-settings-actions > .ant-space {
+    width: 100%;
+    justify-content: flex-end;
   }
 
   .room-heading {
@@ -5398,7 +5444,7 @@ button.gouji-card:hover {
   overflow: hidden;
   border: 1px solid #aaa;
   border-radius: 3px;
-  background: #f4f4f2;
+  background: #fff;
 }
 
 .ddz-table {
@@ -5406,11 +5452,7 @@ button.gouji-card:hover {
   min-height: 470px;
   padding: 24px 36px;
   overflow: hidden;
-  background-color: #ededeb;
-  background-image:
-    linear-gradient(rgba(0, 0, 0, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.045) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background: #fff;
   color: #202020;
 }
 
@@ -5459,6 +5501,11 @@ button.gouji-card:hover {
   transform: none;
 }
 
+.ddz-player--llm-thinking {
+  border-color: #555;
+  box-shadow: inset 4px 0 #555;
+}
+
 .ddz-player__avatar {
   display: grid;
   flex: 0 0 42px;
@@ -5487,6 +5534,38 @@ button.gouji-card:hover {
 .ddz-player > div:nth-child(2) span {
   color: #686868;
   font-size: 12px;
+}
+
+.ddz-player > div:nth-child(2) .ddz-player__thinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  color: #1f1f1f;
+  font-weight: 600;
+}
+
+.ddz-self__heading .ddz-player__thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: #1f1f1f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ddz-player__thinking i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1f1f1f;
+  animation: ddz-thinking-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes ddz-thinking-pulse {
+  from { opacity: 0.35; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1.15); }
 }
 
 .ddz-card-backs {
@@ -5692,13 +5771,6 @@ button.ddz-card {
   box-shadow: none;
 }
 
-.ddz-rules ul {
-  margin: 12px 0 0;
-  padding-left: 20px;
-  color: #555;
-  line-height: 1.7;
-}
-
 .ddz-result {
   border-top: 4px double #222;
 }
@@ -5835,6 +5907,10 @@ button.ddz-card {
   background: #fafafa;
   color: #4b4b4b;
   font-size: 12px;
+}
+
+.ddz-recommendation-toggle .ant-select {
+  min-width: 112px;
 }
 
 .room-chat {
