@@ -48,10 +48,18 @@ import {
   chooseBotTarget,
   type BotIntelligence,
 } from "./bot-intelligence.js";
+import { BotDecisionRegistry } from "./bots/decision-registry.js";
+import {
+  EMPTY_DOUDIZHU_LLM_USAGE,
+  createDoudizhuDecision,
+  doudizhuLlmBudgetAvailable,
+  type DoudizhuLlmUsage,
+} from "./bots/doudizhu-llm.js";
 import type { PublicUser } from "./users.js";
 
 export type RoomStatus = "waiting" | "drafting" | "playing" | "finished";
 export type GameType = "sanguosha" | "gouji" | "doudizhu";
+export type BotMode = "rules" | "llm";
 
 export const DEFAULT_SERVER_ROOM_RULE_CONFIG: Readonly<RoomRuleConfig> = Object.freeze({
   ...DEFAULT_COMPLETE_RULE_CONFIG,
@@ -98,6 +106,11 @@ export interface RoomView extends RoomSummary {
   players: RoomPlayerView[];
   ruleConfig: RoomRuleConfig;
   botIntelligence: BotIntelligence;
+  botMode: BotMode;
+  llmBot: {
+    available: boolean;
+    usage: DoudizhuLlmUsage;
+  };
   chatMessages: RoomChatMessage[];
   /** Present only in the requesting member's private room view. */
   draft?: GeneralDraftView;
@@ -119,6 +132,8 @@ interface Room {
   players: RoomPlayer[];
   ruleConfig: RoomRuleConfig;
   botIntelligence: BotIntelligence;
+  botMode: BotMode;
+  doudizhuLlmUsage: DoudizhuLlmUsage;
   chatMessages: RoomChatMessage[];
   draft?: GeneralDraftState;
   game?: GameSession | GoujiGameState | DoudizhuGameState;
@@ -194,6 +209,8 @@ export interface RoomServiceSnapshot {
     players: Array<RoomPlayerView & { departed?: boolean }>;
     ruleConfig: RoomRuleConfig;
     botIntelligence?: BotIntelligence;
+    botMode?: BotMode;
+    doudizhuLlmUsage?: DoudizhuLlmUsage;
     chatMessages?: RoomChatMessage[];
     draft?: GeneralDraftState;
     game?: GameSession | GoujiGameState | DoudizhuGameState;
@@ -206,6 +223,7 @@ export interface CreateRoomInput {
   maxPlayers?: number;
   ruleConfig?: RoomRuleConfig;
   botIntelligence?: BotIntelligence;
+  botMode?: BotMode;
 }
 
 function cloneRuleConfig(config: RoomRuleConfig): RoomRuleConfig {
@@ -241,6 +259,7 @@ export class RoomService {
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly botRuns = new Set<string>();
   private readonly botContinuations = new Map<string, NodeJS.Timeout>();
+  private readonly llmBotRuns = new Map<string, { revision: number; playerId: string }>();
   private readonly lastChatAtByUser = new Map<string, number>();
   private readonly events = new EventEmitter();
   private snapshotPersistence?: (snapshot: RoomServiceSnapshot) => Promise<void>;
@@ -251,6 +270,8 @@ export class RoomService {
     private readonly botBatchSize = 200,
     private readonly botActionDelayMs = 0,
     private readonly doudizhuBotDelayRangeMs: readonly [number, number] = [1_000, 5_000],
+    private readonly botDecisions = new BotDecisionRegistry(),
+    private readonly doudizhuMaximumPromptTokensPerGame = 3_500,
   ) {
     if (!Number.isSafeInteger(botBatchSize) || botBatchSize < 1) {
       throw new Error("botBatchSize must be a positive safe integer");
@@ -266,6 +287,12 @@ export class RoomService {
       maximumDoudizhuDelay < minimumDoudizhuDelay
     ) {
       throw new Error("doudizhuBotDelayRangeMs must be an ordered pair of non-negative safe integers");
+    }
+    if (
+      !Number.isSafeInteger(doudizhuMaximumPromptTokensPerGame) ||
+      doudizhuMaximumPromptTokensPerGame < 100
+    ) {
+      throw new Error("doudizhuMaximumPromptTokensPerGame must be a safe integer of at least 100");
     }
   }
 
@@ -305,6 +332,7 @@ export class RoomService {
     for (const timer of this.botContinuations.values()) clearTimeout(timer);
     this.botContinuations.clear();
     this.botRuns.clear();
+    this.llmBotRuns.clear();
     this.lastChatAtByUser.clear();
     this.connectedUsers.clear();
     this.rooms.clear();
@@ -328,6 +356,11 @@ export class RoomService {
       const room = structuredClone(saved) as Room;
       room.gameType = saved.gameType ?? "sanguosha";
       room.botIntelligence = saved.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE;
+      room.botMode = room.gameType === "doudizhu" ? saved.botMode ?? "rules" : "rules";
+      room.doudizhuLlmUsage = {
+        ...EMPTY_DOUDIZHU_LLM_USAGE,
+        ...saved.doudizhuLlmUsage,
+      };
       room.chatMessages = (saved.chatMessages ?? []).slice(-100);
       room.ruleConfig = cloneRuleConfig(
         saved.ruleConfig ?? DEFAULT_SERVER_ROOM_RULE_CONFIG,
@@ -430,6 +463,8 @@ export class RoomService {
       players: [this.toPlayer(owner, 0)],
       ruleConfig,
       botIntelligence: input.botIntelligence ?? DEFAULT_BOT_INTELLIGENCE,
+      botMode: gameType === "doudizhu" ? input.botMode ?? "rules" : "rules",
+      doudizhuLlmUsage: { ...EMPTY_DOUDIZHU_LLM_USAGE },
       chatMessages: [],
     };
     this.rooms.set(id, room);
@@ -648,6 +683,7 @@ export class RoomService {
         })),
         seed: randomBytes(32).toString("hex"),
       });
+      room.doudizhuLlmUsage = { ...EMPTY_DOUDIZHU_LLM_USAGE };
       room.status = "playing";
       this.runBots(room);
     }
@@ -708,6 +744,7 @@ export class RoomService {
         })),
         seed: randomBytes(32).toString("hex"),
       });
+      room.doudizhuLlmUsage = { ...EMPTY_DOUDIZHU_LLM_USAGE };
       room.status = "playing";
       room.draft = undefined;
       this.runBots(room);
@@ -895,6 +932,11 @@ export class RoomService {
         .map(({ departed: _departed, ...player }) => ({ ...player })),
       ruleConfig: structuredClone(room.ruleConfig),
       botIntelligence: room.botIntelligence,
+      botMode: room.botMode,
+      llmBot: {
+        available: this.botDecisions.supports("doudizhu"),
+        usage: { ...room.doudizhuLlmUsage },
+      },
       chatMessages: room.chatMessages.map((message) => ({ ...message })),
       ...(viewerId && room.draft ? { draft: getGeneralDraftView(room.draft, viewerId) } : {}),
     };
@@ -940,7 +982,7 @@ export class RoomService {
 
   private runBots(room: Room, notify = false, delayElapsed = false): void {
     if (room.status !== "playing" || !room.game || this.rooms.get(room.id) !== room) return;
-    if (this.botRuns.has(room.id)) return;
+    if (this.botRuns.has(room.id) || this.llmBotRuns.has(room.id)) return;
     this.cancelBotContinuation(room.id);
     if (this.hasBotActionDelay(room) && !delayElapsed && this.actingBot(room)) {
       this.scheduleBotContinuation(room.id);
@@ -956,6 +998,13 @@ export class RoomService {
         const bot = this.actingBot(room);
         if (!bot) break;
         steps += 1;
+        if (
+          isDoudizhuGame(room.game) &&
+          room.botMode === "llm" &&
+          this.startDoudizhuLlmDecision(room, room.game, bot)
+        ) {
+          break;
+        }
         try {
           room.game = isGoujiGame(room.game)
             ? applyGoujiAction(
@@ -1003,10 +1052,129 @@ export class RoomService {
       this.changed();
       return;
     }
-    if ((steps >= this.botBatchSize || this.hasBotActionDelay(room)) && this.actingBot(room)) {
+    if (
+      !this.llmBotRuns.has(room.id) &&
+      (steps >= this.botBatchSize || this.hasBotActionDelay(room)) &&
+      this.actingBot(room)
+    ) {
       this.scheduleBotContinuation(room.id);
     }
     if (notify && mutations > 0) this.changed();
+  }
+
+  private startDoudizhuLlmDecision(
+    room: Room,
+    game: DoudizhuGameState,
+    bot: RoomPlayer,
+  ): boolean {
+    if (!this.botDecisions.supports("doudizhu")) return false;
+    const decision = createDoudizhuDecision(
+      room.id,
+      game,
+      bot.id,
+      room.botIntelligence,
+    );
+    if (!decision) return false;
+    if (!doudizhuLlmBudgetAvailable(
+      room.botIntelligence,
+      room.doudizhuLlmUsage,
+      this.doudizhuMaximumPromptTokensPerGame,
+      decision.estimatedPromptTokens,
+    )) {
+      return false;
+    }
+
+    const request = { revision: game.revision, playerId: bot.id };
+    room.doudizhuLlmUsage.calls += 1;
+    room.doudizhuLlmUsage.promptTokens += decision.estimatedPromptTokens;
+    this.llmBotRuns.set(room.id, request);
+    this.changed();
+
+    void this.botDecisions.decide("doudizhu", decision.input)
+      .then((result) => {
+        const currentRoom = this.rooms.get(room.id);
+        const currentRequest = this.llmBotRuns.get(room.id);
+        if (
+          currentRoom !== room ||
+          currentRequest !== request ||
+          !currentRoom.game ||
+          !isDoudizhuGame(currentRoom.game) ||
+          currentRoom.game.revision !== request.revision ||
+          currentRoom.game.currentPlayerId !== request.playerId
+        ) {
+          return;
+        }
+
+        if (result) {
+          currentRoom.doudizhuLlmUsage.promptTokens += Math.max(
+            0,
+            result.usage.promptTokens - decision.estimatedPromptTokens,
+          );
+          currentRoom.doudizhuLlmUsage.completionTokens += result.usage.completionTokens;
+        }
+        const selected = result?.candidateIndex === null || result?.candidateIndex === undefined
+          ? undefined
+          : decision.input.candidates[result.candidateIndex];
+        const action = selected ?? decision.fallback;
+        if (!selected) currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        try {
+          currentRoom.game = applyDoudizhuAction(currentRoom.game, action);
+        } catch (error) {
+          currentRoom.doudizhuLlmUsage.fallbacks += 1;
+          console.error(
+            `LLM-selected bot action failed in room ${currentRoom.id}; using rule fallback`,
+            error,
+          );
+          try {
+            currentRoom.game = applyDoudizhuAction(currentRoom.game, decision.fallback);
+          } catch (fallbackError) {
+            console.error(
+              `Rule fallback failed for bot ${bot.id} in room ${currentRoom.id}; eliminating it`,
+              fallbackError,
+            );
+            currentRoom.game = forfeitDoudizhuPlayer(currentRoom.game, bot.id);
+          }
+        }
+        this.finishRoomIfNeeded(currentRoom);
+        this.changed();
+      })
+      .catch((error) => {
+        const currentRoom = this.rooms.get(room.id);
+        const currentRequest = this.llmBotRuns.get(room.id);
+        if (
+          currentRoom !== room ||
+          currentRequest !== request ||
+          !currentRoom.game ||
+          !isDoudizhuGame(currentRoom.game) ||
+          currentRoom.game.revision !== request.revision ||
+          currentRoom.game.currentPlayerId !== request.playerId
+        ) {
+          return;
+        }
+        currentRoom.doudizhuLlmUsage.fallbacks += 1;
+        console.error(
+          `LLM bot request failed in room ${currentRoom.id}; using rule fallback`,
+          error,
+        );
+        try {
+          currentRoom.game = applyDoudizhuAction(currentRoom.game, decision.fallback);
+        } catch (fallbackError) {
+          console.error(
+            `Rule fallback failed for bot ${bot.id} in room ${currentRoom.id}; eliminating it`,
+            fallbackError,
+          );
+          currentRoom.game = forfeitDoudizhuPlayer(currentRoom.game, bot.id);
+        }
+        this.finishRoomIfNeeded(currentRoom);
+        this.changed();
+      })
+      .finally(() => {
+        if (this.llmBotRuns.get(room.id) !== request) return;
+        this.llmBotRuns.delete(room.id);
+        const currentRoom = this.rooms.get(room.id);
+        if (currentRoom) this.runBots(currentRoom, true);
+      });
+    return true;
   }
 
   private hasBotActionDelay(room: Room): boolean {
@@ -1460,6 +1628,7 @@ export class RoomService {
   private deleteRoom(room: Room): void {
     this.cancelBotContinuation(room.id);
     this.botRuns.delete(room.id);
+    this.llmBotRuns.delete(room.id);
     for (const player of room.players) {
       this.clearDisconnectTimer(player.id);
       if (this.roomByUser.get(player.id) === room.id) this.roomByUser.delete(player.id);

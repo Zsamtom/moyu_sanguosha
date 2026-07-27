@@ -280,6 +280,16 @@ export function RoomScreen({
           <div><span>座位</span><strong>固定 3 人</strong></div>
           <div><span>核心规则</span><strong>叫分 / 炸弹 / 春天</strong></div>
           <div><span>机器人</span><strong>{botIntelligence} · {DOUDIZHU_BOT_INTELLIGENCE_NAMES[botIntelligence]}</strong></div>
+          <div>
+            <span>决策引擎</span>
+            <strong>
+              {room.botMode === 'llm'
+                ? room.llmBot.available
+                  ? `大模型优先 · ${room.llmBot.usage.calls} 次 / ${room.llmBot.usage.promptTokens + room.llmBot.usage.completionTokens} Token`
+                  : '大模型未配置 · 规则回退'
+                : '规则机器人 · 零 Token'}
+            </strong>
+          </div>
         </section>
       ) : room.ruleConfig && (
         <section className="room-rule-summary" aria-label="房间规则">

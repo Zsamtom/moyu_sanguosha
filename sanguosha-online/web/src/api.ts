@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, FullGeneralId, GameType, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
+import type { AuthUser, BotIntelligence, BotMode, FullGeneralId, GameType, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -99,6 +99,7 @@ export const api = {
     ruleConfig?: RoomRuleConfig,
     botIntelligence: BotIntelligence = 3,
     gameType: GameType = 'sanguosha',
+    botMode: BotMode = 'rules',
   ): Promise<RoomDetail> {
     const result = await request<RoomDetail | { room: RoomDetail }>('/api/rooms', {
       method: 'POST',
@@ -107,6 +108,7 @@ export const api = {
         maxPlayers,
         botIntelligence,
         ...(gameType !== 'sanguosha' ? { gameType } : {}),
+        ...(gameType === 'doudizhu' && botMode === 'llm' ? { botMode } : {}),
         ...(gameType === 'sanguosha' && ruleConfig ? { ruleConfig } : {}),
       }),
     });

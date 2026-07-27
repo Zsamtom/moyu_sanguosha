@@ -4603,6 +4603,18 @@ const roomSchema = z.object({
   status: z.enum(["waiting", "drafting", "playing", "finished"]),
   maxPlayers: z.number().int().min(2).max(10),
   botIntelligence: botIntelligenceSchema.default(3),
+  botMode: z.enum(["rules", "llm"]).default("rules"),
+  doudizhuLlmUsage: z.object({
+    calls: z.number().int().min(0).max(10_000),
+    promptTokens: z.number().int().min(0).max(100_000_000),
+    completionTokens: z.number().int().min(0).max(100_000_000),
+    fallbacks: z.number().int().min(0).max(10_000),
+  }).default({
+    calls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    fallbacks: 0,
+  }),
   createdAt: z.string().datetime(),
   players: z.array(playerSchema).min(1).max(10),
   ruleConfig: roomRuleConfigSchema,
@@ -4619,6 +4631,9 @@ const roomSchema = z.object({
   if (room.players.length > room.maxPlayers) issue("Room exceeds maxPlayers");
   if (room.gameType === "gouji" && room.maxPlayers !== 6) issue("Gouji room must have exactly 6 seats");
   if (room.gameType === "doudizhu" && room.maxPlayers !== 3) issue("Doudizhu room must have exactly 3 seats");
+  if (room.botMode === "llm" && room.gameType !== "doudizhu") {
+    issue("LLM bot mode is currently available only for Dou Dizhu rooms");
+  }
   if (room.gameType !== "sanguosha" && room.status === "drafting") issue("Only Sanguosha rooms may draft generals");
   if (room.status === "waiting" && (room.draft || room.game)) {
     issue("Waiting room unexpectedly contains draft or game state");

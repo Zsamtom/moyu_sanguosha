@@ -689,15 +689,24 @@ function candidatePatterns(hand: readonly DoudizhuCard[]): DoudizhuPattern[] {
     groups.set(card.rank, group);
   }
   const patterns: DoudizhuPattern[] = [];
+  const seen = new Set<string>();
+  const addPattern = (cards: readonly DoudizhuCard[]): void => {
+    const parsed = parseDoudizhuPattern(cards);
+    if (!parsed) return;
+    const key = parsed.cards.map((card) => card.id).sort().join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    patterns.push(parsed);
+  };
   const entries = [...groups.entries()].sort((a, b) => doudizhuRankValue(a[0]) - doudizhuRankValue(b[0]));
   for (const [, cards] of entries) {
-    patterns.push(parseDoudizhuPattern(cards.slice(0, 1))!);
-    if (cards.length >= 2) patterns.push(parseDoudizhuPattern(cards.slice(0, 2))!);
-    if (cards.length >= 3) patterns.push(parseDoudizhuPattern(cards.slice(0, 3))!);
-    if (cards.length === 4) patterns.push(parseDoudizhuPattern(cards)!);
+    addPattern(cards.slice(0, 1));
+    if (cards.length >= 2) addPattern(cards.slice(0, 2));
+    if (cards.length >= 3) addPattern(cards.slice(0, 3));
+    if (cards.length === 4) addPattern(cards);
   }
   if (groups.has("small_joker") && groups.has("big_joker")) {
-    patterns.push(parseDoudizhuPattern([groups.get("small_joker")![0]!, groups.get("big_joker")![0]!])!);
+    addPattern([groups.get("small_joker")![0]!, groups.get("big_joker")![0]!]);
   }
   const sequenceRanks = entries
     .map(([rank]) => rank)
@@ -706,8 +715,35 @@ function candidatePatterns(hand: readonly DoudizhuCard[]): DoudizhuPattern[] {
     for (let end = start + 5; end <= sequenceRanks.length; end += 1) {
       const ranks = sequenceRanks.slice(start, end);
       if (!consecutive(ranks)) break;
-      const parsed = parseDoudizhuPattern(ranks.map((rank) => groups.get(rank)![0]!));
-      if (parsed) patterns.push(parsed);
+      addPattern(ranks.map((rank) => groups.get(rank)![0]!));
+    }
+  }
+
+  const pairRanks = sequenceRanks.filter((rank) => groups.get(rank)!.length >= 2);
+  for (let start = 0; start < pairRanks.length; start += 1) {
+    for (let end = start + 3; end <= pairRanks.length; end += 1) {
+      const ranks = pairRanks.slice(start, end);
+      if (!consecutive(ranks)) break;
+      addPattern(ranks.flatMap((rank) => groups.get(rank)!.slice(0, 2)));
+    }
+  }
+
+  const tripleRanks = sequenceRanks.filter((rank) => groups.get(rank)!.length >= 3);
+  for (let start = 0; start < tripleRanks.length; start += 1) {
+    for (let end = start + 2; end <= tripleRanks.length; end += 1) {
+      const ranks = tripleRanks.slice(start, end);
+      if (!consecutive(ranks)) break;
+      addPattern(ranks.flatMap((rank) => groups.get(rank)!.slice(0, 3)));
+    }
+  }
+
+  for (const [tripleRank, tripleCards] of entries.filter(([, cards]) => cards.length >= 3)) {
+    for (const [attachmentRank, attachmentCards] of entries) {
+      if (attachmentRank === tripleRank) continue;
+      addPattern([...tripleCards.slice(0, 3), attachmentCards[0]!]);
+      if (attachmentCards.length >= 2) {
+        addPattern([...tripleCards.slice(0, 3), ...attachmentCards.slice(0, 2)]);
+      }
     }
   }
   return patterns;
@@ -732,26 +768,114 @@ export function chooseDoudizhuBotAction(
   playerId: string,
   intelligence: DoudizhuBotIntelligence = 3,
 ): DoudizhuAction {
+  const actions = listDoudizhuBotActions(game, playerId, intelligence);
+  if (actions.length === 0) {
+    throw new DoudizhuRuleError("DOUDIZHU_INVALID_SELECTION", "机器人没有可执行动作");
+  }
+  if (intelligence === 1 && actions.length > 1) {
+    return actions[Math.floor(Math.random() * Math.min(actions.length, 4))]!;
+  }
+  if (intelligence === 2 && actions.length > 1 && Math.random() < 0.25) {
+    return actions[Math.min(1, actions.length - 1)]!;
+  }
+  return actions[0]!;
+}
+
+function remainingHandScore(
+  hand: readonly DoudizhuCard[],
+  playedCardIds: ReadonlySet<string>,
+): number {
+  const counts = new Map<DoudizhuRank, number>();
+  for (const card of hand) {
+    if (playedCardIds.has(card.id)) continue;
+    counts.set(card.rank, (counts.get(card.rank) ?? 0) + 1);
+  }
+  let groups = counts.size * 20;
+  for (const count of counts.values()) {
+    if (count >= 2) groups -= 4;
+    if (count >= 3) groups -= 5;
+    if (count === 4) groups -= 3;
+  }
+  return groups;
+}
+
+function sameDoudizhuSide(
+  left: DoudizhuPlayerState,
+  right: DoudizhuPlayerState,
+): boolean {
+  return left.role !== undefined && left.role === right.role;
+}
+
+/**
+ * Returns a compact, ordered set of legal actions. The authoritative reducer
+ * still validates the selected action, while rule bots and external decision
+ * providers can share the same candidate boundary.
+ */
+export function listDoudizhuBotActions(
+  game: DoudizhuGameState,
+  playerId: string,
+  intelligence: DoudizhuBotIntelligence = 3,
+): DoudizhuAction[] {
   const player = assertTurn(game, playerId);
   if (game.phase === "bidding") {
     const strength = handStrength(player.hand) + Math.max(0, intelligence - 3);
     const target = strength >= 15 ? 3 : strength >= 10 ? 2 : strength >= 6 ? 1 : 0;
-    const score = target > game.bid.currentBid ? target as 1 | 2 | 3 : 0;
-    return { type: "doudizhu_bid", playerId, score };
+    const legalScores = ([0, 1, 2, 3] as const)
+      .filter((score) => score === 0 || score > game.bid.currentBid)
+      .sort((left, right) => Math.abs(left - target) - Math.abs(right - target) || right - left);
+    return legalScores.map((score) => ({ type: "doudizhu_bid", playerId, score }));
   }
   const candidates = candidatePatterns(player.hand)
     .filter((candidate) => !game.trick || game.trick.fromPlayerId === playerId ||
-      canDoudizhuPatternBeat(candidate, game.trick.pattern))
-    .sort((left, right) => {
-      const leftBomb = left.type === "bomb" || left.type === "rocket" ? 1 : 0;
-      const rightBomb = right.type === "bomb" || right.type === "rocket" ? 1 : 0;
-      return leftBomb - rightBomb ||
-        right.cards.length - left.cards.length ||
-        doudizhuRankValue(left.primaryRank) - doudizhuRankValue(right.primaryRank);
-    });
-  const candidate = candidates[0];
-  if (!candidate) return { type: "doudizhu_pass", playerId };
-  return { type: "doudizhu_play", playerId, cardIds: candidate.cards.map((card) => card.id) };
+      canDoudizhuPatternBeat(candidate, game.trick.pattern));
+  const trickLeader = game.trick
+    ? game.players.find((candidate) => candidate.id === game.trick!.fromPlayerId)
+    : undefined;
+  const next = nextPlayer(game, playerId);
+  const teammateLeading = Boolean(
+    intelligence >= 5 &&
+    trickLeader &&
+    trickLeader.id !== playerId &&
+    sameDoudizhuSide(player, trickLeader),
+  );
+  const urgentOpponent = game.players.some((candidate) =>
+    candidate.id !== playerId &&
+    !sameDoudizhuSide(player, candidate) &&
+    candidate.hand.length <= Math.max(1, intelligence - 4)
+  );
+
+  const score = (pattern: DoudizhuPattern): number => {
+    const rank = doudizhuRankValue(pattern.primaryRank);
+    const isBomb = pattern.type === "bomb" || pattern.type === "rocket";
+    let value = pattern.cards.length * (intelligence >= 3 ? 35 : 12) - rank * 2;
+    if (pattern.cards.length === player.hand.length) value += 100_000;
+    if (isBomb && pattern.cards.length !== player.hand.length) {
+      value -= intelligence >= 4 ? 600 : 80;
+    }
+    if (teammateLeading && !urgentOpponent) value -= 2_000;
+    if (!sameDoudizhuSide(player, next) && next.hand.length <= 2) {
+      value += rank * Math.max(0, intelligence - 3) * 8;
+    }
+    if (intelligence >= 6 && urgentOpponent) value += pattern.cards.length * 80;
+    if (intelligence >= 7) {
+      value -= remainingHandScore(player.hand, new Set(pattern.cards.map((card) => card.id)));
+    }
+    return value;
+  };
+
+  const ordered: DoudizhuAction[] = candidates
+    .sort((left, right) => score(right) - score(left))
+    .map((candidate) => ({
+      type: "doudizhu_play" as const,
+      playerId,
+      cardIds: candidate.cards.map((card) => card.id),
+    }));
+  if (game.trick && game.trick.fromPlayerId !== playerId) {
+    const pass = { type: "doudizhu_pass" as const, playerId };
+    if (teammateLeading && !urgentOpponent) ordered.unshift(pass);
+    else ordered.push(pass);
+  }
+  return ordered;
 }
 
 export function forfeitDoudizhuPlayer(

@@ -5,6 +5,16 @@ const optionalBuildSha = z.preprocess(
   z.string().trim().regex(/^[0-9a-f]{7,64}$/i).optional(),
 );
 
+const optionalTrimmedString = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().min(1).optional(),
+);
+
+const optionalUrl = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().url().optional(),
+);
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3_000),
@@ -17,6 +27,24 @@ const environmentSchema = z.object({
   TRUST_PROXY: z.coerce.number().int().min(0).default(1),
   APP_VERSION: z.string().trim().regex(/^[0-9a-z][0-9a-z._+-]{0,63}$/i).default("dev"),
   BUILD_SHA: optionalBuildSha,
+  DOUDIZHU_LLM_ENDPOINT: optionalUrl,
+  DOUDIZHU_LLM_API_KEY: optionalTrimmedString,
+  DOUDIZHU_LLM_MODEL: optionalTrimmedString,
+  DOUDIZHU_LLM_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(4_000),
+  DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(8).max(64).default(16),
+  DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME: z.coerce.number().int().min(100).max(50_000).default(3_500),
+}).superRefine((environment, context) => {
+  const providerValues = [
+    environment.DOUDIZHU_LLM_ENDPOINT,
+    environment.DOUDIZHU_LLM_API_KEY,
+    environment.DOUDIZHU_LLM_MODEL,
+  ];
+  if (providerValues.some(Boolean) && !providerValues.every(Boolean)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "DOUDIZHU_LLM_ENDPOINT, DOUDIZHU_LLM_API_KEY and DOUDIZHU_LLM_MODEL must be configured together",
+    });
+  }
 });
 
 export interface AppConfig {
@@ -34,6 +62,14 @@ export interface AppConfig {
   secureCookies: boolean;
   appVersion: string;
   buildSha?: string;
+  doudizhuLlm?: {
+    endpoint: string;
+    apiKey: string;
+    model: string;
+    timeoutMs: number;
+    maximumOutputTokens: number;
+    maximumPromptTokensPerGame: number;
+  };
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -66,5 +102,17 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     secureCookies: parsed.NODE_ENV === "production",
     appVersion: parsed.APP_VERSION,
     buildSha: parsed.BUILD_SHA,
+    ...(parsed.DOUDIZHU_LLM_ENDPOINT && parsed.DOUDIZHU_LLM_API_KEY && parsed.DOUDIZHU_LLM_MODEL
+      ? {
+          doudizhuLlm: {
+            endpoint: parsed.DOUDIZHU_LLM_ENDPOINT,
+            apiKey: parsed.DOUDIZHU_LLM_API_KEY,
+            model: parsed.DOUDIZHU_LLM_MODEL,
+            timeoutMs: parsed.DOUDIZHU_LLM_TIMEOUT_MS,
+            maximumOutputTokens: parsed.DOUDIZHU_LLM_MAX_OUTPUT_TOKENS,
+            maximumPromptTokensPerGame: parsed.DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME,
+          },
+        }
+      : {}),
   };
 }

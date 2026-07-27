@@ -61,6 +61,14 @@ INITIAL_ADMIN_DISPLAY_NAME=管理员
 APP_ORIGIN=https://moyu.pdcat.cn
 APP_VERSION=2026.07.20
 BUILD_SHA=替换为main分支的Git提交SHA
+
+# 可选：斗地主大模型机器人；三项全部留空时禁用
+DOUDIZHU_LLM_ENDPOINT=https://供应商地址/v1/chat/completions
+DOUDIZHU_LLM_API_KEY=替换为服务端密钥
+DOUDIZHU_LLM_MODEL=替换为低成本模型名
+DOUDIZHU_LLM_TIMEOUT_MS=4000
+DOUDIZHU_LLM_MAX_OUTPUT_TOKENS=16
+DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME=3500
 ```
 
 可在本机生成随机值：
@@ -77,6 +85,7 @@ git rev-parse HEAD
 - `POSTGRES_PASSWORD` 会直接进入数据库 URL，只使用 URL-safe 字符。
 - 初始管理员已存在时，修改 `INITIAL_ADMIN_PASSWORD` 不会覆盖数据库里的密码。
 - `APP_VERSION` 用于 Docker 镜像标签；`BUILD_SHA` 会由 `/version` 返回。
+- 大模型 API Key 只保存在服务器 `.env`；不要写入源码、浏览器配置或 Git。
 
 ```bash
 chmod 600 .env

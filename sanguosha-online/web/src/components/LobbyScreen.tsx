@@ -5,6 +5,7 @@ import {
   DOUDIZHU_BOT_INTELLIGENCE_NAMES,
   GOUJI_BOT_INTELLIGENCE_NAMES,
   type BotIntelligence,
+  type BotMode,
   type GameType,
   type PackId,
   type RoomDetail,
@@ -17,6 +18,7 @@ interface CreateRoomValues {
   gameType: GameType;
   maxPlayers: number;
   botIntelligence: BotIntelligence;
+  botMode: BotMode;
   enabledGeneralPacks: PackId[];
   selectionMode: 'choice' | 'random';
   candidatesPerPlayer: number;
@@ -36,6 +38,7 @@ interface LobbyScreenProps {
     ruleConfig: RoomRuleConfig | undefined,
     botIntelligence: BotIntelligence,
     gameType: GameType,
+    botMode: BotMode,
   ) => Promise<RoomDetail>;
   onJoin: (roomId: string) => Promise<void>;
 }
@@ -108,6 +111,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
         ruleConfig,
         values.botIntelligence ?? 3,
         values.gameType,
+        values.gameType === 'doudizhu' ? values.botMode ?? 'rules' : 'rules',
       );
       setCreateOpen(false);
       form.resetFields();
@@ -241,6 +245,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             gameType: 'sanguosha',
             maxPlayers: 5,
             botIntelligence: 3,
+            botMode: 'rules',
             enabledGeneralPacks: ['standard', 'sp'],
             selectionMode: 'random',
             candidatesPerPlayer: 3,
@@ -303,6 +308,16 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
                   value: Number(value),
                   label: `${value} · ${label}`,
                 }))} />
+              </Form.Item>
+              <Form.Item
+                label="机器人决策引擎"
+                name="botMode"
+                extra="大模型采用混合策略：仅在关键决策调用，并受每局 Token 预算限制；不可用或超时时自动回退规则机器人。"
+              >
+                <Select options={[
+                  { value: 'rules', label: '规则机器人（零 Token）' },
+                  { value: 'llm', label: '大模型优先（自动节省 Token）' },
+                ]} />
               </Form.Item>
             </>
           ) : (

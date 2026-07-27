@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import type { PoolClient } from "pg";
 import { createApplication } from "./app.js";
+import { createBotDecisionRegistry } from "./bots/index.js";
 import { loadConfig } from "./config.js";
 import { createDatabasePool, migrateDatabase } from "./db.js";
 import { attachRealtimeServer } from "./realtime.js";
@@ -32,7 +33,14 @@ async function main(): Promise<void> {
     const users = new PostgresUserStore(pool);
     await ensureInitialAdmin(users, config.initialAdmin);
 
-    const rooms = new RoomService(90_000, 200, 700);
+    const rooms = new RoomService(
+      90_000,
+      200,
+      700,
+      [1_000, 5_000],
+      createBotDecisionRegistry(config),
+      config.doudizhuLlm?.maximumPromptTokensPerGame ?? 3_500,
+    );
     const savedRooms = await loadRoomSnapshot(pool);
     if (savedRooms.kind === "valid") {
       try {

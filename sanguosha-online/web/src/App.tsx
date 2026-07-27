@@ -16,6 +16,7 @@ import { realtime } from './realtime';
 import type {
   AuthUser,
   BotIntelligence,
+  BotMode,
   FullGeneralId,
   AnyGameAction,
   GameLogEntry,
@@ -196,9 +197,10 @@ export default function App() {
     ruleConfig: RoomRuleConfig | undefined,
     botIntelligence: BotIntelligence,
     gameType: GameType,
+    botMode: BotMode,
   ) => {
     try {
-      const created = await api.createRoom(name, maxPlayers, ruleConfig, botIntelligence, gameType);
+      const created = await api.createRoom(name, maxPlayers, ruleConfig, botIntelligence, gameType, botMode);
       setRoom(created);
       setWorkspaceView('lobby');
       toast.success('房间已创建');

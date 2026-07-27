@@ -21,6 +21,8 @@ describe('server payload adapters', () => {
     expect(room.hostId).toBe('user-1');
     expect(room.hostName).toBe('玄德');
       expect(room.botIntelligence).toBe(3);
+      expect(room.botMode).toBe('rules');
+      expect(room.llmBot).toMatchObject({ available: false, usage: { calls: 0 } });
       expect(room.chatMessages).toEqual([]);
       expect(room.members[0]).toMatchObject({ userId: 'user-1', isHost: true, online: true });
     expect(room.members[1]).toMatchObject({ userId: 'user-2', isHost: false, online: false });

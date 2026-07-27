@@ -43,6 +43,7 @@ export const createRoomSchema = z.object({
   gameType: z.enum(["sanguosha", "gouji", "doudizhu"]).optional(),
   maxPlayers: z.number().int().min(2).max(10).optional(),
   botIntelligence: botIntelligenceSchema.default(DEFAULT_BOT_INTELLIGENCE),
+  botMode: z.enum(["rules", "llm"]).default("rules"),
   ruleConfig: roomRuleConfigSchema.optional(),
 }).strict().superRefine((input, context) => {
   if (input.gameType === "gouji" && input.maxPlayers !== undefined && input.maxPlayers !== 6) {
@@ -57,6 +58,13 @@ export const createRoomSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["maxPlayers"],
       message: "斗地主固定为 3 人",
+    });
+  }
+  if (input.botMode === "llm" && input.gameType !== "doudizhu") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["botMode"],
+      message: "LLM bot mode is currently available only for Dou Dizhu rooms",
     });
   }
 });

@@ -33,6 +33,11 @@ function roomWith(overrides: Partial<RoomDetail> = {}): RoomDetail {
     hostName: '房主',
     playerCount: 2,
     maxPlayers: 5,
+    botMode: 'rules',
+    llmBot: {
+      available: false,
+      usage: { calls: 0, promptTokens: 0, completionTokens: 0, fallbacks: 0 },
+    },
     chatMessages: [],
     members: [
       { userId: 'user-1', username: 'owner', displayName: '房主', seat: 0, ready: true, online: true, isHost: true },

@@ -48,9 +48,14 @@ describe("room creation and draft schemas", () => {
       name: "风包选将",
       maxPlayers: 8,
       botIntelligence: 3,
+      botMode: "rules",
       ruleConfig,
     });
-    expect(createRoomSchema.parse({ name: "默认房" })).toEqual({ name: "默认房", botIntelligence: 3 });
+    expect(createRoomSchema.parse({ name: "默认房" })).toEqual({
+      name: "默认房",
+      botIntelligence: 3,
+      botMode: "rules",
+    });
     expect(createRoomSchema.parse({ name: "军师房", botIntelligence: 7 })).toMatchObject({ botIntelligence: 7 });
     expect(createRoomSchema.safeParse({ name: "越界房", botIntelligence: 8 }).success).toBe(false);
     expect(createRoomSchema.parse({ name: "够级房", gameType: "gouji", maxPlayers: 6 })).toMatchObject({
@@ -65,7 +70,18 @@ describe("room creation and draft schemas", () => {
       gameType: "doudizhu",
       maxPlayers: 3,
       botIntelligence: 3,
+      botMode: "rules",
     });
+    expect(createRoomSchema.parse({
+      name: "大模型斗地主",
+      gameType: "doudizhu",
+      botMode: "llm",
+    })).toMatchObject({ botMode: "llm" });
+    expect(createRoomSchema.safeParse({
+      name: "未开放的大模型三国杀",
+      gameType: "sanguosha",
+      botMode: "llm",
+    }).success).toBe(false);
     expect(createRoomSchema.safeParse({ name: "人数错误", gameType: "doudizhu", maxPlayers: 4 }).success).toBe(false);
 
     expect(createRoomSchema.safeParse({ name: "房间", injected: true }).success).toBe(false);

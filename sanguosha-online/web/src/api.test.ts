@@ -65,7 +65,7 @@ describe('room draft API', () => {
     // The lobby can still hold preserved Sanguosha fields after switching the
     // game selector. Gouji requests must never forward that unrelated config.
     const gouji = await api.createRoom('够级房', 6, ruleConfig, 5, 'gouji');
-    const doudizhu = await api.createRoom('斗地主房', 3, ruleConfig, 4, 'doudizhu');
+    const doudizhu = await api.createRoom('斗地主房', 3, ruleConfig, 4, 'doudizhu', 'llm');
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: '默认规则', maxPlayers: 5, botIntelligence: 3 });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ name: '风火选将', maxPlayers: 5, botIntelligence: 7, ruleConfig });
@@ -80,6 +80,7 @@ describe('room draft API', () => {
       maxPlayers: 3,
       botIntelligence: 4,
       gameType: 'doudizhu',
+      botMode: 'llm',
     });
     expect(configured.ruleConfig).toEqual(ruleConfig);
     expect(gouji).toMatchObject({ gameType: 'gouji', maxPlayers: 6 });

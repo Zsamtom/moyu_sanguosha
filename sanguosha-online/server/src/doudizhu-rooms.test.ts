@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chooseDoudizhuBotAction, type DoudizhuGameState } from "@sanguosha/shared";
 import type { PublicUser } from "./users.js";
+import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import { RoomService } from "./rooms.js";
 
 function user(id: string, username: string): PublicUser {
@@ -55,7 +56,11 @@ describe("Doudizhu rooms", () => {
   it("restores and continues an authoritative Doudizhu game", () => {
     const rooms = new RoomService(90_000, 200, 0, [0, 0]);
     rooms.setConnected(owner.id, true);
-    const created = rooms.create(owner, { name: "可恢复斗地主", gameType: "doudizhu" });
+    const created = rooms.create(owner, {
+      name: "可恢复斗地主",
+      gameType: "doudizhu",
+      botMode: "llm",
+    });
     rooms.addBot(created.id, owner.id);
     rooms.addBot(created.id, owner.id);
     rooms.setReady(created.id, owner.id, true);
@@ -67,6 +72,11 @@ describe("Doudizhu rooms", () => {
       gameType: "doudizhu",
       maxPlayers: 3,
       playerCount: 3,
+      botMode: "llm",
+      llmBot: {
+        available: false,
+        usage: { calls: 0, promptTokens: 0, completionTokens: 0, fallbacks: 0 },
+      },
     });
     const before = restored.getGameView(created.id, owner.id);
     const saved = restored.exportSnapshot().rooms.find((room) => room.id === created.id)?.game;
@@ -160,5 +170,96 @@ describe("Doudizhu rooms", () => {
     const nextGame = rooms.getGameView(created.id, owner.id);
     if (!nextGame || !("kind" in nextGame) || nextGame.kind !== "doudizhu") throw new Error("Missing rematch");
     expect(nextGame.players.map((player) => player.beans)).toEqual(settledBalances);
+  });
+
+  it("uses the optional asynchronous decision provider and records token usage", async () => {
+    const decide = vi.fn(async () => ({
+      candidateIndex: 0,
+      usage: { promptTokens: 73, completionTokens: 4 },
+    }));
+    const registry = new BotDecisionRegistry().register("doudizhu", { decide });
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry, 3_500);
+    rooms.setConnected(owner.id, true);
+    const created = rooms.create(owner, {
+      name: "大模型斗地主",
+      gameType: "doudizhu",
+      botIntelligence: 7,
+      botMode: "llm",
+    });
+    rooms.addBot(created.id, owner.id);
+    rooms.addBot(created.id, owner.id);
+    rooms.setReady(created.id, owner.id, true);
+    rooms.start(created.id, owner.id);
+
+    for (let step = 0; step < 3 && decide.mock.calls.length === 0; step += 1) {
+      const view = rooms.getGameView(created.id, owner.id);
+      const saved = rooms.exportSnapshot().rooms.find((room) => room.id === created.id)?.game;
+      if (
+        !view || !("kind" in view) || view.kind !== "doudizhu" ||
+        !saved || !("kind" in saved) || saved.kind !== "doudizhu"
+      ) throw new Error("Missing Doudizhu state");
+      if (view.currentPlayerId !== owner.id) break;
+      rooms.applyAction(created.id, owner.id, {
+        expectedRevision: view.revision,
+        expectedPromptId: view.actionPromptId,
+        action: chooseDoudizhuBotAction(saved, owner.id, 7),
+      });
+      await Promise.resolve();
+    }
+
+    await vi.waitFor(() => expect(decide).toHaveBeenCalled());
+    await vi.waitFor(() => {
+      const llmBot = rooms.get(created.id)?.llmBot;
+      expect(llmBot?.available).toBe(true);
+      expect(llmBot?.usage.calls).toBe(decide.mock.calls.length);
+      expect(llmBot?.usage.promptTokens).toBeGreaterThanOrEqual(73 * decide.mock.calls.length);
+      expect(llmBot?.usage.completionTokens).toBe(4 * decide.mock.calls.length);
+      expect(llmBot?.usage.fallbacks).toBe(0);
+    });
+  });
+
+  it("falls back to the rule bot when the optional provider fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const decide = vi.fn(async () => {
+      throw new Error("provider unavailable");
+    });
+    const registry = new BotDecisionRegistry().register("doudizhu", { decide });
+    const rooms = new RoomService(90_000, 200, 0, [0, 0], registry, 3_500);
+    rooms.setConnected(owner.id, true);
+    const created = rooms.create(owner, {
+      name: "自动回退",
+      gameType: "doudizhu",
+      botIntelligence: 7,
+      botMode: "llm",
+    });
+    rooms.addBot(created.id, owner.id);
+    rooms.addBot(created.id, owner.id);
+    rooms.setReady(created.id, owner.id, true);
+    rooms.start(created.id, owner.id);
+
+    for (let step = 0; step < 3 && decide.mock.calls.length === 0; step += 1) {
+      const view = rooms.getGameView(created.id, owner.id);
+      const saved = rooms.exportSnapshot().rooms.find((room) => room.id === created.id)?.game;
+      if (
+        !view || !("kind" in view) || view.kind !== "doudizhu" ||
+        !saved || !("kind" in saved) || saved.kind !== "doudizhu"
+      ) throw new Error("Missing Doudizhu state");
+      if (view.currentPlayerId !== owner.id) break;
+      rooms.applyAction(created.id, owner.id, {
+        expectedRevision: view.revision,
+        expectedPromptId: view.actionPromptId,
+        action: chooseDoudizhuBotAction(saved, owner.id, 7),
+      });
+      await Promise.resolve();
+    }
+
+    await vi.waitFor(() => expect(decide).toHaveBeenCalled());
+    await vi.waitFor(() => {
+      expect(rooms.get(created.id)?.llmBot.usage.fallbacks).toBeGreaterThan(0);
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("using rule fallback"),
+      expect.any(Error),
+    );
   });
 });

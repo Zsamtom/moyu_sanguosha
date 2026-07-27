@@ -173,4 +173,21 @@ describe("Doudizhu authoritative engine", () => {
     expect(game.winner?.beanStake).toBe(game.baseScore * game.multiplier * 100);
     expect(game.winner?.settlements).toHaveLength(3);
   });
+
+  it("keeps every intelligence level inside the authoritative action boundary", () => {
+    for (const intelligence of [1, 2, 3, 4, 5, 6, 7] as const) {
+      let game = createDoudizhuGame({
+        players,
+        seed: `${intelligence}`.repeat(64).slice(0, 64),
+      });
+      for (let step = 0; step < 120 && game.status === "playing"; step += 1) {
+        const beforeRevision = game.revision;
+        game = applyDoudizhuAction(
+          game,
+          chooseDoudizhuBotAction(game, game.currentPlayerId, intelligence),
+        );
+        expect(game.revision).toBe(beforeRevision + 1);
+      }
+    }
+  });
 });

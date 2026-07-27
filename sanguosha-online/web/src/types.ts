@@ -104,6 +104,7 @@ export interface GeneralDraftView {
 
 export type RoomStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
 export type GameType = 'sanguosha' | 'gouji' | 'doudizhu';
+export type BotMode = 'rules' | 'llm';
 
 export interface RoomSummary {
   id: string;
@@ -140,6 +141,16 @@ export interface RoomChatMessage {
 export interface RoomDetail extends RoomSummary {
   members: RoomMember[];
   botIntelligence?: BotIntelligence;
+  botMode: BotMode;
+  llmBot: {
+    available: boolean;
+    usage: {
+      calls: number;
+      promptTokens: number;
+      completionTokens: number;
+      fallbacks: number;
+    };
+  };
   ruleConfig?: RoomRuleConfig;
   chatMessages: RoomChatMessage[];
   /** Private projection for the caller; absent from public room summaries. */
@@ -1442,6 +1453,20 @@ export function normalizeRoomDetail(room: Partial<RoomDetail> & Record<string, u
     members,
     playerCount: members.length,
     botIntelligence,
+    botMode: room.botMode === 'llm' ? 'llm' : 'rules',
+    llmBot: {
+      available: Boolean(
+        room.llmBot &&
+        typeof room.llmBot === 'object' &&
+        (room.llmBot as { available?: unknown }).available,
+      ),
+      usage: {
+        calls: Number((room.llmBot as { usage?: { calls?: unknown } } | undefined)?.usage?.calls ?? 0),
+        promptTokens: Number((room.llmBot as { usage?: { promptTokens?: unknown } } | undefined)?.usage?.promptTokens ?? 0),
+        completionTokens: Number((room.llmBot as { usage?: { completionTokens?: unknown } } | undefined)?.usage?.completionTokens ?? 0),
+        fallbacks: Number((room.llmBot as { usage?: { fallbacks?: unknown } } | undefined)?.usage?.fallbacks ?? 0),
+      },
+    },
     chatMessages,
     ...(ruleConfig ? { ruleConfig } : {}),
     ...(draft ? { draft } : {}),

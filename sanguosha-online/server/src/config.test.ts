@@ -35,3 +35,37 @@ describe("build metadata configuration", () => {
     expect(() => loadConfig({ ...requiredEnvironment, APP_VERSION: "release with spaces" })).toThrow();
   });
 });
+
+describe("optional Dou Dizhu LLM bot configuration", () => {
+  it("keeps the provider disabled when no credentials are configured", () => {
+    expect(loadConfig(requiredEnvironment).doudizhuLlm).toBeUndefined();
+  });
+
+  it("loads a complete OpenAI-compatible provider configuration", () => {
+    const config = loadConfig({
+      ...requiredEnvironment,
+      DOUDIZHU_LLM_ENDPOINT: "https://example.test/v1/chat/completions",
+      DOUDIZHU_LLM_API_KEY: "secret",
+      DOUDIZHU_LLM_MODEL: "small-model",
+      DOUDIZHU_LLM_TIMEOUT_MS: "2500",
+      DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: "12",
+      DOUDIZHU_LLM_MAX_PROMPT_TOKENS_PER_GAME: "1200",
+    });
+
+    expect(config.doudizhuLlm).toEqual({
+      endpoint: "https://example.test/v1/chat/completions",
+      apiKey: "secret",
+      model: "small-model",
+      timeoutMs: 2500,
+      maximumOutputTokens: 12,
+      maximumPromptTokensPerGame: 1200,
+    });
+  });
+
+  it("rejects a partially configured provider", () => {
+    expect(() => loadConfig({
+      ...requiredEnvironment,
+      DOUDIZHU_LLM_ENDPOINT: "https://example.test/v1/chat/completions",
+    })).toThrow(/configured together/);
+  });
+});
