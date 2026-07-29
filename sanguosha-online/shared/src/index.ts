@@ -4,6 +4,7 @@ export * from "./doudizhu.js";
 export * from "./splendor.js";
 export * from "./digit-bomb.js";
 export * from "./number-connect.js";
+export * from "./farm.js";
 export {
   ALL_GENERALS,
   DEFAULT_GENERALS,

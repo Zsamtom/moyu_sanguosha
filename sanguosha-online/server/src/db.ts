@@ -58,6 +58,12 @@ export async function migrateDatabase(pool: Pool): Promise<void> {
       reason TEXT NOT NULL,
       quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS farm_state (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      state JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 }
 

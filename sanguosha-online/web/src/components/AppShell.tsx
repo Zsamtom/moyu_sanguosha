@@ -3,7 +3,7 @@ import { GAME_REGISTRY } from '../games/registry';
 import type { AuthUser } from '../types';
 import { Brand } from './Brand';
 
-type ShellView = 'lobby' | 'reader' | 'admin' | 'room' | 'game';
+type ShellView = 'lobby' | 'farm' | 'reader' | 'admin' | 'room' | 'game';
 
 interface AppShellProps {
   user: AuthUser;
@@ -11,6 +11,7 @@ interface AppShellProps {
   connected: boolean;
   children: React.ReactNode;
   onLobby: () => void;
+  onFarm: () => void;
   onReader: () => void;
   onAdmin: () => void;
   onChangePassword: () => void;
@@ -23,6 +24,7 @@ export function AppShell({
   connected,
   children,
   onLobby,
+  onFarm,
   onReader,
   onAdmin,
   onChangePassword,
@@ -30,7 +32,7 @@ export function AppShell({
 }: AppShellProps) {
   const lockedInRoom = view === 'room' || view === 'game';
   return (
-    <Layout className="app-layout">
+    <Layout className={`app-layout${view === 'farm' ? ' app-layout--farm' : ''}`}>
       {!lockedInRoom && <header className="app-header">
         <Brand compact />
         <nav className="app-nav" aria-label="主导航">
@@ -47,6 +49,9 @@ export function AppShell({
           </section>
           <section className="app-nav__section" aria-labelledby="function-navigation">
             <span id="function-navigation" className="app-nav__label">功能</span>
+            <Button aria-current={view === 'farm' ? 'page' : undefined} type={view === 'farm' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onFarm}>
+              农场
+            </Button>
             <Button aria-current={view === 'reader' ? 'page' : undefined} type={view === 'reader' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onReader}>
               TXT 小说阅读
             </Button>

@@ -4,6 +4,7 @@ import { createApplication } from "./app.js";
 import { createBotDecisionRegistry } from "./bots/index.js";
 import { loadConfig } from "./config.js";
 import { createDatabasePool, migrateDatabase } from "./db.js";
+import { FarmService, PostgresFarmStateStore } from "./farm-service.js";
 import {
   LlmSettingsService,
   PostgresLlmSettingsStore,
@@ -45,6 +46,10 @@ async function main(): Promise<void> {
       config.doudizhuLlm,
     );
     await llmSettings.initialize();
+    const farm = new FarmService(
+      new PostgresFarmStateStore(pool),
+      botDecisions,
+    );
     const rooms = new RoomService(
       90_000,
       200,
@@ -82,6 +87,7 @@ async function main(): Promise<void> {
       rooms,
       securityEvents,
       llmSettings,
+      farm,
     });
     const httpServer = createServer(app);
     const io = attachRealtimeServer({

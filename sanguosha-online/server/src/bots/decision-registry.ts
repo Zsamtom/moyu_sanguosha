@@ -1,4 +1,4 @@
-export type BotGameKind = "sanguosha" | "gouji" | "doudizhu";
+export type BotGameKind = "sanguosha" | "gouji" | "doudizhu" | "farm";
 
 export interface BotDecisionUsage {
   readonly promptTokens: number;

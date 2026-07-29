@@ -7,6 +7,85 @@ import {
 } from './gameCards';
 import { activeSkillDescriptions, generalSkillNames } from './interactionRules';
 
+export type FarmCropId = 'wheat' | 'tomato' | 'pumpkin';
+
+export interface FarmPlot {
+  cropId: FarmCropId | null;
+  growth: number;
+  watered: boolean;
+}
+
+export interface FarmPlayerState {
+  id: string;
+  seat: number;
+  name: string;
+  coins: number;
+  seeds: Record<FarmCropId, number>;
+  produce: Record<FarmCropId, number>;
+  plots: FarmPlot[];
+  totalRevenue: number;
+  actionsRemaining: number;
+}
+
+export interface FarmMarketQuote {
+  cropId: FarmCropId;
+  price: number;
+  previousPrice: number;
+  trend: -1 | 0 | 1;
+}
+
+export interface FarmGameView {
+  kind: 'farm';
+  version: 1;
+  revision: number;
+  actionPromptId: string;
+  status: 'playing' | 'finished';
+  day: number;
+  finalDay: number;
+  currentPlayerId: string | null;
+  players: FarmPlayerState[];
+  market: Record<FarmCropId, FarmMarketQuote>;
+  marketEvent: {
+    title: string;
+    summary: string;
+    tone: 'neutral' | 'surge' | 'crash' | 'volatile';
+    source: 'rules' | 'llm';
+  };
+  logs: Array<{
+    id: number;
+    day: number;
+    playerId: string | null;
+    text: string;
+  }>;
+  winner: {
+    playerIds: string[];
+    reason: 'final_day' | 'forfeit';
+    rankings: Array<{
+      playerId: string;
+      netWorth: number;
+      coins: number;
+      revenue: number;
+    }>;
+  } | null;
+  prompt:
+    | { type: 'act'; playerId: string; actionsRemaining: number }
+    | { type: 'waiting'; playerId: string }
+    | { type: 'finished'; playerId: null };
+}
+
+export type FarmClientAction =
+  | { type: 'farm_buy_seed'; cropId: FarmCropId; quantity: number }
+  | { type: 'farm_plant'; cropId: FarmCropId; plotIndex: number }
+  | { type: 'farm_water' }
+  | { type: 'farm_harvest'; plotIndex: number }
+  | { type: 'farm_sell'; cropId: FarmCropId; quantity: number }
+  | { type: 'farm_end_turn' };
+
+export interface FarmSnapshot {
+  farm: FarmGameView;
+  marketDirectorAvailable: boolean;
+}
+
 export type UserRole = 'admin' | 'player';
 
 export interface AuthUser {

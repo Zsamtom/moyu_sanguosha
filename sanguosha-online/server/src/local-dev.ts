@@ -6,6 +6,7 @@ import type { Pool } from "pg";
 import { createApplication } from "./app.js";
 import type { AppConfig } from "./config.js";
 import { createBotDecisionRegistry } from "./bots/index.js";
+import { FarmService, MemoryFarmStateStore } from "./farm-service.js";
 import {
   LlmSettingsService,
   MemoryLlmSettingsStore,
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
     config.sessionSecret,
   );
   await llmSettings.initialize();
+  const farm = new FarmService(new MemoryFarmStateStore(), botDecisions);
   const rooms = new RoomService(
     90_000,
     200,
@@ -184,6 +186,7 @@ async function main(): Promise<void> {
     rooms,
     securityEvents,
     llmSettings,
+    farm,
   });
   const httpServer = createServer(app);
   const io = attachRealtimeServer({

@@ -171,4 +171,4 @@ pnpm check
 
 ## 许可与来源
 
-三国杀规则实现参考 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)，原项目与本项目均按 MIT License 使用和分发。够级规则与交互参考 [alun-430/gouji](https://github.com/alun-430/gouji)，在现有权威引擎、房间与 Socket.IO 协议中接入，未引入其 MongoDB、Redis 服务或美术素材。璀璨宝石规则与卡牌数据参考 [jrbarronumd/Splendor](https://github.com/jrbarronumd/Splendor)；宝可梦版规则、卡牌数据和本地图片素材参考 [xiaoruanyo/splendor-pokemon](https://github.com/xiaoruanyo/splendor-pokemon)。斗地主、数字炸弹与数字连连看采用本项目原生的 TypeScript 权威规则模块。当前按私人使用场景接入；公开运营前仍需自行确认游戏名称、美术及其他第三方素材的授权。
+三国杀规则实现参考 [wzk1015/sanguosha](https://github.com/wzk1015/sanguosha)，原项目与本项目均按 MIT License 使用和分发。够级规则与交互参考 [alun-430/gouji](https://github.com/alun-430/gouji)，在现有权威引擎、房间与 Socket.IO 协议中接入，未引入其 MongoDB、Redis 服务或美术素材。经典璀璨宝石的规则、卡牌数据、发展卡、贵族与宝石素材直接来自 [jrbarronumd/Splendor](https://github.com/jrbarronumd/Splendor)；宝可梦版规则、卡牌数据、宝可梦图片与 UI 素材直接来自 [xiaoruanyo/splendor-pokemon](https://github.com/xiaoruanyo/splendor-pokemon)，未再生成替代素材。具体文件和固定上游提交见 [素材来源清单](./web/public/assets/SPLENDOR_ASSET_SOURCES.md)。斗地主、数字炸弹与数字连连看采用本项目原生的 TypeScript 权威规则模块。当前按私人使用场景接入；公开运营前仍需自行确认游戏名称、美术及其他第三方素材的授权。

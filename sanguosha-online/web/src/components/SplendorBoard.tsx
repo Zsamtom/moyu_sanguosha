@@ -58,6 +58,27 @@ const POKEMON_SPRITES: Record<string, number> = {
   隆隆岩: 76, 火焰鸟: 146, 急冻鸟: 144, 闪电鸟: 145, 卡比兽: 143,
   拉普拉斯: 131, 超梦: 150, 梦幻: 151, 洛奇亚: 249, 凤王: 250, 烈空坐: 384,
 };
+const CLASSIC_DECK_NAMES: Partial<Record<SplendorCardLevel, string>> = {
+  1: 'green',
+  2: 'yellow',
+  3: 'blue',
+};
+const CLASSIC_RESOURCE_ARTWORK: Partial<Record<SplendorColor, string>> = {
+  white: '/assets/splendor-classic/gems/whiteGem.jpg',
+  blue: '/assets/splendor-classic/gems/blueGem.jpg',
+  green: '/assets/splendor-classic/gems/greenGem.jpg',
+  red: '/assets/splendor-classic/gems/redGem.jpg',
+  black: '/assets/splendor-classic/gems/blackGem.jpg',
+  gold: '/assets/splendor-classic/gems/goldGem.jpg',
+};
+const POKEMON_RESOURCE_ARTWORK: Partial<Record<SplendorColor, string>> = {
+  red: '/assets/splendor-pokemon/ui/token-red.png',
+  blue: '/assets/splendor-pokemon/ui/token-blue.png',
+  black: '/assets/splendor-pokemon/ui/token-black.png',
+  pink: '/assets/splendor-pokemon/ui/token-pink.png',
+  yellow: '/assets/splendor-pokemon/ui/token-yellow.png',
+  purple: '/assets/splendor-pokemon/ui/token-purple.png',
+};
 
 function countResources(resources: SplendorResourceMap): number {
   return Object.values(resources).reduce((total, value) => total + (value ?? 0), 0);
@@ -75,6 +96,36 @@ export function shouldShowNobleGallery(nobles: readonly SplendorNoble[]): boolea
   return nobles.length > 0;
 }
 
+export function splendorResourceArtwork(
+  color: SplendorColor,
+  pokemon: boolean,
+): string | undefined {
+  return (pokemon ? POKEMON_RESOURCE_ARTWORK : CLASSIC_RESOURCE_ARTWORK)[color];
+}
+
+export function classicCardArtwork(card: SplendorCard): string | undefined {
+  const match = /^classic-(1|2|3)-(\d{2})$/.exec(card.id);
+  if (!match || Number(match[1]) !== card.level) return undefined;
+  const deck = CLASSIC_DECK_NAMES[card.level];
+  return deck ? `/assets/splendor-classic/cards/${deck}-${match[2]}.jpg` : undefined;
+}
+
+export function classicNobleArtwork(noble: SplendorNoble): string | undefined {
+  const match = /^classic-noble-(\d{1,2})$/.exec(noble.id);
+  const serial = Number(match?.[1]);
+  if (!Number.isInteger(serial) || serial < 1 || serial > 10) return undefined;
+  return `/assets/splendor-classic/nobles/nobles-${String(serial).padStart(2, '0')}.jpg`;
+}
+
+export function splendorDeckArtwork(
+  level: SplendorCardLevel,
+  pokemon: boolean,
+): string | undefined {
+  if (pokemon) return '/assets/splendor-pokemon/ui/card-back.png';
+  const deck = CLASSIC_DECK_NAMES[level];
+  return deck ? `/assets/splendor-classic/cards/${deck}-00.jpg` : undefined;
+}
+
 function Resource({
   color,
   count,
@@ -87,13 +138,14 @@ function Resource({
   compact?: boolean;
 }) {
   const label = splendorResourceLabel(color, pokemon);
+  const artwork = splendorResourceArtwork(color, pokemon);
   return (
     <span
       className={`splendor-resource splendor-resource--${color}${pokemon ? ' splendor-resource--ball' : ''}${compact ? ' splendor-resource--compact' : ''}`}
       title={`${label} ${count}`}
       aria-label={`${label} ${count}`}
     >
-      <i aria-hidden="true" />
+      {artwork ? <img src={artwork} alt="" aria-hidden="true" draggable={false} /> : <i aria-hidden="true" />}
       <b>{count}</b>
     </span>
   );
@@ -151,39 +203,43 @@ function DevelopmentCard({
   onReserve?: () => void;
   compact?: boolean;
 }) {
-  const sprite = pokemon ? pokemonSprite(card.name) : undefined;
+  const artwork = pokemon ? pokemonSprite(card.name) : classicCardArtwork(card);
   const displayName = splendorCardDisplayName(card, pokemon);
   return (
-    <article className={`splendor-card splendor-card--${String(card.level)} splendor-card--${card.bonus}${compact ? ' splendor-card--compact' : ''}`}>
-      <div className="splendor-card__top">
-        <span className="splendor-card__level">{levelLabel(card.level, pokemon)}</span>
-        <strong className="splendor-card__points">{card.points}<small>声望</small></strong>
-      </div>
-      {sprite ? (
-        <div className="splendor-card__art">
-          <img src={sprite} alt={displayName} loading="lazy" />
+    <article className={`splendor-card splendor-card--${String(card.level)} splendor-card--${card.bonus}${pokemon ? ' splendor-card--pokemon' : ' splendor-card--classic-art'}${compact ? ' splendor-card--compact' : ''}`}>
+      {pokemon && (
+        <div className="splendor-card__top">
+          <span className="splendor-card__level">{levelLabel(card.level, pokemon)}</span>
+          <strong className="splendor-card__points">{card.points}<small>声望</small></strong>
+        </div>
+      )}
+      {artwork ? (
+        <div className={`splendor-card__art${pokemon ? '' : ' splendor-card__art--classic'}`}>
+          <img src={artwork} alt={`${displayName}，${card.points} 声望`} loading="lazy" draggable={false} />
         </div>
       ) : (
         <div className="splendor-card__crest" aria-hidden="true"><i /></div>
       )}
-      <div className="splendor-card__body">
-        <strong>{displayName}</strong>
-        {pokemon && card.evolutionOf && (
-          <div className="splendor-card__evolution">
-            <span>由 {card.evolutionOf} 进化</span>
-            {card.evolutionReq && (
-              <span>
-                <small>进化需求</small>
-                <ResourceList resources={card.evolutionReq} colors={colors} pokemon compact />
-              </span>
-            )}
+      {pokemon && (
+        <div className="splendor-card__body">
+          <strong>{displayName}</strong>
+          {card.evolutionOf && (
+            <div className="splendor-card__evolution">
+              <span>由 {card.evolutionOf} 进化</span>
+              {card.evolutionReq && (
+                <span>
+                  <small>进化需求</small>
+                  <ResourceList resources={card.evolutionReq} colors={colors} pokemon compact />
+                </span>
+              )}
+            </div>
+          )}
+          <div className="splendor-card__economy">
+            <Resource color={card.bonus} count={card.bonusCount} pokemon={pokemon} compact />
+            <ResourceList resources={card.cost} colors={colors} pokemon={pokemon} compact />
           </div>
-        )}
-        <div className="splendor-card__economy">
-          <Resource color={card.bonus} count={card.bonusCount} pokemon={pokemon} compact />
-          <ResourceList resources={card.cost} colors={colors} pokemon={pokemon} compact />
         </div>
-      </div>
+      )}
       {(onBuy || onReserve) && (
         <div className="splendor-card__actions">
           {onBuy && <Button size="small" type="primary" disabled={disabled || !canBuy} onClick={onBuy}>购买</Button>}
@@ -195,6 +251,14 @@ function DevelopmentCard({
 }
 
 function NobleTile({ noble, colors, pokemon }: { noble: SplendorNoble; colors: SplendorColor[]; pokemon: boolean }) {
+  const artwork = pokemon ? undefined : classicNobleArtwork(noble);
+  if (artwork) {
+    return (
+      <article className="splendor-noble splendor-noble--source-art">
+        <img src={artwork} alt={`贵族，${noble.points} 声望`} loading="lazy" draggable={false} />
+      </article>
+    );
+  }
   return (
     <article className="splendor-noble">
       <span>{pokemon ? '荣耀徽章' : '贵族莅临'}</span>
@@ -297,8 +361,12 @@ export function SplendorBoard({ game, userId, connected, onAction, onExit }: Spl
     <main className={`splendor-board ${pokemon ? 'splendor-board--pokemon' : 'splendor-board--classic'}`}>
       <header className="splendor-board__header">
         <div>
-          <span className="splendor-eyebrow">{pokemon ? 'TRAINER ARENA' : 'THE GRAND SALON'}</span>
-          <h1>{pokemon ? '璀璨宝石宝可梦' : '璀璨宝石'}</h1>
+          <img
+            className={`splendor-board__brand splendor-board__brand--${pokemon ? 'pokemon' : 'classic'}`}
+            src={pokemon ? '/assets/splendor-pokemon/ui/logo.png' : '/assets/splendor-classic/banner.jpg'}
+            alt={pokemon ? '璀璨宝石宝可梦' : 'Splendor 璀璨宝石'}
+            draggable={false}
+          />
           <p>{game.finalRoundTriggered ? '最终轮已经开始，每一步都将决定冠军。' : `当前由 ${currentPlayer?.name ?? '玩家'} 行动`}</p>
         </div>
         <div className="splendor-board__header-actions">
@@ -361,6 +429,7 @@ export function SplendorBoard({ game, userId, connected, onAction, onExit }: Spl
           {orderedLevels.map((level) => {
             const cards = game.market[String(level)] ?? [];
             const deckCount = game.deckCounts[String(level)] ?? 0;
+            const deckArtwork = splendorDeckArtwork(level, pokemon);
             if (!cards.length && !deckCount) return null;
             return (
               <div className={`splendor-market-row splendor-market-row--${String(level)}`} key={String(level)}>
@@ -371,6 +440,7 @@ export function SplendorBoard({ game, userId, connected, onAction, onExit }: Spl
                   onClick={() => void submit({ type: 'splendor_reserve', playerId: userId, level })}
                   title={mainPrompt?.reserveDeckLevels.includes(level) ? '从该牌堆暗抽预留' : '当前不能从该牌堆预留'}
                 >
+                  {deckArtwork && <img src={deckArtwork} alt="" aria-hidden="true" draggable={false} />}
                   <span>{levelLabel(level, pokemon)}</span>
                   <strong>{deckCount}</strong>
                   <small>暗抽预留</small>

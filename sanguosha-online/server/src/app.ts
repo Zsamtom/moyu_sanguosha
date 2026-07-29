@@ -7,10 +7,12 @@ import type { Pool } from "pg";
 import type { AppConfig } from "./config.js";
 import { checkDatabase } from "./db.js";
 import { errorHandler, HttpError, notFoundHandler } from "./errors.js";
+import type { FarmService } from "./farm-service.js";
 import type { LlmSettingsService } from "./llm-settings.js";
 import { requireAuth, requirePasswordChangeComplete } from "./middleware/auth.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createFarmRouter } from "./routes/farm.js";
 import { createRoomsRouter } from "./routes/rooms.js";
 import type { RoomService } from "./rooms.js";
 import type { SecurityEvents } from "./security-events.js";
@@ -24,6 +26,7 @@ export function createApplication(options: {
   rooms: RoomService;
   securityEvents: SecurityEvents;
   llmSettings?: LlmSettingsService;
+  farm?: FarmService;
 }): Express {
   const {
     config,
@@ -33,6 +36,7 @@ export function createApplication(options: {
     rooms,
     securityEvents,
     llmSettings,
+    farm,
   } = options;
   const app = express();
   app.disable("x-powered-by");
@@ -69,6 +73,9 @@ export function createApplication(options: {
 
   app.use("/api/auth", createAuthRouter(users, securityEvents, rooms));
   app.use("/api/admin", createAdminRouter(users, securityEvents, rooms, llmSettings));
+  if (farm) {
+    app.use("/api/farm", requireAuth(users), requirePasswordChangeComplete, createFarmRouter(farm));
+  }
   app.use("/api/rooms", requireAuth(users), requirePasswordChangeComplete, createRoomsRouter(users, rooms));
 
   const webDist = fileURLToPath(new URL("../../web/dist/", import.meta.url));

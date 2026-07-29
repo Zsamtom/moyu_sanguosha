@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classicCardArtwork,
+  classicNobleArtwork,
   pokemonSprite,
   shouldShowNobleGallery,
   splendorCardDisplayName,
+  splendorDeckArtwork,
+  splendorResourceArtwork,
   splendorResourceLabel,
 } from './SplendorBoard';
 import type { SplendorCard, SplendorColor } from '../types';
@@ -16,6 +20,32 @@ describe('Splendor Pokémon artwork', () => {
 
   it('does not invent artwork for an unknown server card', () => {
     expect(pokemonSprite('未知宝可梦')).toBeUndefined();
+  });
+
+  it('maps classic cards, nobles, decks, and gems to upstream artwork', () => {
+    const card: SplendorCard = {
+      id: 'classic-1-01',
+      name: '1级black发展卡01',
+      level: 1,
+      points: 1,
+      cost: { blue: 4 },
+      bonus: 'black',
+      bonusCount: 1,
+    };
+    expect(classicCardArtwork(card)).toBe('/assets/splendor-classic/cards/green-01.jpg');
+    expect(classicCardArtwork({ ...card, id: 'classic-2-01' })).toBeUndefined();
+    expect(classicNobleArtwork({
+      id: 'classic-noble-10',
+      points: 3,
+      requirement: { blue: 3, green: 3, red: 3 },
+    })).toBe('/assets/splendor-classic/nobles/nobles-10.jpg');
+    expect(splendorDeckArtwork(3, false)).toBe('/assets/splendor-classic/cards/blue-00.jpg');
+    expect(splendorResourceArtwork('gold', false)).toBe('/assets/splendor-classic/gems/goldGem.jpg');
+  });
+
+  it('maps Pokémon table pieces to the upstream UI assets', () => {
+    expect(splendorDeckArtwork('legendary', true)).toBe('/assets/splendor-pokemon/ui/card-back.png');
+    expect(splendorResourceArtwork('purple', true)).toBe('/assets/splendor-pokemon/ui/token-purple.png');
   });
 
   it('uses Poké Ball names for all six Pokémon resources', () => {

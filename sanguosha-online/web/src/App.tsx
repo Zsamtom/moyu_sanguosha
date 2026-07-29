@@ -56,6 +56,8 @@ const SplendorBoard = lazy(() => import('./components/SplendorBoard')
   .then(({ SplendorBoard: component }) => ({ default: component })));
 const NovelReaderScreen = lazy(() => import('./components/NovelReaderScreen')
   .then(({ NovelReaderScreen: component }) => ({ default: component })));
+const FarmScreen = lazy(() => import('./components/FarmScreen')
+  .then(({ FarmScreen: component }) => ({ default: component })));
 
 const llmFallbackMessages: Record<LlmFailureReason, string> = {
   timeout: '大模型请求超时，已提供规则推荐',
@@ -99,7 +101,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [rawGame, setRawGame] = useState<unknown | null>(null);
   const [extraLogs, setExtraLogs] = useState<GameLogEntry[]>([]);
-  const [workspaceView, setWorkspaceView] = useState<'lobby' | 'reader' | 'admin'>('lobby');
+  const [workspaceView, setWorkspaceView] = useState<'lobby' | 'farm' | 'reader' | 'admin'>('lobby');
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
@@ -565,6 +567,7 @@ export default function App() {
         view={view}
         connected={connected}
         onLobby={() => setWorkspaceView('lobby')}
+        onFarm={() => setWorkspaceView('farm')}
         onReader={() => setWorkspaceView('reader')}
         onAdmin={() => setWorkspaceView('admin')}
         onChangePassword={() => {
@@ -633,6 +636,8 @@ export default function App() {
             onChooseGeneral={chooseGeneral}
             onChooseGodFaction={chooseGodFaction}
           />
+        ) : workspaceView === 'farm' ? (
+          <FarmScreen />
         ) : workspaceView === 'reader' ? (
           <NovelReaderScreen />
         ) : workspaceView === 'admin' && user.role === 'admin' ? (

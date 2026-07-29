@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config.js";
 import { BotDecisionRegistry } from "./decision-registry.js";
 import { OpenAiCompatibleDoudizhuProvider } from "./doudizhu-llm.js";
+import { OpenAiCompatibleFarmMarketProvider } from "./farm-market-llm.js";
 import { OpenAiCompatibleSanguoshaProvider } from "./sanguosha-llm.js";
 
 export function createBotDecisionRegistry(config?: AppConfig): BotDecisionRegistry {
@@ -15,7 +16,8 @@ export function createBotDecisionRegistry(config?: AppConfig): BotDecisionRegist
     };
     registry
       .register("doudizhu", new OpenAiCompatibleDoudizhuProvider(providerConfig))
-      .register("sanguosha", new OpenAiCompatibleSanguoshaProvider(providerConfig));
+      .register("sanguosha", new OpenAiCompatibleSanguoshaProvider(providerConfig))
+      .register("farm", new OpenAiCompatibleFarmMarketProvider(providerConfig));
   }
   return registry;
 }

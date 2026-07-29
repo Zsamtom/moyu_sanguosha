@@ -7,6 +7,7 @@ import {
 import type { Pool } from "pg";
 import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import { OpenAiCompatibleDoudizhuProvider } from "./bots/doudizhu-llm.js";
+import { OpenAiCompatibleFarmMarketProvider } from "./bots/farm-market-llm.js";
 import { OpenAiCompatibleSanguoshaProvider } from "./bots/sanguosha-llm.js";
 import type { AppConfig } from "./config.js";
 
@@ -357,6 +358,7 @@ export class LlmSettingsService {
     if (!this.current.enabled || !this.current.apiKey) {
       this.registry.unregister("doudizhu");
       this.registry.unregister("sanguosha");
+      this.registry.unregister("farm");
       return;
     }
     const providerConfig = {
@@ -370,6 +372,7 @@ export class LlmSettingsService {
     };
     this.registry
       .register("doudizhu", new OpenAiCompatibleDoudizhuProvider(providerConfig))
-      .register("sanguosha", new OpenAiCompatibleSanguoshaProvider(providerConfig));
+      .register("sanguosha", new OpenAiCompatibleSanguoshaProvider(providerConfig))
+      .register("farm", new OpenAiCompatibleFarmMarketProvider(providerConfig));
   }
 }

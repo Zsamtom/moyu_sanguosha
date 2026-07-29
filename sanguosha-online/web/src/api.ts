@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmClientAction, FarmSnapshot, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -196,6 +196,24 @@ export const api = {
       { method: 'POST' },
     );
     return 'recommendation' in result ? result.recommendation : result;
+  },
+
+  async getFarm(): Promise<FarmSnapshot> {
+    return request<FarmSnapshot>('/api/farm');
+  },
+
+  async applyFarmAction(
+    expectedRevision: number,
+    action: FarmClientAction,
+  ): Promise<FarmSnapshot> {
+    return request<FarmSnapshot>('/api/farm/actions', {
+      method: 'POST',
+      ...jsonBody({ expectedRevision, action }),
+    });
+  },
+
+  async resetFarm(): Promise<FarmSnapshot> {
+    return request<FarmSnapshot>('/api/farm/reset', { method: 'POST' });
   },
 
   async listUsers(): Promise<AuthUser[]> {
