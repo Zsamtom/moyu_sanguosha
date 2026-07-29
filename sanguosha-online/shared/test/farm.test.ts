@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   FARM_ACTIONS_PER_TURN,
+  FARM_CROPS,
   FARM_FINAL_DAY,
   FarmRuleError,
   applyFarmAction,
   assertRestorableFarmGameState,
+  calculateFarmNetWorth,
   createFarmGame,
   forfeitFarmPlayer,
   getFarmGameView,
@@ -28,6 +30,11 @@ describe("Farm authoritative engine", () => {
     expect(first.currentPlayerId).toBe(players[0]!.id);
     expect(first.players[0]!.actionsRemaining).toBe(FARM_ACTIONS_PER_TURN);
     expect(() => assertRestorableFarmGameState(first)).not.toThrow();
+    const view = getFarmGameView(first, players[0]!.id);
+    expect(view.crops).toEqual(FARM_CROPS);
+    expect(view.estimatedNetWorth).toBe(
+      calculateFarmNetWorth(first.players[0]!, first.market),
+    );
   });
 
   it("supports the plant, water, grow, harvest, and sell loop", () => {
@@ -119,6 +126,7 @@ describe("Farm authoritative engine", () => {
     expect(getFarmGameView(game, players[0]!.id)).toMatchObject({
       kind: "farm",
       status: "finished",
+      estimatedNetWorth: game.winner!.rankings[0]!.netWorth,
       prompt: { type: "finished" },
     });
   });

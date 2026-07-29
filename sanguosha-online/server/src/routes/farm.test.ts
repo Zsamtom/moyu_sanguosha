@@ -1,39 +1,78 @@
 import { describe, expect, it } from "vitest";
-import { farmActionEnvelopeSchema } from "./farm.js";
+import {
+  farmActionEnvelopeSchema,
+  farmVisitEnvelopeSchema,
+} from "./farm.js";
 
-describe("farm action HTTP schema", () => {
-  it("accepts the account-scoped client action envelope", () => {
+describe("real-time farm HTTP schemas", () => {
+  it("accepts account-scoped farming actions", () => {
     expect(farmActionEnvelopeSchema.parse({
       expectedRevision: 4,
       action: {
-        type: "farm_plant",
+        type: "farming_plant",
         cropId: "tomato",
         plotIndex: 2,
       },
     })).toEqual({
       expectedRevision: 4,
       action: {
-        type: "farm_plant",
+        type: "farming_plant",
         cropId: "tomato",
         plotIndex: 2,
       },
     });
+    expect(farmActionEnvelopeSchema.parse({
+      expectedRevision: 5,
+      action: {
+        type: "farming_tend",
+        care: "pest",
+        plotIndex: 11,
+      },
+    })).toBeTruthy();
   });
 
-  it("rejects injected player ids and out-of-range quantities", () => {
+  it("rejects injected player ids and invalid quantities", () => {
     expect(() => farmActionEnvelopeSchema.parse({
       expectedRevision: 0,
       action: {
-        type: "farm_water",
+        type: "farming_tend",
+        care: "water",
+        plotIndex: 0,
         playerId: "another-account",
       },
     })).toThrow();
     expect(() => farmActionEnvelopeSchema.parse({
       expectedRevision: 0,
       action: {
-        type: "farm_buy_seed",
+        type: "farming_buy_seed",
         cropId: "wheat",
-        quantity: 21,
+        quantity: 100,
+      },
+    })).toThrow();
+  });
+
+  it("requires both revisions for cross-account help and steal actions", () => {
+    expect(farmVisitEnvelopeSchema.parse({
+      expectedRevision: 8,
+      expectedNeighborRevision: 3,
+      action: {
+        type: "farming_steal",
+        plotIndex: 0,
+      },
+    })).toEqual({
+      expectedRevision: 8,
+      expectedNeighborRevision: 3,
+      action: {
+        type: "farming_steal",
+        plotIndex: 0,
+      },
+    });
+    expect(() => farmVisitEnvelopeSchema.parse({
+      expectedRevision: 8,
+      action: {
+        type: "farming_help",
+        care: "weed",
+        plotIndex: 0,
       },
     })).toThrow();
   });

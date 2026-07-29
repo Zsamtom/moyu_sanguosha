@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  applyFarmAction,
-  createFarmGame,
+  applyFarmingAction,
+  createFarmingGame,
 } from "@sanguosha/shared";
 import {
   createFarmMarketDecision,
@@ -12,20 +12,18 @@ describe("farm market LLM", () => {
   it("projects anonymous farm data and accepts a legal candidate index", async () => {
     const playerId = "private-account-id";
     const playerName = "私人昵称";
-    let game = createFarmGame({
-      players: [{ id: playerId, name: playerName }],
+    const now = Date.UTC(2026, 6, 29);
+    let game = createFarmingGame({
+      ownerId: playerId,
+      ownerName: playerName,
       seed: "market-test",
+      now,
     });
-    game = applyFarmAction(game, {
-      type: "farm_buy_seed",
-      playerId,
+    game = applyFarmingAction(game, {
+      type: "farming_buy_seed",
       cropId: "wheat",
       quantity: 1,
-    });
-    game = applyFarmAction(game, {
-      type: "farm_end_turn",
-      playerId,
-    });
+    }, now);
     const decision = createFarmMarketDecision(game, playerId);
     expect(decision).not.toBeNull();
 
@@ -55,13 +53,15 @@ describe("farm market LLM", () => {
     const body = String(fetcher.mock.calls[0]![1]?.body);
     expect(body).not.toContain(playerId);
     expect(body).not.toContain(playerName);
-    expect(body).toContain("餐饮订单增长");
+    expect(body).toContain("鲜食订单增长");
   });
 
   it("falls back after two invalid model replies", async () => {
-    const game = createFarmGame({
-      players: [{ id: "farmer", name: "经营者" }],
+    const game = createFarmingGame({
+      ownerId: "farmer",
+      ownerName: "经营者",
       seed: "invalid-response",
+      now: Date.UTC(2026, 6, 29),
     });
     const decision = createFarmMarketDecision(game, "farmer")!;
     const fetcher = vi.fn(async () =>

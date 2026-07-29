@@ -188,7 +188,9 @@ export interface FarmGameView {
   readonly day: number;
   readonly finalDay: number;
   readonly currentPlayerId: string | null;
+  readonly crops: Readonly<Record<FarmCropId, FarmCropDefinition>>;
   readonly players: FarmPlayerState[];
+  readonly estimatedNetWorth: number;
   readonly market: Record<FarmCropId, FarmMarketQuote>;
   readonly marketEvent: FarmMarketEvent;
   readonly logs: FarmLogEntry[];
@@ -268,7 +270,7 @@ function marketForDay(
   ) as Record<FarmCropId, FarmMarketQuote>;
 }
 
-function netWorth(
+export function calculateFarmNetWorth(
   player: FarmPlayerState,
   market: Record<FarmCropId, FarmMarketQuote>,
 ): number {
@@ -293,7 +295,7 @@ function rankings(game: FarmGameState, excludedPlayerId?: string): FarmRanking[]
     .filter((player) => player.id !== excludedPlayerId)
     .map((player) => ({
       playerId: player.id,
-      netWorth: netWorth(player, game.market),
+      netWorth: calculateFarmNetWorth(player, game.market),
       coins: player.coins,
       revenue: player.totalRevenue,
     }))
@@ -576,7 +578,12 @@ export function getFarmGameView(
     day: game.day,
     finalDay: FARM_FINAL_DAY,
     currentPlayerId: game.currentPlayerId,
+    crops: structuredClone(FARM_CROPS),
     players: structuredClone(game.players),
+    estimatedNetWorth: calculateFarmNetWorth(
+      game.players.find((player) => player.id === viewerId) ?? game.players[0]!,
+      game.market,
+    ),
     market: structuredClone(game.market),
     marketEvent: structuredClone(game.marketEvent),
     logs: structuredClone(game.logs),

@@ -13,6 +13,8 @@ import { requireAuth, requirePasswordChangeComplete } from "./middleware/auth.js
 import { createAdminRouter } from "./routes/admin.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createFarmRouter } from "./routes/farm.js";
+import { createMineRouter } from "./routes/mine.js";
+import { createRanchRouter } from "./routes/ranch.js";
 import { createRoomsRouter } from "./routes/rooms.js";
 import type { RoomService } from "./rooms.js";
 import type { SecurityEvents } from "./security-events.js";
@@ -75,6 +77,8 @@ export function createApplication(options: {
   app.use("/api/admin", createAdminRouter(users, securityEvents, rooms, llmSettings));
   if (farm) {
     app.use("/api/farm", requireAuth(users), requirePasswordChangeComplete, createFarmRouter(farm));
+    app.use("/api/ranch", requireAuth(users), requirePasswordChangeComplete, createRanchRouter(farm));
+    app.use("/api/mine", requireAuth(users), requirePasswordChangeComplete, createMineRouter(farm));
   }
   app.use("/api/rooms", requireAuth(users), requirePasswordChangeComplete, createRoomsRouter(users, rooms));
 

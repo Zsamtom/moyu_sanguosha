@@ -7,24 +7,61 @@ import {
 } from './gameCards';
 import { activeSkillDescriptions, generalSkillNames } from './interactionRules';
 
-export type FarmCropId = 'wheat' | 'tomato' | 'pumpkin';
+export type FarmCropId =
+  | 'wheat'
+  | 'carrot'
+  | 'tomato'
+  | 'corn'
+  | 'pumpkin'
+  | 'strawberry'
+  | 'sunflower'
+  | 'watermelon'
+  | 'grape'
+  | 'blueberry'
+  | 'cotton'
+  | 'dragonfruit';
 
-export interface FarmPlot {
-  cropId: FarmCropId | null;
-  growth: number;
-  watered: boolean;
+export interface FarmCropDefinition {
+  id: FarmCropId;
+  name: string;
+  unlockLevel: number;
+  seedCost: number;
+  basePrice: number;
+  minimumPrice: number;
+  maximumPrice: number;
+  growthSeconds: number;
+  yield: number;
+  harvestExperience: number;
 }
 
-export interface FarmPlayerState {
-  id: string;
-  seat: number;
-  name: string;
+export interface FarmPlot {
+  index: number;
+  cycle: number;
+  cropId: FarmCropId | null;
+  plantedAt: number | null;
+  maturesAt: number | null;
+  watered: boolean;
+  weedAt: number | null;
+  pestAt: number | null;
+  weedCleared: boolean;
+  pestCleared: boolean;
+  stolen: number;
+  stealAttempts: string[];
+  stolenBy: string[];
+  unlocked: boolean;
+  ready: boolean;
+  progress: number;
+  hasWeeds: boolean;
+  hasPests: boolean;
+  estimatedYield: number;
+  maximumStealable: number;
+}
+
+export interface FarmInventory {
   coins: number;
   seeds: Record<FarmCropId, number>;
   produce: Record<FarmCropId, number>;
-  plots: FarmPlot[];
-  totalRevenue: number;
-  actionsRemaining: number;
+  mutations: Record<FarmCropId, number>;
 }
 
 export interface FarmMarketQuote {
@@ -36,14 +73,24 @@ export interface FarmMarketQuote {
 
 export interface FarmGameView {
   kind: 'farm';
-  version: 1;
+  version: 2;
   revision: number;
-  actionPromptId: string;
-  status: 'playing' | 'finished';
-  day: number;
-  finalDay: number;
-  currentPlayerId: string | null;
-  players: FarmPlayerState[];
+  serverTime: number;
+  ownerId: string;
+  ownerName: string;
+  isOwner: boolean;
+  createdAt: number;
+  level: number;
+  experience: number;
+  currentLevelExperience: number;
+  nextLevelExperience: number | null;
+  unlockedPlots: number;
+  dogLevel: number;
+  dogBlockChance: number;
+  crops: Record<FarmCropId, FarmCropDefinition>;
+  inventory: FarmInventory | null;
+  discoveredCrops: FarmCropId[];
+  plots: FarmPlot[];
   market: Record<FarmCropId, FarmMarketQuote>;
   marketEvent: {
     title: string;
@@ -51,39 +98,332 @@ export interface FarmGameView {
     tone: 'neutral' | 'surge' | 'crash' | 'volatile';
     source: 'rules' | 'llm';
   };
+  nextExpansion: {
+    plotIndex: number;
+    requiredLevel: number;
+    coinCost: number;
+  } | null;
+  nextDogUpgrade: {
+    level: number;
+    requiredFarmLevel: number;
+    coinCost: number;
+    blockChance: number;
+  } | null;
+  dailySocial: {
+    dayKey: string;
+    helps: number;
+    steals: number;
+  } | null;
+  statistics: {
+    harvests: number;
+    produceHarvested: number;
+    produceSold: number;
+    coinsEarned: number;
+    helpsGiven: number;
+    helpsReceived: number;
+    stealsSucceeded: number;
+    stolenFrom: number;
+    dogBlocks: number;
+    mutationsFound: number;
+  } | null;
   logs: Array<{
     id: number;
-    day: number;
-    playerId: string | null;
+    at: number;
+    kind: 'system' | 'economy' | 'plant' | 'care' | 'harvest' | 'social' | 'progression';
     text: string;
   }>;
-  winner: {
-    playerIds: string[];
-    reason: 'final_day' | 'forfeit';
-    rankings: Array<{
-      playerId: string;
-      netWorth: number;
-      coins: number;
-      revenue: number;
-    }>;
-  } | null;
-  prompt:
-    | { type: 'act'; playerId: string; actionsRemaining: number }
-    | { type: 'waiting'; playerId: string }
-    | { type: 'finished'; playerId: null };
 }
 
 export type FarmClientAction =
-  | { type: 'farm_buy_seed'; cropId: FarmCropId; quantity: number }
-  | { type: 'farm_plant'; cropId: FarmCropId; plotIndex: number }
-  | { type: 'farm_water' }
-  | { type: 'farm_harvest'; plotIndex: number }
-  | { type: 'farm_sell'; cropId: FarmCropId; quantity: number }
-  | { type: 'farm_end_turn' };
+  | { type: 'farming_buy_seed'; cropId: FarmCropId; quantity: number }
+  | { type: 'farming_plant'; cropId: FarmCropId; plotIndex: number }
+  | { type: 'farming_tend'; care: 'water' | 'weed' | 'pest'; plotIndex: number }
+  | { type: 'farming_harvest'; plotIndex: number }
+  | { type: 'farming_sell'; cropId: FarmCropId; quantity: number }
+  | { type: 'farming_expand_plot' }
+  | { type: 'farming_upgrade_dog' };
+
+export type FarmVisitClientAction =
+  | { type: 'farming_help'; care: 'water' | 'weed' | 'pest'; plotIndex: number }
+  | { type: 'farming_steal'; plotIndex: number };
+
+export interface FarmNeighborSummary {
+  ownerId: string;
+  ownerName: string;
+  level: number;
+  unlockedPlots: number;
+  dogLevel: number;
+  readyPlots: number;
+  careNeededPlots: number;
+  stealablePlots: number;
+  updatedAt: number;
+}
 
 export interface FarmSnapshot {
   farm: FarmGameView;
+  neighbors: FarmNeighborSummary[];
   marketDirectorAvailable: boolean;
+}
+
+export interface FarmVisitSnapshot extends FarmSnapshot {
+  neighbor: FarmGameView;
+  outcome: 'helped' | 'stolen' | 'blocked';
+}
+
+export type RanchAnimalId =
+  | 'chicken'
+  | 'duck'
+  | 'rabbit'
+  | 'sheep'
+  | 'cow'
+  | 'goat';
+
+export type RanchProductId =
+  | 'egg'
+  | 'duck_egg'
+  | 'rabbit_fur'
+  | 'wool'
+  | 'milk'
+  | 'goat_milk';
+
+export interface RanchAnimalDefinition {
+  id: RanchAnimalId;
+  name: string;
+  productId: RanchProductId;
+  productName: string;
+  requiredFarmLevel: number;
+  requiredRanchLevel: number;
+  purchaseCost: number;
+  feedCropId: FarmCropId;
+  feedAmount: number;
+  productionSeconds: number;
+  yield: number;
+  productPrice: number;
+  collectExperience: number;
+}
+
+export interface RanchPen {
+  index: number;
+  cycle: number;
+  animalId: RanchAnimalId | null;
+  fedAt: number | null;
+  producesAt: number | null;
+  messAt: number | null;
+  messCleaned: boolean;
+  taken: number;
+  collectAttempts: string[];
+  takenBy: string[];
+  unlocked: boolean;
+  ready: boolean;
+  progress: number;
+  hasMess: boolean;
+  estimatedYield: number;
+  maximumNeighborCollectable: number;
+}
+
+export interface RanchGameView {
+  kind: 'ranch';
+  version: 1;
+  revision: number;
+  serverTime: number;
+  ownerId: string;
+  ownerName: string;
+  isOwner: boolean;
+  createdAt: number;
+  unlocked: boolean;
+  requiredFarmLevel: number;
+  farmLevel: number;
+  farmRevision: number;
+  dogLevel: number;
+  dogBlockChance: number;
+  level: number;
+  experience: number;
+  currentLevelExperience: number;
+  nextLevelExperience: number | null;
+  unlockedPens: number;
+  animals: Record<RanchAnimalId, RanchAnimalDefinition>;
+  economy: {
+    coins: number;
+    produce: Record<FarmCropId, number>;
+    products: Record<RanchProductId, number>;
+  } | null;
+  pens: RanchPen[];
+  nextExpansion: {
+    penIndex: number;
+    requiredFarmLevel: number;
+    requiredRanchLevel: number;
+    coinCost: number;
+  } | null;
+  dailySocial: {
+    dayKey: string;
+    helps: number;
+    collects: number;
+  } | null;
+  statistics: {
+    animalsPurchased: number;
+    feedings: number;
+    productsCollected: number;
+    productsSold: number;
+    coinsEarned: number;
+    cleanings: number;
+    helpsGiven: number;
+    helpsReceived: number;
+    neighborCollections: number;
+    collectedFrom: number;
+    dogBlocks: number;
+  } | null;
+  logs: Array<{
+    id: number;
+    at: number;
+    kind: 'system' | 'economy' | 'animal' | 'care' | 'collect' | 'social' | 'progression';
+    text: string;
+  }>;
+}
+
+export type RanchClientAction =
+  | { type: 'ranch_buy_animal'; animalId: RanchAnimalId; penIndex: number }
+  | { type: 'ranch_feed'; penIndex: number }
+  | { type: 'ranch_clean'; penIndex: number }
+  | { type: 'ranch_collect'; penIndex: number }
+  | { type: 'ranch_sell'; productId: RanchProductId; quantity: number }
+  | { type: 'ranch_expand_pen' };
+
+export type RanchVisitClientAction =
+  | { type: 'ranch_help'; penIndex: number }
+  | { type: 'ranch_neighbor_collect'; penIndex: number };
+
+export interface RanchNeighborSummary {
+  ownerId: string;
+  ownerName: string;
+  level: number;
+  unlockedPens: number;
+  readyPens: number;
+  careNeededPens: number;
+  collectiblePens: number;
+  updatedAt: number;
+}
+
+export interface RanchSnapshot {
+  ranch: RanchGameView;
+  neighbors: RanchNeighborSummary[];
+}
+
+export interface RanchVisitSnapshot extends RanchSnapshot {
+  neighbor: RanchGameView;
+  outcome: 'helped' | 'collected' | 'blocked';
+}
+
+export type MineDepositId =
+  | 'coal'
+  | 'iron'
+  | 'copper'
+  | 'silver'
+  | 'gold'
+  | 'crystal';
+
+export interface MineDepositDefinition {
+  id: MineDepositId;
+  name: string;
+  requiredFarmLevel: number;
+  requiredRanchLevel: number;
+  requiredMineLevel: number;
+  expeditionCost: number;
+  rationProductId: RanchProductId;
+  rationAmount: number;
+  supportProductId: RanchProductId;
+  supportAmount: number;
+  durationSeconds: number;
+  yield: number;
+  orePrice: number;
+  collectExperience: number;
+}
+
+export interface MineShaft {
+  index: number;
+  cycle: number;
+  depositId: MineDepositId | null;
+  startedAt: number | null;
+  completesAt: number | null;
+  hazardAt: number | null;
+  reinforced: boolean;
+  unlocked: boolean;
+  ready: boolean;
+  progress: number;
+  hasHazard: boolean;
+  estimatedYield: number;
+}
+
+export interface MineGameView {
+  kind: 'mine';
+  version: 1;
+  revision: number;
+  serverTime: number;
+  ownerId: string;
+  ownerName: string;
+  unlocked: boolean;
+  requiredFarmLevel: number;
+  requiredRanchLevel: number;
+  farmRevision: number;
+  farmLevel: number;
+  ranchRevision: number;
+  ranchLevel: number;
+  level: number;
+  experience: number;
+  currentLevelExperience: number;
+  nextLevelExperience: number | null;
+  unlockedShafts: number;
+  pickaxeLevel: number;
+  pickaxeYieldBonus: number;
+  deposits: Record<MineDepositId, MineDepositDefinition>;
+  economy: {
+    coins: number;
+    ranchProducts: Record<RanchProductId, number>;
+    ores: Record<MineDepositId, number>;
+    relics: number;
+  };
+  shafts: MineShaft[];
+  nextExpansion: {
+    shaftIndex: number;
+    requiredFarmLevel: number;
+    requiredRanchLevel: number;
+    requiredMineLevel: number;
+    coinCost: number;
+  } | null;
+  nextPickaxeUpgrade: {
+    level: number;
+    requiredFarmLevel: number;
+    requiredRanchLevel: number;
+    requiredMineLevel: number;
+    coinCost: number;
+    yieldBonus: number;
+  } | null;
+  statistics: {
+    expeditionsStarted: number;
+    expeditionsCompleted: number;
+    oresCollected: number;
+    oresSold: number;
+    coinsEarned: number;
+    reinforcements: number;
+    relicsFound: number;
+  };
+  logs: Array<{
+    id: number;
+    at: number;
+    kind: 'system' | 'economy' | 'expedition' | 'care' | 'collect' | 'progression';
+    text: string;
+  }>;
+}
+
+export type MineClientAction =
+  | { type: 'mine_start'; depositId: MineDepositId; shaftIndex: number }
+  | { type: 'mine_reinforce'; shaftIndex: number }
+  | { type: 'mine_collect'; shaftIndex: number }
+  | { type: 'mine_sell'; depositId: MineDepositId; quantity: number }
+  | { type: 'mine_expand_shaft' }
+  | { type: 'mine_upgrade_pickaxe' };
+
+export interface MineSnapshot {
+  mine: MineGameView;
 }
 
 export type UserRole = 'admin' | 'player';

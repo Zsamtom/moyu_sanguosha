@@ -5,6 +5,9 @@ export * from "./splendor.js";
 export * from "./digit-bomb.js";
 export * from "./number-connect.js";
 export * from "./farm.js";
+export * from "./farming.js";
+export * from "./ranch.js";
+export * from "./mine.js";
 export {
   ALL_GENERALS,
   DEFAULT_GENERALS,

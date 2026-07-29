@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmClientAction, FarmSnapshot, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, PlayableFaction, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -212,8 +212,100 @@ export const api = {
     });
   },
 
-  async resetFarm(): Promise<FarmSnapshot> {
-    return request<FarmSnapshot>('/api/farm/reset', { method: 'POST' });
+  async getFarmNeighbors(): Promise<FarmNeighborSummary[]> {
+    const result = await request<{ neighbors: FarmNeighborSummary[] }>('/api/farm/neighbors');
+    return result.neighbors;
+  },
+
+  async getFarmNeighbor(userId: string): Promise<FarmGameView> {
+    const result = await request<{ farm: FarmGameView }>(
+      `/api/farm/neighbors/${encodeURIComponent(userId)}`,
+    );
+    return result.farm;
+  },
+
+  async applyFarmVisitAction(
+    neighborId: string,
+    expectedRevision: number,
+    expectedNeighborRevision: number,
+    action: FarmVisitClientAction,
+  ): Promise<FarmVisitSnapshot> {
+    return request<FarmVisitSnapshot>(
+      `/api/farm/neighbors/${encodeURIComponent(neighborId)}/actions`,
+      {
+      method: 'POST',
+        ...jsonBody({ expectedRevision, expectedNeighborRevision, action }),
+      },
+    );
+  },
+
+  async getRanch(): Promise<RanchSnapshot> {
+    return request<RanchSnapshot>('/api/ranch');
+  },
+
+  async applyRanchAction(
+    expectedFarmRevision: number,
+    expectedRanchRevision: number,
+    action: RanchClientAction,
+  ): Promise<RanchSnapshot> {
+    return request<RanchSnapshot>('/api/ranch/actions', {
+      method: 'POST',
+      ...jsonBody({ expectedFarmRevision, expectedRanchRevision, action }),
+    });
+  },
+
+  async getRanchNeighbors(): Promise<RanchNeighborSummary[]> {
+    const result = await request<{ neighbors: RanchNeighborSummary[] }>(
+      '/api/ranch/neighbors',
+    );
+    return result.neighbors;
+  },
+
+  async getRanchNeighbor(userId: string): Promise<RanchGameView> {
+    const result = await request<{ ranch: RanchGameView }>(
+      `/api/ranch/neighbors/${encodeURIComponent(userId)}`,
+    );
+    return result.ranch;
+  },
+
+  async applyRanchVisitAction(
+    neighborId: string,
+    expectedRanchRevision: number,
+    expectedNeighborRevision: number,
+    action: RanchVisitClientAction,
+  ): Promise<RanchVisitSnapshot> {
+    return request<RanchVisitSnapshot>(
+      `/api/ranch/neighbors/${encodeURIComponent(neighborId)}/actions`,
+      {
+        method: 'POST',
+        ...jsonBody({
+          expectedRanchRevision,
+          expectedNeighborRevision,
+          action,
+        }),
+      },
+    );
+  },
+
+  async getMine(): Promise<MineSnapshot> {
+    return request<MineSnapshot>('/api/mine');
+  },
+
+  async applyMineAction(
+    expectedFarmRevision: number,
+    expectedRanchRevision: number,
+    expectedMineRevision: number,
+    action: MineClientAction,
+  ): Promise<MineSnapshot> {
+    return request<MineSnapshot>('/api/mine/actions', {
+      method: 'POST',
+      ...jsonBody({
+        expectedFarmRevision,
+        expectedRanchRevision,
+        expectedMineRevision,
+        action,
+      }),
+    });
   },
 
   async listUsers(): Promise<AuthUser[]> {

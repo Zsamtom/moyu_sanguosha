@@ -1,0 +1,245 @@
+import { describe, expect, it } from "vitest";
+import {
+  RANCH_ANIMALS,
+  RanchRuleError,
+  applyRanchAction,
+  applyRanchVisitAction,
+  assertRestorableRanchGameState,
+  createFarmingGame,
+  createRanchGame,
+  getRanchGameView,
+  getRanchNeighborSummary,
+  type RanchEconomyState,
+} from "../src/index.js";
+
+const start = Date.UTC(2026, 6, 29, 8, 0, 0);
+
+function economy(input: Partial<RanchEconomyState> = {}): RanchEconomyState {
+  const farm = createFarmingGame({
+    ownerId: "farm-owner",
+    ownerName: "经营者",
+    seed: "farm-seed",
+    now: start,
+  });
+  return {
+    farmRevision: input.farmRevision ?? farm.revision,
+    farmLevel: input.farmLevel ?? 3,
+    coins: input.coins ?? 1_000,
+    produce: input.produce ?? {
+      ...farm.produce,
+      wheat: 10,
+      carrot: 10,
+      corn: 10,
+    },
+  };
+}
+
+describe("persistent ranch engine", () => {
+  it("gates the ranch behind farm progression", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-seed",
+      now: start,
+    });
+
+    expect(getRanchGameView(ranch, {
+      viewerId: "owner",
+      now: start,
+      farmRevision: 0,
+      farmLevel: 2,
+      dogLevel: 0,
+      coins: 100,
+      produce: economy().produce,
+    }).unlocked).toBe(false);
+    expect(() => applyRanchAction(
+      ranch,
+      economy({ farmLevel: 2 }),
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    )).toThrowError(RanchRuleError);
+  });
+
+  it("links animal purchase, feed and product sales to the farm economy", () => {
+    let ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-seed",
+      now: start,
+    });
+    let farmEconomy = economy();
+
+    let result = applyRanchAction(
+      ranch,
+      farmEconomy,
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+    ranch = result.ranch;
+    farmEconomy = result.economy;
+    expect(farmEconomy.coins).toBe(1_000 - RANCH_ANIMALS.chicken.purchaseCost);
+
+    result = applyRanchAction(
+      ranch,
+      farmEconomy,
+      { type: "ranch_feed", penIndex: 0 },
+      start,
+    );
+    ranch = result.ranch;
+    farmEconomy = result.economy;
+    expect(farmEconomy.produce.wheat).toBe(9);
+
+    const readyAt = start + RANCH_ANIMALS.chicken.productionSeconds * 1_000;
+    result = applyRanchAction(
+      ranch,
+      farmEconomy,
+      { type: "ranch_clean", penIndex: 0 },
+      readyAt,
+    );
+    ranch = result.ranch;
+    result = applyRanchAction(
+      ranch,
+      result.economy,
+      { type: "ranch_collect", penIndex: 0 },
+      readyAt,
+    );
+    ranch = result.ranch;
+    expect(ranch.products.egg).toBe(RANCH_ANIMALS.chicken.yield);
+
+    result = applyRanchAction(
+      ranch,
+      result.economy,
+      { type: "ranch_sell", productId: "egg", quantity: 2 },
+      readyAt,
+    );
+    expect(result.ranch.products.egg).toBe(1);
+    expect(result.economy.coins).toBe(
+      1_000 -
+      RANCH_ANIMALS.chicken.purchaseCost +
+      RANCH_ANIMALS.chicken.productPrice * 2,
+    );
+  });
+
+  it("reduces an unattended production cycle by one product", () => {
+    let ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-seed",
+      now: start,
+    });
+    let result = applyRanchAction(
+      ranch,
+      economy(),
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_feed", penIndex: 0 },
+      start,
+    );
+    ranch = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_collect", penIndex: 0 },
+      start + RANCH_ANIMALS.chicken.productionSeconds * 1_000,
+    ).ranch;
+
+    expect(ranch.products.egg).toBe(RANCH_ANIMALS.chicken.yield - 1);
+  });
+
+  it("supports neighbor cleaning and one bounded product collection", () => {
+    let owner = createRanchGame({
+      ownerId: "owner",
+      ownerName: "主人",
+      seed: "owner-ranch",
+      now: start,
+    });
+    let visitor = createRanchGame({
+      ownerId: "visitor",
+      ownerName: "访客",
+      seed: "visitor-ranch",
+      now: start,
+    });
+    let result = applyRanchAction(
+      owner,
+      economy(),
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_feed", penIndex: 0 },
+      start,
+    );
+    owner = result.ranch;
+    const readyAt = start + RANCH_ANIMALS.chicken.productionSeconds * 1_000;
+
+    const helped = applyRanchVisitAction(
+      owner,
+      visitor,
+      { type: "ranch_help", penIndex: 0 },
+      0,
+      readyAt,
+    );
+    owner = helped.owner;
+    visitor = helped.visitor;
+    expect(helped.outcome).toBe("helped");
+
+    const collected = applyRanchVisitAction(
+      owner,
+      visitor,
+      { type: "ranch_neighbor_collect", penIndex: 0 },
+      0,
+      readyAt,
+    );
+    expect(collected.outcome).toBe("collected");
+    expect(collected.visitor.products.egg).toBe(1);
+    expect(collected.owner.pens[0]!.taken).toBe(1);
+    expect(() => applyRanchVisitAction(
+      collected.owner,
+      collected.visitor,
+      { type: "ranch_neighbor_collect", penIndex: 0 },
+      0,
+      readyAt,
+    )).toThrowError(RanchRuleError);
+  });
+
+  it("projects private inventory only to the owner and summarizes neighbors", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "主人",
+      seed: "ranch-seed",
+      now: start,
+    });
+    const farmEconomy = economy();
+
+    expect(getRanchGameView(ranch, {
+      viewerId: "visitor",
+      now: start,
+      farmRevision: 0,
+      farmLevel: 3,
+      dogLevel: 0,
+    }).economy).toBeNull();
+    expect(getRanchNeighborSummary(ranch, "visitor", start)).toMatchObject({
+      ownerId: "owner",
+      readyPens: 0,
+    });
+  });
+
+  it("strictly validates restorable ranch saves", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "主人",
+      seed: "ranch-seed",
+      now: start,
+    });
+    expect(() => assertRestorableRanchGameState(ranch)).not.toThrow();
+    expect(() => assertRestorableRanchGameState({
+      ...ranch,
+      products: { ...ranch.products, egg: -1 },
+    })).toThrow("牧场主状态无效");
+  });
+});

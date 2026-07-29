@@ -221,3 +221,134 @@ describe('room draft API', () => {
     expect(result).toEqual(recommendation);
   });
 });
+
+describe('farm API', () => {
+  it('submits a cross-account farm action with both optimistic revisions', async () => {
+    const payload = {
+      farm: { version: 2 },
+      neighbor: { version: 2 },
+      neighbors: [],
+      outcome: 'helped',
+      marketDirectorAvailable: false,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.applyFarmVisitAction(
+      'neighbor/with space',
+      12,
+      7,
+      {
+        type: 'farming_help',
+        care: 'water',
+        plotIndex: 2,
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/farm/neighbors/neighbor%2Fwith%20space/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedRevision: 12,
+          expectedNeighborRevision: 7,
+          action: {
+            type: 'farming_help',
+            care: 'water',
+            plotIndex: 2,
+          },
+        }),
+      }),
+    );
+  });
+});
+
+describe('ranch API', () => {
+  it('submits linked actions with farm and ranch optimistic revisions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      ranch: { version: 1 },
+      neighbors: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.applyRanchAction(
+      14,
+      6,
+      { type: 'ranch_feed', penIndex: 1 },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/ranch/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedFarmRevision: 14,
+          expectedRanchRevision: 6,
+          action: { type: 'ranch_feed', penIndex: 1 },
+        }),
+      }),
+    );
+  });
+
+  it('submits cross-account ranch actions with both ranch revisions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      ranch: { version: 1 },
+      neighbor: { version: 1 },
+      neighbors: [],
+      outcome: 'collected',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.applyRanchVisitAction(
+      'neighbor/with space',
+      9,
+      12,
+      { type: 'ranch_neighbor_collect', penIndex: 0 },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/ranch/neighbors/neighbor%2Fwith%20space/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedRanchRevision: 9,
+          expectedNeighborRevision: 12,
+          action: { type: 'ranch_neighbor_collect', penIndex: 0 },
+        }),
+      }),
+    );
+  });
+});
+
+describe('mine API', () => {
+  it('submits actions with farm, ranch and mine optimistic revisions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      mine: { version: 1 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.applyMineAction(
+      18,
+      9,
+      4,
+      { type: 'mine_start', depositId: 'iron', shaftIndex: 1 },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mine/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedFarmRevision: 18,
+          expectedRanchRevision: 9,
+          expectedMineRevision: 4,
+          action: {
+            type: 'mine_start',
+            depositId: 'iron',
+            shaftIndex: 1,
+          },
+        }),
+      }),
+    );
+  });
+});

@@ -1,9 +1,9 @@
 import {
-  FARM_CROP_IDS,
-  FARM_CROPS,
-  type FarmCropId,
-  type FarmGameState,
-  type FarmMarketDecision,
+  FARMING_CROP_IDS,
+  FARMING_CROPS,
+  type FarmingCropId,
+  type FarmingGameState,
+  type FarmingMarketDecision,
 } from "@sanguosha/shared";
 import type {
   BotDecisionFailureReason,
@@ -15,53 +15,52 @@ import { BotDecisionProviderError } from "./decision-registry.js";
 import type { OpenAiCompatibleDoudizhuConfig } from "./doudizhu-llm.js";
 
 export interface FarmMarketCompactState {
-  readonly day: number;
+  readonly day: string;
+  readonly level: number;
   readonly coins: number;
-  readonly seeds: Record<FarmCropId, number>;
-  readonly produce: Record<FarmCropId, number>;
-  readonly planted: Record<FarmCropId, number>;
-  readonly prices: Record<FarmCropId, number>;
-  readonly trends: Record<FarmCropId, -1 | 0 | 1>;
+  readonly seeds: Record<FarmingCropId, number>;
+  readonly produce: Record<FarmingCropId, number>;
+  readonly planted: Record<FarmingCropId, number>;
+  readonly prices: Record<FarmingCropId, number>;
+  readonly trends: Record<FarmingCropId, -1 | 0 | 1>;
   readonly recentOperations: readonly string[];
 }
 
 export interface FarmMarketDecisionRequest {
-  readonly input: BotDecisionInput<FarmMarketCompactState, FarmMarketDecision>;
-  readonly fallback: FarmMarketDecision;
+  readonly input: BotDecisionInput<FarmMarketCompactState, FarmingMarketDecision>;
+  readonly fallback: FarmingMarketDecision;
 }
 
-function clampPrice(cropId: FarmCropId, value: number): number {
-  const crop = FARM_CROPS[cropId];
+function clampPrice(cropId: FarmingCropId, value: number): number {
+  const crop = FARMING_CROPS[cropId];
   return Math.max(crop.minimumPrice, Math.min(crop.maximumPrice, Math.round(value)));
 }
 
 function priceMap(
-  state: FarmGameState,
-  changes: Partial<Record<FarmCropId, number>> = {},
-): Record<FarmCropId, number> {
-  return Object.fromEntries(FARM_CROP_IDS.map((cropId) => [
+  state: FarmingGameState,
+  changes: Partial<Record<FarmingCropId, number>> = {},
+): Record<FarmingCropId, number> {
+  return Object.fromEntries(FARMING_CROP_IDS.map((cropId) => [
     cropId,
     clampPrice(cropId, changes[cropId] ?? state.market[cropId].price),
-  ])) as Record<FarmCropId, number>;
+  ])) as Record<FarmingCropId, number>;
 }
 
 function scenario(
-  state: FarmGameState,
+  state: FarmingGameState,
   title: string,
   summary: string,
-  tone: FarmMarketDecision["tone"],
-  changes?: Partial<Record<FarmCropId, number>>,
-): FarmMarketDecision {
+  tone: FarmingMarketDecision["tone"],
+  changes?: Partial<Record<FarmingCropId, number>>,
+): FarmingMarketDecision {
   return { title, summary, tone, prices: priceMap(state, changes) };
 }
 
 export function createFarmMarketDecision(
-  game: FarmGameState,
+  game: FarmingGameState,
   playerId: string,
 ): FarmMarketDecisionRequest | null {
-  if (game.status !== "playing") return null;
-  const player = game.players.find((candidate) => candidate.id === playerId);
-  if (!player) return null;
+  if (game.ownerId !== playerId) return null;
 
   const baseline = scenario(
     game,
@@ -69,52 +68,60 @@ export function createFarmMarketDecision(
     "今日批发市场供需平稳，沿用规则市场生成的基准报价。",
     "neutral",
   );
-  const candidates: FarmMarketDecision[] = [
+  const candidates: FarmingMarketDecision[] = [
     baseline,
-    scenario(game, "粮站集中采购", "区域粮站扩大收储，小麦报价明显上行。", "surge", {
-      wheat: FARM_CROPS.wheat.maximumPrice,
+    scenario(game, "主粮集中采购", "粮站扩大收储，小麦与玉米报价进入高位区间。", "surge", {
+      wheat: FARMING_CROPS.wheat.maximumPrice,
+      corn: FARMING_CROPS.corn.maximumPrice,
     }),
-    scenario(game, "餐饮订单增长", "餐饮渠道补充鲜食库存，番茄需求快速增长。", "surge", {
-      tomato: FARM_CROPS.tomato.maximumPrice,
+    scenario(game, "鲜食订单增长", "餐饮渠道补充鲜食库存，胡萝卜、番茄与草莓需求增长。", "surge", {
+      carrot: FARMING_CROPS.carrot.maximumPrice,
+      tomato: FARMING_CROPS.tomato.maximumPrice,
+      strawberry: FARMING_CROPS.strawberry.maximumPrice,
     }),
-    scenario(game, "节庆备货", "节庆采购提前启动，南瓜订单进入高位区间。", "surge", {
-      pumpkin: FARM_CROPS.pumpkin.maximumPrice,
+    scenario(game, "节庆备货", "节庆采购提前启动，南瓜、西瓜与葡萄订单进入高位。", "surge", {
+      pumpkin: FARMING_CROPS.pumpkin.maximumPrice,
+      watermelon: FARMING_CROPS.watermelon.maximumPrice,
+      grape: FARMING_CROPS.grape.maximumPrice,
     }),
-    scenario(game, "粮仓释放库存", "公共粮仓释放库存，小麦短期承压。", "crash", {
-      wheat: FARM_CROPS.wheat.minimumPrice,
+    scenario(game, "纺织订单增长", "纺织工坊扩大采购，棉花报价明显上扬。", "surge", {
+      cotton: FARMING_CROPS.cotton.maximumPrice,
     }),
-    scenario(game, "鲜食集中到货", "周边产区集中到货，番茄批发价回落。", "crash", {
-      tomato: FARM_CROPS.tomato.minimumPrice,
+    scenario(game, "主粮集中到货", "周边农场集中出货，小麦与玉米价格承压。", "crash", {
+      wheat: FARMING_CROPS.wheat.minimumPrice,
+      corn: FARMING_CROPS.corn.minimumPrice,
     }),
-    scenario(game, "大宗订单取消", "采购方取消大宗订单，南瓜库存积压。", "crash", {
-      pumpkin: FARM_CROPS.pumpkin.minimumPrice,
+    scenario(game, "生鲜供应过剩", "生鲜作物集中成熟，番茄、草莓和蓝莓价格回落。", "crash", {
+      tomato: FARMING_CROPS.tomato.minimumPrice,
+      strawberry: FARMING_CROPS.strawberry.minimumPrice,
+      blueberry: FARMING_CROPS.blueberry.minimumPrice,
     }),
-    scenario(game, "运输节点波动", "运输节点临时调整，三类作物报价出现分化。", "volatile", {
-      wheat: FARM_CROPS.wheat.maximumPrice,
-      tomato: FARM_CROPS.tomato.minimumPrice,
-      pumpkin: Math.round(
-        (FARM_CROPS.pumpkin.minimumPrice + FARM_CROPS.pumpkin.maximumPrice) / 2,
-      ),
+    scenario(game, "运输节点波动", "运输节点临时调整，主粮上涨而鲜食作物回落。", "volatile", {
+      wheat: FARMING_CROPS.wheat.maximumPrice,
+      corn: FARMING_CROPS.corn.maximumPrice,
+      tomato: FARMING_CROPS.tomato.minimumPrice,
+      strawberry: FARMING_CROPS.strawberry.minimumPrice,
     }),
   ];
-  const planted = Object.fromEntries(FARM_CROP_IDS.map((cropId) => [
+  const planted = Object.fromEntries(FARMING_CROP_IDS.map((cropId) => [
     cropId,
-    player.plots.filter((plot) => plot.cropId === cropId).length,
-  ])) as Record<FarmCropId, number>;
+    game.plots.filter((plot) => plot.cropId === cropId).length,
+  ])) as Record<FarmingCropId, number>;
   const state: FarmMarketCompactState = {
-    day: game.day,
-    coins: player.coins,
-    seeds: { ...player.seeds },
-    produce: { ...player.produce },
+    day: game.marketDay,
+    level: game.level,
+    coins: game.coins,
+    seeds: { ...game.seeds },
+    produce: { ...game.produce },
     planted,
     prices: priceMap(game),
-    trends: Object.fromEntries(FARM_CROP_IDS.map((cropId) => [
+    trends: Object.fromEntries(FARMING_CROP_IDS.map((cropId) => [
       cropId,
       game.market[cropId].trend,
-    ])) as Record<FarmCropId, -1 | 0 | 1>,
+    ])) as Record<FarmingCropId, -1 | 0 | 1>,
     recentOperations: game.logs
       .slice(-6)
-      .map((entry) => entry.text.replaceAll(player.name, "经营者")),
+      .map((entry) => entry.text.replaceAll(game.ownerName, "经营者")),
   };
   return {
     input: {
@@ -131,13 +138,14 @@ export function createFarmMarketDecision(
 type FetchLike = typeof fetch;
 
 const SYSTEM_PROMPT =
-  "你是单人农场经营游戏的市场导演。根据玩家资产、库存、田地、当前报价和最近操作，在给定的合法行情方案中选择最能形成风险与机会平衡的一项。不要编造价格，不要输出解释。只返回 JSON，格式严格为 {\"i\":0}。";
+  "你是长期社交农场的每日市场导演。根据农场等级、资产、库存、田地、当前报价和最近操作，在给定的合法行情方案中选择最能形成风险与机会平衡的一项。不要编造价格，不要输出解释。只返回 JSON，格式严格为 {\"i\":0}。";
 
 function compactPrompt(
-  input: BotDecisionInput<FarmMarketCompactState, FarmMarketDecision>,
+  input: BotDecisionInput<FarmMarketCompactState, FarmingMarketDecision>,
 ): string {
   return JSON.stringify({
     day: input.state.day,
+    level: input.state.level,
     coins: input.state.coins,
     seeds: input.state.seeds,
     produce: input.state.produce,
@@ -210,14 +218,14 @@ function parseCandidateIndex(
 }
 
 export class OpenAiCompatibleFarmMarketProvider implements
-  BotDecisionProvider<FarmMarketCompactState, FarmMarketDecision> {
+  BotDecisionProvider<FarmMarketCompactState, FarmingMarketDecision> {
   constructor(
     private readonly config: OpenAiCompatibleDoudizhuConfig,
     private readonly fetcher: FetchLike = fetch,
   ) {}
 
   async decide(
-    input: BotDecisionInput<FarmMarketCompactState, FarmMarketDecision>,
+    input: BotDecisionInput<FarmMarketCompactState, FarmingMarketDecision>,
   ): Promise<BotDecisionResult> {
     const prompt = compactPrompt(input);
     const usage = { promptTokens: 0, completionTokens: 0 };
