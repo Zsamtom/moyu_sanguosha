@@ -26,6 +26,10 @@ const actionSchema = z.discriminatedUnion("type", [
     shaftIndex: shaftIndexSchema,
   }).strict(),
   z.object({
+    type: z.literal("mine_abandon"),
+    shaftIndex: shaftIndexSchema,
+  }).strict(),
+  z.object({
     type: z.literal("mine_collect"),
     shaftIndex: shaftIndexSchema,
   }).strict(),

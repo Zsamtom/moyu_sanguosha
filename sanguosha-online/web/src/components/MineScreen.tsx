@@ -1,6 +1,7 @@
 import {
   Button,
   InputNumber,
+  Popconfirm,
   Progress,
   Spin,
   Tag,
@@ -189,6 +190,8 @@ export function MineScreen() {
         toast.success(
           `已在 ${action.shaftIndex + 1} 号矿井开采${next.mine.deposits[action.depositId].name}`,
         );
+      } else if (action.type === 'mine_abandon') {
+        toast.success(`已放弃 ${action.shaftIndex + 1} 号矿井的采掘任务`);
       }
     } catch (error) {
       if (
@@ -254,6 +257,13 @@ export function MineScreen() {
     game.economy.coins >= selectedDefinition.expeditionCost &&
     game.economy.ranchProducts[selectedDefinition.rationProductId] >=
       selectedDefinition.rationAmount;
+  const startIssue =
+    game.economy.coins < selectedDefinition.expeditionCost
+      ? `金币不足：需要 ${selectedDefinition.expeditionCost}`
+      : game.economy.ranchProducts[selectedDefinition.rationProductId] <
+          selectedDefinition.rationAmount
+        ? `${PRODUCT_NAMES[selectedDefinition.rationProductId]}不足：需要 ${selectedDefinition.rationAmount}`
+        : null;
   const canExpand =
     game.nextExpansion !== null &&
     game.farmLevel >= game.nextExpansion.requiredFarmLevel &&
@@ -307,7 +317,7 @@ export function MineScreen() {
         <article>
           <span>矿山遗物</span>
           <strong>{game.economy.relics}</strong>
-          <small>REINFORCED DISCOVERY</small>
+          <small>永久收藏 · 加固矿井有 8% 概率发现</small>
         </article>
       </section>
 
@@ -378,6 +388,8 @@ export function MineScreen() {
                 <span className="farm-tool-strip__hint">
                   {pendingAction
                     ? '正在保存本次矿山操作…'
+                    : startIssue
+                      ? startIssue
                     : `点击空闲矿井开采${selectedDefinition.name}；需${
                       PRODUCT_NAMES[selectedDefinition.rationProductId]
                     }×${selectedDefinition.rationAmount}`}
@@ -451,6 +463,8 @@ export function MineScreen() {
                         <small>
                           {deposit
                             ? `${remainingLabel(runtime.remainingMs)} · 预计 ${runtime.estimatedYield} 份`
+                            : startIssue
+                              ? startIssue
                             : `点击下方按钮开采${selectedDefinition.name}`}
                         </small>
                         <div className="farm-plot__tags">
@@ -496,6 +510,23 @@ export function MineScreen() {
                           >
                             用{PRODUCT_NAMES[deposit.supportProductId]}×{deposit.supportAmount}加固
                           </Button>
+                        )}
+                        {deposit && (
+                          <Popconfirm
+                            title={`放弃${deposit.name}任务？`}
+                            description="已投入的金币、口粮和加固材料不会返还。"
+                            okText="确认放弃"
+                            cancelText="取消"
+                            disabled={busy}
+                            onConfirm={() => void runAction({
+                              type: 'mine_abandon',
+                              shaftIndex: shaft.index,
+                            })}
+                          >
+                            <Button danger size="small" disabled={busy}>
+                              放弃任务
+                            </Button>
+                          </Popconfirm>
                         )}
                         {deposit && runtime.ready && (
                           <Button
@@ -686,7 +717,10 @@ export function MineScreen() {
                 <article>
                   <span>遗物收藏</span>
                   <strong>{game.economy.relics} 件</strong>
-                  <small>加固后的矿井有概率发现遗物</small>
+                  <small>
+                    加固矿井完成采掘时有 8% 概率发现；遗物是永久收藏，
+                    用于记录探索成就，不会消耗。
+                  </small>
                 </article>
               </div>
             </section>

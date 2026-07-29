@@ -695,9 +695,23 @@ export function FarmScreen() {
                         </Button>
                       )}
                       {crop && toolMode === 'shovel' && (
-                        <small className="farm-plot__tool-hint farm-plot__tool-hint--danger">
-                          点击田块铲除{crop.name}
-                        </small>
+                        <>
+                          <small className="farm-plot__tool-hint farm-plot__tool-hint--danger">
+                            铲除后不会返还种子或获得收成
+                          </small>
+                          <Button
+                            block
+                            danger
+                            size="small"
+                            disabled={busy}
+                            onClick={() => void runAction({
+                              type: 'farming_clear_plot',
+                              plotIndex: plot.index,
+                            })}
+                          >
+                            铲除{crop.name}
+                          </Button>
+                        </>
                       )}
                       {crop && runtime.ready && (
                         <Button

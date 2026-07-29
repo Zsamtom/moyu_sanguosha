@@ -1,6 +1,7 @@
 import {
   Button,
   InputNumber,
+  Popconfirm,
   Progress,
   Spin,
   Tag,
@@ -143,6 +144,7 @@ export function RanchScreen() {
   const clockOffset = useRef(0);
   const actionInFlight = useRef(false);
   const [selectedAnimal, setSelectedAnimal] = useState<RanchAnimalId>('chicken');
+  const [movingPenIndex, setMovingPenIndex] = useState<number>();
   const [marketOpen, setMarketOpen] = useState(false);
   const [quantities, setQuantities] = useState<Record<RanchProductId, number>>(
     Object.fromEntries(PRODUCT_IDS.map((productId) => [productId, 1])) as Record<RanchProductId, number>,
@@ -195,6 +197,9 @@ export function RanchScreen() {
   const runAction = async (action: RanchClientAction) => {
     if (!snapshot || actionInFlight.current) return;
     actionInFlight.current = true;
+    if (action.type !== 'ranch_move_animal') {
+      setMovingPenIndex(undefined);
+    }
     setBusy(true);
     setPendingAction(action);
     try {
@@ -213,6 +218,13 @@ export function RanchScreen() {
         toast.success(
           `已在 ${action.penIndex + 1} 号畜舍购入${next.ranch.animals[action.animalId].name}`,
         );
+      } else if (action.type === 'ranch_move_animal') {
+        setMovingPenIndex(undefined);
+        toast.success(
+          `已将动物移动至 ${action.toPenIndex + 1} 号畜舍`,
+        );
+      } else if (action.type === 'ranch_sell_animal') {
+        toast.success(`已出售 ${action.penIndex + 1} 号畜舍的动物`);
       }
     } catch (error) {
       if (
@@ -437,6 +449,7 @@ export function RanchScreen() {
                         type={selectedAnimal === animalId ? 'primary' : 'default'}
                         onClick={() => {
                           setSelectedAnimal(animalId);
+                          setMovingPenIndex(undefined);
                           toast.info(`已选择${animal.name}，请点击空置畜舍购入`);
                         }}
                       >
@@ -446,10 +459,21 @@ export function RanchScreen() {
                       </Button>
                     );
                   })}
+                  {movingPenIndex !== undefined && (
+                    <Button
+                      danger
+                      size="small"
+                      onClick={() => setMovingPenIndex(undefined)}
+                    >
+                      取消移栏
+                    </Button>
+                  )}
                   <span className="farm-tool-strip__hint">
                     {pendingAction
                       ? '正在保存本次牧场操作…'
-                      : `点击空置畜舍购入${selectedDefinition.name}；动物产品出售后回到农场账户`}
+                      : movingPenIndex !== undefined
+                        ? `已选择 ${movingPenIndex + 1} 号畜舍，请点击另一间空置畜舍`
+                        : `点击空置畜舍购入${selectedDefinition.name}；动物闲置时可以移栏或出售`}
                   </span>
                 </div>
               )}
@@ -459,13 +483,23 @@ export function RanchScreen() {
                   const runtime = ranchPenRuntime(pen, animal, now);
                   const attempted = pen.collectAttempts.includes(ownGame.ownerId);
                   const penPending =
-                    pendingAction !== undefined &&
-                    'penIndex' in pendingAction &&
-                    pendingAction.penIndex === pen.index;
+                    pendingAction?.type === 'ranch_move_animal'
+                      ? pendingAction.fromPenIndex === pen.index ||
+                        pendingAction.toPenIndex === pen.index
+                      : pendingAction !== undefined &&
+                        'penIndex' in pendingAction &&
+                        pendingAction.penIndex === pen.index;
+                  const canMoveHere =
+                    isOwnerView &&
+                    !animal &&
+                    !busy &&
+                    movingPenIndex !== undefined &&
+                    movingPenIndex !== pen.index;
                   const canBuyHere =
                     isOwnerView &&
                     !animal &&
                     !busy &&
+                    movingPenIndex === undefined &&
                     unlockedAnimals.includes(selectedAnimal) &&
                     economy.coins >= selectedDefinition.purchaseCost;
                   if (!pen.unlocked) {
@@ -485,19 +519,25 @@ export function RanchScreen() {
                   return (
                     <article
                       className={`farm-plot${runtime.ready ? ' farm-plot--ready' : ''}${
-                        canBuyHere ? ' farm-plot--tool-ready' : ''
+                        canBuyHere || canMoveHere ? ' farm-plot--tool-ready' : ''
                       }${penPending ? ' farm-plot--pending' : ''}`}
                       key={pen.index}
                       onClick={(event) => {
                         if (
-                          !canBuyHere ||
+                          (!canBuyHere && !canMoveHere) ||
                           (event.target as HTMLElement).closest('button')
                         ) return;
-                        void runAction({
-                          type: 'ranch_buy_animal',
-                          animalId: selectedAnimal,
-                          penIndex: pen.index,
-                        });
+                        void runAction(canMoveHere
+                          ? {
+                              type: 'ranch_move_animal',
+                              fromPenIndex: movingPenIndex,
+                              toPenIndex: pen.index,
+                            }
+                          : {
+                              type: 'ranch_buy_animal',
+                              animalId: selectedAnimal,
+                              penIndex: pen.index,
+                            });
                       }}
                     >
                       <header>
@@ -519,7 +559,9 @@ export function RanchScreen() {
                         <strong>{animal?.name ?? '空置畜舍'}</strong>
                         <small>
                           {!animal
-                            ? `点击下方按钮购入${selectedDefinition.name}`
+                            ? movingPenIndex !== undefined
+                              ? `点击下方按钮把动物移到 ${pen.index + 1} 号畜舍`
+                              : `点击下方按钮购入${selectedDefinition.name}`
                             : pen.fedAt === null
                               ? `等待投喂 · 产出${animal.productName}`
                               : `${remainingLabel(runtime.remainingMs)} · 预计 ${runtime.estimatedYield} 份${animal.productName}`}
@@ -541,17 +583,56 @@ export function RanchScreen() {
                             <Button
                               block
                               size="small"
-                              disabled={
-                                !canBuyHere
-                              }
-                              onClick={() => void runAction({
-                                type: 'ranch_buy_animal',
-                                animalId: selectedAnimal,
-                                penIndex: pen.index,
-                              })}
+                              type={canMoveHere ? 'primary' : 'default'}
+                              disabled={!canBuyHere && !canMoveHere}
+                              onClick={() => void runAction(canMoveHere
+                                ? {
+                                    type: 'ranch_move_animal',
+                                    fromPenIndex: movingPenIndex,
+                                    toPenIndex: pen.index,
+                                  }
+                                : {
+                                    type: 'ranch_buy_animal',
+                                    animalId: selectedAnimal,
+                                    penIndex: pen.index,
+                                  })}
                             >
-                              购入{selectedDefinition.name} · {selectedDefinition.purchaseCost}
+                              {canMoveHere
+                                ? '移到这里'
+                                : `购入${selectedDefinition.name} · ${selectedDefinition.purchaseCost}`}
                             </Button>
+                          )}
+                          {animal && (
+                            <>
+                              <Button
+                                size="small"
+                                disabled={busy || pen.fedAt !== null}
+                                title={pen.fedAt !== null ? '生产中，请先收取产品' : undefined}
+                                onClick={() => setMovingPenIndex(pen.index)}
+                              >
+                                {movingPenIndex === pen.index ? '已选择移栏' : '移动'}
+                              </Button>
+                              <Popconfirm
+                                title={`出售${animal.name}？`}
+                                description={`出售后返还 ${animal.resalePrice} 金币；生产中的动物需先收取产品。`}
+                                okText="确认出售"
+                                cancelText="取消"
+                                disabled={busy || pen.fedAt !== null}
+                                onConfirm={() => void runAction({
+                                  type: 'ranch_sell_animal',
+                                  penIndex: pen.index,
+                                })}
+                              >
+                                <Button
+                                  danger
+                                  size="small"
+                                  disabled={busy || pen.fedAt !== null}
+                                  title={pen.fedAt !== null ? '生产中，请先收取产品' : undefined}
+                                >
+                                  出售 · ◎{animal.resalePrice}
+                                </Button>
+                              </Popconfirm>
+                            </>
                           )}
                           {animal && pen.fedAt === null && (
                             <Button

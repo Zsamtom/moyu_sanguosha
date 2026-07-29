@@ -38,6 +38,15 @@ const actionSchema = z.discriminatedUnion("type", [
     penIndex: penIndexSchema,
   }).strict(),
   z.object({
+    type: z.literal("ranch_move_animal"),
+    fromPenIndex: penIndexSchema,
+    toPenIndex: penIndexSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("ranch_sell_animal"),
+    penIndex: penIndexSchema,
+  }).strict(),
+  z.object({
     type: z.literal("ranch_clean"),
     penIndex: penIndexSchema,
   }).strict(),

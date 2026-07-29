@@ -140,6 +140,45 @@ describe("linked mine engine", () => {
     expect(mine.ores.iron).toBe(MINE_DEPOSITS.iron.yield - 1);
   });
 
+  it("abandons an active expedition without refunding its linked resources", () => {
+    const mine = createMineGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "mine-seed",
+      now: start,
+    });
+    let result = applyMineAction(
+      mine,
+      economy(),
+      { type: "mine_start", depositId: "coal", shaftIndex: 0 },
+      start,
+    );
+    const coinsAfterStart = result.economy.coins;
+    const eggsAfterStart = result.economy.ranchProducts.egg;
+
+    result = applyMineAction(
+      result.mine,
+      result.economy,
+      { type: "mine_abandon", shaftIndex: 0 },
+      start + 1,
+    );
+
+    expect(result.mine.shafts[0]).toMatchObject({
+      depositId: null,
+      startedAt: null,
+      completesAt: null,
+    });
+    expect(result.economy.coins).toBe(coinsAfterStart);
+    expect(result.economy.ranchProducts.egg).toBe(eggsAfterStart);
+    expect(result).toMatchObject({ farmChanged: false, ranchChanged: false });
+    expect(() => applyMineAction(
+      result.mine,
+      result.economy,
+      { type: "mine_abandon", shaftIndex: 0 },
+      start + 2,
+    )).toThrow("矿井当前没有采掘任务");
+  });
+
   it("strictly validates restorable mine saves", () => {
     const mine = createMineGame({
       ownerId: "owner",

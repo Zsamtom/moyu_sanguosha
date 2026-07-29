@@ -27,6 +27,23 @@ describe("ranch HTTP schemas", () => {
       expectedRanchRevision: 3,
       action: { type: "ranch_feed", penIndex: 0 },
     })).toThrow();
+    expect(ranchActionEnvelopeSchema.parse({
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 3,
+      action: {
+        type: "ranch_move_animal",
+        fromPenIndex: 0,
+        toPenIndex: 1,
+      },
+    })).toBeTruthy();
+    expect(ranchActionEnvelopeSchema.parse({
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 3,
+      action: {
+        type: "ranch_sell_animal",
+        penIndex: 1,
+      },
+    })).toBeTruthy();
   });
 
   it("rejects injected owners, unsupported animals and invalid quantities", () => {

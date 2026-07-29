@@ -10,6 +10,7 @@ const animal: RanchAnimalDefinition = {
   requiredFarmLevel: 3,
   requiredRanchLevel: 1,
   purchaseCost: 80,
+  resalePrice: 40,
   feedCropId: 'wheat',
   feedAmount: 1,
   productionSeconds: 600,

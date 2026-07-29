@@ -201,6 +201,7 @@ export interface RanchAnimalDefinition {
   requiredFarmLevel: number;
   requiredRanchLevel: number;
   purchaseCost: number;
+  resalePrice: number;
   feedCropId: FarmCropId;
   feedAmount: number;
   productionSeconds: number;
@@ -290,6 +291,8 @@ export interface RanchGameView {
 export type RanchClientAction =
   | { type: 'ranch_buy_animal'; animalId: RanchAnimalId; penIndex: number }
   | { type: 'ranch_feed'; penIndex: number }
+  | { type: 'ranch_move_animal'; fromPenIndex: number; toPenIndex: number }
+  | { type: 'ranch_sell_animal'; penIndex: number }
   | { type: 'ranch_clean'; penIndex: number }
   | { type: 'ranch_collect'; penIndex: number }
   | { type: 'ranch_sell'; productId: RanchProductId; quantity: number }
@@ -428,6 +431,7 @@ export interface MineGameView {
 export type MineClientAction =
   | { type: 'mine_start'; depositId: MineDepositId; shaftIndex: number }
   | { type: 'mine_reinforce'; shaftIndex: number }
+  | { type: 'mine_abandon'; shaftIndex: number }
   | { type: 'mine_collect'; shaftIndex: number }
   | { type: 'mine_sell'; depositId: MineDepositId; quantity: number }
   | { type: 'mine_expand_shaft' }

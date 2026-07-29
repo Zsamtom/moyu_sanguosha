@@ -41,6 +41,7 @@ export interface RanchAnimalDefinition {
   readonly requiredFarmLevel: number;
   readonly requiredRanchLevel: number;
   readonly purchaseCost: number;
+  readonly resalePrice: number;
   readonly feedCropId: FarmingCropId;
   readonly feedAmount: number;
   readonly productionSeconds: number;
@@ -61,6 +62,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     requiredFarmLevel: 3,
     requiredRanchLevel: 1,
     purchaseCost: 80,
+    resalePrice: 40,
     feedCropId: "wheat",
     feedAmount: 1,
     productionSeconds: 10 * MINUTE,
@@ -76,6 +78,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     requiredFarmLevel: 4,
     requiredRanchLevel: 2,
     purchaseCost: 140,
+    resalePrice: 70,
     feedCropId: "corn",
     feedAmount: 1,
     productionSeconds: 20 * MINUTE,
@@ -91,6 +94,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     requiredFarmLevel: 5,
     requiredRanchLevel: 3,
     purchaseCost: 220,
+    resalePrice: 110,
     feedCropId: "carrot",
     feedAmount: 1,
     productionSeconds: 30 * MINUTE,
@@ -106,6 +110,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     requiredFarmLevel: 6,
     requiredRanchLevel: 4,
     purchaseCost: 360,
+    resalePrice: 180,
     feedCropId: "wheat",
     feedAmount: 2,
     productionSeconds: HOUR,
@@ -121,6 +126,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     requiredFarmLevel: 8,
     requiredRanchLevel: 6,
     purchaseCost: 720,
+    resalePrice: 360,
     feedCropId: "corn",
     feedAmount: 2,
     productionSeconds: 2 * HOUR,
@@ -136,6 +142,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     requiredFarmLevel: 10,
     requiredRanchLevel: 8,
     purchaseCost: 1_100,
+    resalePrice: 550,
     feedCropId: "carrot",
     feedAmount: 2,
     productionSeconds: 3 * HOUR,
@@ -257,6 +264,15 @@ export type RanchAction =
       readonly penIndex: number;
     }
   | {
+      readonly type: "ranch_move_animal";
+      readonly fromPenIndex: number;
+      readonly toPenIndex: number;
+    }
+  | {
+      readonly type: "ranch_sell_animal";
+      readonly penIndex: number;
+    }
+  | {
       readonly type: "ranch_clean";
       readonly penIndex: number;
     }
@@ -362,6 +378,8 @@ export type RanchRuleErrorCode =
   | "RANCH_PEN_LOCKED"
   | "RANCH_PEN_OCCUPIED"
   | "RANCH_PEN_EMPTY"
+  | "RANCH_ANIMAL_BUSY"
+  | "RANCH_INVALID_MOVE"
   | "RANCH_ALREADY_FED"
   | "RANCH_NOT_FED"
   | "RANCH_CARE_NOT_NEEDED"
@@ -661,6 +679,49 @@ export function applyRanchAction(
       "animal",
       `购入${animal.name}并安置在 ${pen.index + 1} 号畜舍，支出 ${animal.purchaseCost} 金币。`,
     );
+  } else if (action.type === "ranch_move_animal") {
+    if (action.fromPenIndex === action.toPenIndex) {
+      throw new RanchRuleError("RANCH_INVALID_MOVE", "动物已经在这间畜舍");
+    }
+    const source = requirePen(ranch, action.fromPenIndex);
+    const target = requirePen(ranch, action.toPenIndex);
+    if (!source.animalId) {
+      throw new RanchRuleError("RANCH_PEN_EMPTY", "原畜舍当前没有动物");
+    }
+    if (source.fedAt !== null) {
+      throw new RanchRuleError("RANCH_ANIMAL_BUSY", "生产中的动物不能移动，请先收取产品");
+    }
+    if (target.animalId !== null) {
+      throw new RanchRuleError("RANCH_PEN_OCCUPIED", "目标畜舍已有动物");
+    }
+    const animal = RANCH_ANIMALS[source.animalId];
+    Object.assign(target, emptyPen(target.index), { animalId: animal.id });
+    Object.assign(source, emptyPen(source.index));
+    addLog(
+      ranch,
+      effectiveNow,
+      "animal",
+      `将${animal.name}从 ${source.index + 1} 号畜舍移动至 ${target.index + 1} 号畜舍。`,
+    );
+  } else if (action.type === "ranch_sell_animal") {
+    const pen = requirePen(ranch, action.penIndex);
+    if (!pen.animalId) {
+      throw new RanchRuleError("RANCH_PEN_EMPTY", "畜舍当前没有动物");
+    }
+    if (pen.fedAt !== null) {
+      throw new RanchRuleError("RANCH_ANIMAL_BUSY", "生产中的动物不能出售，请先收取产品");
+    }
+    const animal = RANCH_ANIMALS[pen.animalId];
+    economy.coins += animal.resalePrice;
+    economyChanged = true;
+    ranch.statistics.coinsEarned += animal.resalePrice;
+    Object.assign(pen, emptyPen(pen.index));
+    addLog(
+      ranch,
+      effectiveNow,
+      "economy",
+      `出售 ${pen.index + 1} 号畜舍的${animal.name}，农场账户收入 ${animal.resalePrice} 金币。`,
+    );
   } else if (action.type === "ranch_feed") {
     const pen = requirePen(ranch, action.penIndex);
     if (!pen.animalId) {
@@ -755,7 +816,7 @@ export function applyRanchAction(
       "economy",
       `出售 ${action.quantity} 份${animal.productName}，农场账户收入 ${revenue} 金币。`,
     );
-  } else {
+  } else if (action.type === "ranch_expand_pen") {
     if (ranch.unlockedPens >= RANCH_MAX_PENS) {
       throw new RanchRuleError("RANCH_MAX_PENS", "全部畜舍均已扩建");
     }

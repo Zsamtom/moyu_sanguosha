@@ -258,6 +258,10 @@ export type MineAction =
       readonly shaftIndex: number;
     }
   | {
+      readonly type: "mine_abandon";
+      readonly shaftIndex: number;
+    }
+  | {
       readonly type: "mine_collect";
       readonly shaftIndex: number;
     }
@@ -620,6 +624,19 @@ export function applyMineAction(
       effectiveNow,
       "expedition",
       `${shaft.index + 1} 号矿井进入${deposit.name}，支出 ${deposit.expeditionCost} 金币并消耗牧场口粮。`,
+    );
+  } else if (action.type === "mine_abandon") {
+    const shaft = requireShaft(mine, action.shaftIndex);
+    if (!shaft.depositId) {
+      throw new MineRuleError("MINE_SHAFT_IDLE", "矿井当前没有采掘任务");
+    }
+    const deposit = MINE_DEPOSITS[shaft.depositId];
+    Object.assign(shaft, emptyShaft(shaft.index, shaft.cycle));
+    addLog(
+      mine,
+      effectiveNow,
+      "expedition",
+      `放弃 ${shaft.index + 1} 号矿井的${deposit.name}任务；已投入的经费和口粮不予返还。`,
     );
   } else if (action.type === "mine_reinforce") {
     const shaft = requireShaft(mine, action.shaftIndex);

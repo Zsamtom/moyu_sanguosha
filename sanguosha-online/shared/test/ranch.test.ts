@@ -120,6 +120,76 @@ describe("persistent ranch engine", () => {
     );
   });
 
+  it("moves idle animals between pens and sells them back at the resale price", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-seed",
+      now: start,
+    });
+    let result = applyRanchAction(
+      ranch,
+      economy(),
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_move_animal", fromPenIndex: 0, toPenIndex: 1 },
+      start + 1,
+    );
+    expect(result.ranch.pens[0]!.animalId).toBeNull();
+    expect(result.ranch.pens[1]!.animalId).toBe("chicken");
+
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_sell_animal", penIndex: 1 },
+      start + 2,
+    );
+    expect(result.ranch.pens[1]!.animalId).toBeNull();
+    expect(result.economy.coins).toBe(
+      1_000 -
+      RANCH_ANIMALS.chicken.purchaseCost +
+      RANCH_ANIMALS.chicken.resalePrice,
+    );
+  });
+
+  it("keeps producing animals in their pen until products are collected", () => {
+    let result = applyRanchAction(
+      createRanchGame({
+        ownerId: "owner",
+        ownerName: "经营者",
+        seed: "ranch-seed",
+        now: start,
+      }),
+      economy(),
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_feed", penIndex: 0 },
+      start,
+    );
+
+    expect(() => applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_move_animal", fromPenIndex: 0, toPenIndex: 1 },
+      start + 1,
+    )).toThrow("生产中的动物不能移动");
+    expect(() => applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_sell_animal", penIndex: 0 },
+      start + 1,
+    )).toThrow("生产中的动物不能出售");
+  });
+
   it("reduces an unattended production cycle by one product", () => {
     let ranch = createRanchGame({
       ownerId: "owner",

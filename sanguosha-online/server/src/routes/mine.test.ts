@@ -18,6 +18,12 @@ describe("mine HTTP schemas", () => {
       expectedMineRevision: 2,
       action: { type: "mine_collect", shaftIndex: 0 },
     })).toThrow();
+    expect(mineActionEnvelopeSchema.parse({
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 5,
+      expectedMineRevision: 2,
+      action: { type: "mine_abandon", shaftIndex: 0 },
+    })).toBeTruthy();
   });
 
   it("rejects unsupported deposits, injected owners and invalid quantities", () => {
