@@ -139,6 +139,7 @@ export type FarmClientAction =
   | { type: 'farming_plant'; cropId: FarmCropId; plotIndex: number }
   | { type: 'farming_tend'; care: 'water' | 'weed' | 'pest'; plotIndex: number }
   | { type: 'farming_harvest'; plotIndex: number }
+  | { type: 'farming_clear_plot'; plotIndex: number }
   | { type: 'farming_sell'; cropId: FarmCropId; quantity: number }
   | { type: 'farming_expand_plot' }
   | { type: 'farming_upgrade_dog' };

@@ -128,6 +128,33 @@ describe("real-time farming engine", () => {
     expect(state.produce.wheat).toBe(1);
   });
 
+  it("lets the owner shovel an occupied plot without refunding its seed", () => {
+    let state = game();
+    state = applyFarmingAction(state, {
+      type: "farming_plant",
+      cropId: "wheat",
+      plotIndex: 0,
+    }, start);
+    const seedsAfterPlanting = state.seeds.wheat;
+
+    state = applyFarmingAction(state, {
+      type: "farming_clear_plot",
+      plotIndex: 0,
+    }, start + 1);
+
+    expect(state.plots[0]).toMatchObject({
+      cropId: null,
+      plantedAt: null,
+      maturesAt: null,
+    });
+    expect(state.seeds.wheat).toBe(seedsAfterPlanting);
+    expect(state.logs.at(-1)?.text).toContain("铲除");
+    expect(() => applyFarmingAction(state, {
+      type: "farming_clear_plot",
+      plotIndex: 0,
+    }, start + 2)).toThrow("田地当前为空");
+  });
+
   it("opens permanent land expansions only after level and coin requirements", () => {
     let state = game();
     expect(() => applyFarmingAction(state, {

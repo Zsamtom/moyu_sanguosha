@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import { api, ApiError, errorMessage } from './api';
 import { AppShell } from './components/AppShell';
 import { ChangePasswordModal, RequiredPasswordChangeScreen } from './components/ChangePasswordScreen';
+import { HomesteadNav, type HomesteadView } from './components/HomesteadNav';
 import { LobbyScreen } from './components/LobbyScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { RoomScreen } from './components/RoomScreen';
@@ -572,8 +573,6 @@ export default function App() {
         connected={connected}
         onLobby={() => setWorkspaceView('lobby')}
         onFarm={() => setWorkspaceView('farm')}
-        onRanch={() => setWorkspaceView('ranch')}
-        onMine={() => setWorkspaceView('mine')}
         onReader={() => setWorkspaceView('reader')}
         onAdmin={() => setWorkspaceView('admin')}
         onChangePassword={() => {
@@ -643,11 +642,32 @@ export default function App() {
             onChooseGodFaction={chooseGodFaction}
           />
         ) : workspaceView === 'farm' ? (
-          <FarmScreen />
+          <>
+            <HomesteadNav
+              active="farm"
+              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onExit={() => setWorkspaceView('lobby')}
+            />
+            <FarmScreen />
+          </>
         ) : workspaceView === 'ranch' ? (
-          <RanchScreen />
+          <>
+            <HomesteadNav
+              active="ranch"
+              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onExit={() => setWorkspaceView('lobby')}
+            />
+            <RanchScreen />
+          </>
         ) : workspaceView === 'mine' ? (
-          <MineScreen />
+          <>
+            <HomesteadNav
+              active="mine"
+              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onExit={() => setWorkspaceView('lobby')}
+            />
+            <MineScreen />
+          </>
         ) : workspaceView === 'reader' ? (
           <NovelReaderScreen />
         ) : workspaceView === 'admin' && user.role === 'admin' ? (

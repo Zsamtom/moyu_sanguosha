@@ -7,7 +7,7 @@ import {
   Tag,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
 import type {
   RanchAnimalDefinition,
@@ -39,6 +39,9 @@ const PRODUCT_IDS: RanchProductId[] = [
   'milk',
   'goat_milk',
 ];
+
+const RANCH_DAILY_HELP_LIMIT = 20;
+const RANCH_DAILY_COLLECT_LIMIT = 10;
 
 const FEED_NAMES = {
   wheat: '小麦',
@@ -137,6 +140,7 @@ export function RanchScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const clockOffset = useRef(0);
   const [selectedAnimal, setSelectedAnimal] = useState<RanchAnimalId>('chicken');
   const [quantities, setQuantities] = useState<Record<RanchProductId, number>>(
     Object.fromEntries(PRODUCT_IDS.map((productId) => [productId, 1])) as Record<RanchProductId, number>,
@@ -147,7 +151,8 @@ export function RanchScreen() {
     try {
       const next = await api.getRanch();
       setSnapshot(next);
-      setNow(Date.now());
+      clockOffset.current = next.ranch.serverTime - Date.now();
+      setNow(next.ranch.serverTime);
       if (
         neighborRanch &&
         !next.neighbors.some((candidate) => candidate.ownerId === neighborRanch.ownerId)
@@ -163,7 +168,10 @@ export function RanchScreen() {
 
   useEffect(() => {
     void load();
-    const clock = window.setInterval(() => setNow(Date.now()), 1_000);
+    const clock = window.setInterval(
+      () => setNow(Date.now() + clockOffset.current),
+      1_000,
+    );
     const refresh = window.setInterval(() => void load(true), 30_000);
     return () => {
       window.clearInterval(clock);
@@ -192,7 +200,8 @@ export function RanchScreen() {
         action,
       );
       setSnapshot(next);
-      setNow(Date.now());
+      clockOffset.current = next.ranch.serverTime - Date.now();
+      setNow(next.ranch.serverTime);
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -212,8 +221,10 @@ export function RanchScreen() {
     if (busy) return;
     setBusy(true);
     try {
-      setNeighborRanch(await api.getRanchNeighbor(ownerId));
-      setNow(Date.now());
+      const next = await api.getRanchNeighbor(ownerId);
+      setNeighborRanch(next);
+      clockOffset.current = next.serverTime - Date.now();
+      setNow(next.serverTime);
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -233,7 +244,8 @@ export function RanchScreen() {
       );
       setSnapshot({ ranch: next.ranch, neighbors: next.neighbors });
       setNeighborRanch(next.neighbor);
-      setNow(Date.now());
+      clockOffset.current = next.ranch.serverTime - Date.now();
+      setNow(next.ranch.serverTime);
       toast.success(
         next.outcome === 'helped'
           ? '已帮助农友清扫畜舍'
@@ -319,26 +331,16 @@ export function RanchScreen() {
   return (
     <main className="farm-page ranch-page">
       {toastContext}
-      <header className="farm-hero">
-        <div>
-          <p className="farm-kicker">PERSISTENT RANCH / REALTIME-V1</p>
-          <h1>{isOwnerView ? '我的长期牧场' : `${displayGame.ownerName}的牧场`}</h1>
-          <p className="farm-subtitle">
-            农作物转化饲料 · 动物离线生产 · 农友清扫与限额拿取
-          </p>
-        </div>
-        <div className="farm-day-block" aria-label="牧场等级">
-          <span>RANCH LEVEL</span>
-          <strong>{String(displayGame.level).padStart(2, '0')}</strong>
-          <small>{displayGame.unlockedPens} / 8 间畜舍</small>
-        </div>
-      </header>
-
       <section className="farm-status-strip" aria-label="牧场状态">
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
         <span>场主：{displayGame.ownerName}</span>
+        <span>牧场：LV {displayGame.level} / {displayGame.unlockedPens} 间畜舍</span>
         <span>农场：LV {displayGame.farmLevel}</span>
         <span>护院犬：{displayGame.dogLevel} 级 / 拦截 {displayGame.dogBlockChance}%</span>
+        <span>
+          今日互助：{ownGame.dailySocial?.helps ?? 0}/{RANCH_DAILY_HELP_LIMIT} ·
+          拿取：{ownGame.dailySocial?.collects ?? 0}/{RANCH_DAILY_COLLECT_LIMIT}
+        </span>
         <span>
           修订：F{String(displayGame.farmRevision).padStart(5, '0')} /
           R{String(displayGame.revision).padStart(5, '0')}
@@ -563,7 +565,10 @@ export function RanchScreen() {
                           {animal && runtime.hasMess && (
                             <Button
                               size="small"
-                              disabled={busy}
+                              disabled={
+                                busy ||
+                                (ownGame.dailySocial?.helps ?? 0) >= RANCH_DAILY_HELP_LIMIT
+                              }
                               onClick={() => void runVisitAction({
                                 type: 'ranch_help',
                                 penIndex: pen.index,
@@ -579,6 +584,8 @@ export function RanchScreen() {
                               disabled={
                                 busy ||
                                 attempted ||
+                                (ownGame.dailySocial?.collects ?? 0) >=
+                                  RANCH_DAILY_COLLECT_LIMIT ||
                                 pen.taken >= (runtime.estimatedYield >= 3 ? 1 : 0)
                               }
                               onClick={() => void runVisitAction({

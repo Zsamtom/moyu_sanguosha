@@ -7,7 +7,7 @@ import {
   Tag,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
 import type {
   MineClientAction,
@@ -134,6 +134,7 @@ export function MineScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const clockOffset = useRef(0);
   const [selectedDeposit, setSelectedDeposit] = useState<MineDepositId>('coal');
   const [quantities, setQuantities] = useState<Record<MineDepositId, number>>(
     Object.fromEntries(DEPOSIT_IDS.map((depositId) => [depositId, 1])) as Record<MineDepositId, number>,
@@ -142,8 +143,10 @@ export function MineScreen() {
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      setSnapshot(await api.getMine());
-      setNow(Date.now());
+      const next = await api.getMine();
+      setSnapshot(next);
+      clockOffset.current = next.mine.serverTime - Date.now();
+      setNow(next.mine.serverTime);
     } catch (error) {
       if (!quiet) toast.error(errorMessage(error));
     } finally {
@@ -153,7 +156,10 @@ export function MineScreen() {
 
   useEffect(() => {
     void load();
-    const clock = window.setInterval(() => setNow(Date.now()), 1_000);
+    const clock = window.setInterval(
+      () => setNow(Date.now() + clockOffset.current),
+      1_000,
+    );
     const refresh = window.setInterval(() => void load(true), 30_000);
     return () => {
       window.clearInterval(clock);
@@ -173,7 +179,8 @@ export function MineScreen() {
         action,
       );
       setSnapshot(next);
-      setNow(Date.now());
+      clockOffset.current = next.mine.serverTime - Date.now();
+      setNow(next.mine.serverTime);
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -252,24 +259,10 @@ export function MineScreen() {
   return (
     <main className="farm-page mine-page">
       {toastContext}
-      <header className="farm-hero">
-        <div>
-          <p className="farm-kicker">PERSISTENT MINE / REALTIME-V1</p>
-          <h1>我的长期矿山</h1>
-          <p className="farm-subtitle">
-            牧场补给采掘 · 离线推进 · 风险加固 · 矿石回流农场经济
-          </p>
-        </div>
-        <div className="farm-day-block" aria-label="矿山等级">
-          <span>MINE LEVEL</span>
-          <strong>{String(game.level).padStart(2, '0')}</strong>
-          <small>{game.unlockedShafts} / 6 条矿井</small>
-        </div>
-      </header>
-
       <section className="farm-status-strip" aria-label="矿山状态">
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
         <span>矿主：{game.ownerName}</span>
+        <span>矿山：LV {game.level} / {game.unlockedShafts} 条矿井</span>
         <span>农场：LV {game.farmLevel}</span>
         <span>牧场：LV {game.ranchLevel}</span>
         <span>

@@ -2,12 +2,11 @@ import {
   Button,
   InputNumber,
   Progress,
-  Select,
   Spin,
   Tag,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
 import type {
   FarmClientAction,
@@ -41,6 +40,9 @@ const TREND_LABELS: Record<-1 | 0 | 1, string> = {
   [1]: '↑ 上行',
 };
 
+const FARM_DAILY_HELP_LIMIT = 20;
+const FARM_DAILY_STEAL_LIMIT = 20;
+
 export interface FarmPlotRuntime {
   ready: boolean;
   progress: number;
@@ -48,6 +50,29 @@ export interface FarmPlotRuntime {
   hasPests: boolean;
   estimatedYield: number;
   remainingMs: number;
+}
+
+export type FarmPlotTool =
+  | { type: 'plant'; cropId: FarmCropId }
+  | { type: 'shovel' };
+
+export function farmPlotToolAction(
+  tool: FarmPlotTool,
+  plot: FarmPlot,
+): FarmClientAction | null {
+  if (!plot.unlocked) return null;
+  if (tool.type === 'shovel') {
+    return plot.cropId === null
+      ? null
+      : { type: 'farming_clear_plot', plotIndex: plot.index };
+  }
+  return plot.cropId === null
+    ? {
+        type: 'farming_plant',
+        cropId: tool.cropId,
+        plotIndex: plot.index,
+      }
+    : null;
 }
 
 export function farmPlotRuntime(
@@ -134,7 +159,10 @@ export function FarmScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const clockOffset = useRef(0);
   const [selectedCrop, setSelectedCrop] = useState<FarmCropId>('wheat');
+  const [toolMode, setToolMode] = useState<'plant' | 'shovel'>('plant');
+  const [marketOpen, setMarketOpen] = useState(false);
   const [quantities, setQuantities] = useState<Record<FarmCropId, number>>(
     Object.fromEntries(CROP_IDS.map((cropId) => [cropId, 1])) as Record<FarmCropId, number>,
   );
@@ -144,7 +172,8 @@ export function FarmScreen() {
     try {
       const next = await api.getFarm();
       setSnapshot(next);
-      setNow(Date.now());
+      clockOffset.current = next.farm.serverTime - Date.now();
+      setNow(next.farm.serverTime);
       if (neighborFarm) {
         const summary = next.neighbors.find(
           (candidate) => candidate.ownerId === neighborFarm.ownerId,
@@ -160,7 +189,10 @@ export function FarmScreen() {
 
   useEffect(() => {
     void load();
-    const clock = window.setInterval(() => setNow(Date.now()), 1_000);
+    const clock = window.setInterval(
+      () => setNow(Date.now() + clockOffset.current),
+      1_000,
+    );
     const refresh = window.setInterval(() => void load(true), 30_000);
     return () => {
       window.clearInterval(clock);
@@ -185,7 +217,8 @@ export function FarmScreen() {
     try {
       const next = await api.applyFarmAction(snapshot.farm.revision, action);
       setSnapshot(next);
-      setNow(Date.now());
+      clockOffset.current = next.farm.serverTime - Date.now();
+      setNow(next.farm.serverTime);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'FARM_REVISION_CONFLICT') {
         await load();
@@ -200,8 +233,10 @@ export function FarmScreen() {
     if (busy) return;
     setBusy(true);
     try {
-      setNeighborFarm(await api.getFarmNeighbor(ownerId));
-      setNow(Date.now());
+      const next = await api.getFarmNeighbor(ownerId);
+      setNeighborFarm(next);
+      clockOffset.current = next.serverTime - Date.now();
+      setNow(next.serverTime);
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -225,7 +260,8 @@ export function FarmScreen() {
         marketDirectorAvailable: next.marketDirectorAvailable,
       });
       setNeighborFarm(next.neighbor);
-      setNow(Date.now());
+      clockOffset.current = next.farm.serverTime - Date.now();
+      setNow(next.farm.serverTime);
       toast.success(
         next.outcome === 'helped'
           ? '已帮助农友照料作物'
@@ -310,25 +346,15 @@ export function FarmScreen() {
   return (
     <main className="farm-page">
       {toastContext}
-      <header className="farm-hero">
-        <div>
-          <p className="farm-kicker">PERSISTENT FARM / REALTIME-V2</p>
-          <h1>{isOwnerView ? '我的长期农场' : `${displayGame.ownerName}的农场`}</h1>
-          <p className="farm-subtitle">
-            服务器时间持续生长 · 自动保存 · 农友互助与限额摘取
-          </p>
-        </div>
-        <div className="farm-day-block" aria-label="农场等级">
-          <span>FARM LEVEL</span>
-          <strong>{String(displayGame.level).padStart(2, '0')}</strong>
-          <small>{displayGame.unlockedPlots} / 12 块田</small>
-        </div>
-      </header>
-
       <section className="farm-status-strip" aria-label="农场状态">
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
         <span>场主：{displayGame.ownerName}</span>
+        <span>农场：LV {displayGame.level} / {displayGame.unlockedPlots} 块田</span>
         <span>护院犬：{displayGame.dogLevel} 级 / 拦截 {displayGame.dogBlockChance}%</span>
+        <span>
+          今日互助：{ownGame.dailySocial?.helps ?? 0}/{FARM_DAILY_HELP_LIMIT} ·
+          摘取：{ownGame.dailySocial?.steals ?? 0}/{FARM_DAILY_STEAL_LIMIT}
+        </span>
         <span>修订：{String(displayGame.revision).padStart(5, '0')}</span>
         {!isOwnerView && (
           <Button size="small" onClick={() => setNeighborFarm(undefined)}>
@@ -369,14 +395,6 @@ export function FarmScreen() {
         </article>
       </section>
 
-      <section className={`farm-market-event farm-market-event--${displayGame.marketEvent.tone}`}>
-        <div>
-          <span>DAILY MARKET · {displayGame.marketEvent.source.toUpperCase()}</span>
-          <h2>{displayGame.marketEvent.title}</h2>
-        </div>
-        <p>{displayGame.marketEvent.summary}</p>
-      </section>
-
       <div className="farm-document-grid">
         <section className="farm-panel farm-panel--field">
           <header className="farm-panel__header">
@@ -384,24 +402,61 @@ export function FarmScreen() {
               <span>SECTION 01</span>
               <h2>{isOwnerView ? '实时田块作业' : '农友田块访问'}</h2>
             </div>
-            {isOwnerView && (
-              <Select
-                aria-label="播种作物"
-                size="small"
-                value={selectedCrop}
-                options={unlockedCrops.map((cropId) => ({
-                  value: cropId,
-                  label: `播种：${ownGame.crops[cropId].name}`,
-                }))}
-                onChange={setSelectedCrop}
-              />
-            )}
           </header>
+          {isOwnerView && (
+            <div className="farm-tool-strip" aria-label="田块工具">
+              <span className="farm-tool-strip__label">播种</span>
+              {unlockedCrops.map((cropId) => (
+                <Button
+                  key={cropId}
+                  aria-pressed={toolMode === 'plant' && selectedCrop === cropId}
+                  size="small"
+                  type={toolMode === 'plant' && selectedCrop === cropId ? 'primary' : 'default'}
+                  onClick={() => {
+                    setSelectedCrop(cropId);
+                    setToolMode('plant');
+                  }}
+                >
+                  {ownGame.crops[cropId].name}
+                  <small>×{inventory.seeds[cropId]}</small>
+                </Button>
+              ))}
+              <Button
+                danger
+                aria-pressed={toolMode === 'shovel'}
+                size="small"
+                type={toolMode === 'shovel' ? 'primary' : 'default'}
+                onClick={() => setToolMode('shovel')}
+              >
+                铲子
+              </Button>
+              <span className="farm-tool-strip__hint">
+                {toolMode === 'shovel'
+                  ? '点击有作物的田块铲除'
+                  : `点击空田播种${ownGame.crops[selectedCrop].name}`}
+              </span>
+            </div>
+          )}
           <div className="farm-plots farm-plots--realtime">
             {displayGame.plots.map((plot) => {
               const crop = plot.cropId ? displayGame.crops[plot.cropId] : null;
               const runtime = farmPlotRuntime(plot, crop, now);
               const attempted = plot.stealAttempts.includes(ownGame.ownerId);
+              const plotToolAction = isOwnerView
+                ? farmPlotToolAction(
+                    toolMode === 'shovel'
+                      ? { type: 'shovel' }
+                      : { type: 'plant', cropId: selectedCrop },
+                    plot,
+                  )
+                : null;
+              const plotToolReady =
+                !busy &&
+                plotToolAction !== null &&
+                (
+                  plotToolAction.type !== 'farming_plant' ||
+                  inventory.seeds[plotToolAction.cropId] > 0
+                );
               if (!plot.unlocked) {
                 return (
                   <article className="farm-plot farm-plot--locked" key={plot.index}>
@@ -418,8 +473,18 @@ export function FarmScreen() {
               }
               return (
                 <article
-                  className={`farm-plot${runtime.ready ? ' farm-plot--ready' : ''}`}
+                  className={`farm-plot${runtime.ready ? ' farm-plot--ready' : ''}${
+                    plotToolReady ? ' farm-plot--tool-ready' : ''
+                  }`}
                   key={plot.index}
+                  onClick={(event) => {
+                    if (
+                      !plotToolReady ||
+                      !plotToolAction ||
+                      (event.target as HTMLElement).closest('button')
+                    ) return;
+                    void runAction(plotToolAction);
+                  }}
                 >
                   <header>
                     <span>PLOT-{String(plot.index + 1).padStart(2, '0')}</span>
@@ -430,7 +495,13 @@ export function FarmScreen() {
                     <small>
                       {crop
                         ? `${remainingLabel(runtime.remainingMs)} · 预计产量 ${runtime.estimatedYield}`
-                        : '选择作物后即可播种'}
+                        : !isOwnerView
+                          ? '当前田块为空'
+                          : toolMode === 'shovel'
+                            ? '空田无需铲除'
+                            : inventory.seeds[selectedCrop] > 0
+                              ? `点击田块播种${ownGame.crops[selectedCrop].name}`
+                              : `${ownGame.crops[selectedCrop].name}种子不足，请先到市场购入`}
                     </small>
                     <div className="farm-plot__tags">
                       {plot.watered && <Tag color="blue">已浇水</Tag>}
@@ -445,19 +516,10 @@ export function FarmScreen() {
 
                   {isOwnerView ? (
                     <div className="farm-plot__actions">
-                      {!crop && (
-                        <Button
-                          block
-                          size="small"
-                          disabled={busy || inventory.seeds[selectedCrop] < 1}
-                          onClick={() => void runAction({
-                            type: 'farming_plant',
-                            cropId: selectedCrop,
-                            plotIndex: plot.index,
-                          })}
-                        >
-                          播种{ownGame.crops[selectedCrop].name}
-                        </Button>
+                      {crop && toolMode === 'shovel' && (
+                        <small className="farm-plot__tool-hint farm-plot__tool-hint--danger">
+                          点击田块铲除{crop.name}
+                        </small>
                       )}
                       {crop && runtime.ready && (
                         <Button
@@ -518,7 +580,10 @@ export function FarmScreen() {
                       {crop && !plot.watered && (
                         <Button
                           size="small"
-                          disabled={busy}
+                          disabled={
+                            busy ||
+                            (ownGame.dailySocial?.helps ?? 0) >= FARM_DAILY_HELP_LIMIT
+                          }
                           onClick={() => void runVisitAction({
                             type: 'farming_help',
                             care: 'water',
@@ -531,7 +596,10 @@ export function FarmScreen() {
                       {crop && runtime.hasWeeds && (
                         <Button
                           size="small"
-                          disabled={busy}
+                          disabled={
+                            busy ||
+                            (ownGame.dailySocial?.helps ?? 0) >= FARM_DAILY_HELP_LIMIT
+                          }
                           onClick={() => void runVisitAction({
                             type: 'farming_help',
                             care: 'weed',
@@ -544,7 +612,10 @@ export function FarmScreen() {
                       {crop && runtime.hasPests && (
                         <Button
                           size="small"
-                          disabled={busy}
+                          disabled={
+                            busy ||
+                            (ownGame.dailySocial?.helps ?? 0) >= FARM_DAILY_HELP_LIMIT
+                          }
                           onClick={() => void runVisitAction({
                             type: 'farming_help',
                             care: 'pest',
@@ -561,6 +632,7 @@ export function FarmScreen() {
                           disabled={
                             busy ||
                             attempted ||
+                            (ownGame.dailySocial?.steals ?? 0) >= FARM_DAILY_STEAL_LIMIT ||
                             plot.stolen >= (
                               runtime.estimatedYield < 3
                                 ? 0
@@ -590,9 +662,16 @@ export function FarmScreen() {
                 <span>SECTION 02</span>
                 <h2>种子与收购市场</h2>
               </div>
-              <small>DAILY QUOTES / COIN</small>
+              <Button
+                aria-expanded={marketOpen}
+                size="small"
+                type="text"
+                onClick={() => setMarketOpen((current) => !current)}
+              >
+                {marketOpen ? '收起 ↑' : '展开 ↓'}
+              </Button>
             </header>
-            <div className="farm-table-wrap">
+            {marketOpen && <div className="farm-table-wrap">
               <table className="farm-table">
                 <thead>
                   <tr>
@@ -676,7 +755,7 @@ export function FarmScreen() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </div>}
           </section>
         )}
 

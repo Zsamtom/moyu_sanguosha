@@ -29,6 +29,13 @@ describe("real-time farm HTTP schemas", () => {
         plotIndex: 11,
       },
     })).toBeTruthy();
+    expect(farmActionEnvelopeSchema.parse({
+      expectedRevision: 6,
+      action: {
+        type: "farming_clear_plot",
+        plotIndex: 4,
+      },
+    })).toBeTruthy();
   });
 
   it("rejects injected player ids and invalid quantities", () => {

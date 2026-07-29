@@ -357,6 +357,10 @@ export type FarmingAction =
       readonly plotIndex: number;
     }
   | {
+      readonly type: "farming_clear_plot";
+      readonly plotIndex: number;
+    }
+  | {
       readonly type: "farming_sell";
       readonly cropId: FarmingCropId;
       readonly quantity: number;
@@ -1030,6 +1034,19 @@ export function applyFarmingAction(
       }。`,
     );
     resetPlot(plot);
+  } else if (action.type === "farming_clear_plot") {
+    const plot = requirePlot(game, action.plotIndex);
+    if (!plot.cropId) {
+      throw new FarmingRuleError("FARMING_PLOT_EMPTY", "田地当前为空");
+    }
+    const crop = FARMING_CROPS[plot.cropId];
+    resetPlot(plot);
+    addLog(
+      game,
+      effectiveNow,
+      "plant",
+      `铲除了 ${plot.index + 1} 号田的${crop.name}，本次种植未获得收成。`,
+    );
   } else if (action.type === "farming_sell") {
     if (!isCropId(action.cropId)) {
       throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
@@ -1075,7 +1092,7 @@ export function applyFarmingAction(
       "progression",
       `开垦了第 ${game.unlockedPlots} 块土地。`,
     );
-  } else {
+  } else if (action.type === "farming_upgrade_dog") {
     const upgrade = FARMING_DOG_UPGRADES.find(
       (candidate) => candidate.level === game.dogLevel + 1,
     );

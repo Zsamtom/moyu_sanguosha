@@ -47,6 +47,10 @@ const actionSchema = z.discriminatedUnion("type", [
     plotIndex: plotIndexSchema,
   }).strict(),
   z.object({
+    type: z.literal("farming_clear_plot"),
+    plotIndex: plotIndexSchema,
+  }).strict(),
+  z.object({
     type: z.literal("farming_sell"),
     cropId: cropIdSchema,
     quantity: quantitySchema,

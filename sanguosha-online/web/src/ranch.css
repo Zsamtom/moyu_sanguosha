@@ -3,8 +3,8 @@
 }
 
 .ranch-lock {
-  margin: 24px 0;
-  padding: clamp(24px, 5vw, 58px);
+  margin: 12px 0;
+  padding: clamp(16px, 3vw, 30px);
   border: 2px solid #111;
   background:
     linear-gradient(90deg, rgba(0, 0, 0, .035) 1px, transparent 1px),
@@ -21,24 +21,24 @@
 .ranch-lock h2 {
   max-width: 760px;
   margin: 10px 0;
-  font-size: clamp(25px, 4vw, 42px);
+  font-size: clamp(19px, 3vw, 28px);
   letter-spacing: -.035em;
 }
 
 .ranch-lock p {
   max-width: 720px;
   color: #555;
-  line-height: 1.8;
+  line-height: 1.55;
 }
 
 .ranch-lock .ant-progress {
   max-width: 620px;
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .ranch-pen__body {
   position: relative;
-  min-height: 126px;
+  min-height: 90px;
 }
 
 .ranch-animal-mark {
@@ -46,8 +46,8 @@
   top: 14px;
   right: 16px;
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   border: 1px solid #111;
   border-radius: 50%;
@@ -62,7 +62,7 @@
 
 .ranch-resource-grid article {
   min-width: 0;
-  padding: 22px;
+  padding: 13px;
   border-right: 1px solid #d5d5d5;
 }
 
@@ -80,8 +80,8 @@
 
 .ranch-resource-grid strong {
   display: block;
-  margin: 8px 0;
-  font: 700 28px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  margin: 5px 0;
+  font: 700 20px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (max-width: 640px) {

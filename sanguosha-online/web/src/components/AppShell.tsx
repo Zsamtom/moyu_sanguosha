@@ -12,8 +12,6 @@ interface AppShellProps {
   children: React.ReactNode;
   onLobby: () => void;
   onFarm: () => void;
-  onRanch: () => void;
-  onMine: () => void;
   onReader: () => void;
   onAdmin: () => void;
   onChangePassword: () => void;
@@ -27,17 +25,17 @@ export function AppShell({
   children,
   onLobby,
   onFarm,
-  onRanch,
-  onMine,
   onReader,
   onAdmin,
   onChangePassword,
   onLogout,
 }: AppShellProps) {
   const lockedInRoom = view === 'room' || view === 'game';
+  const inHomestead = view === 'farm' || view === 'ranch' || view === 'mine';
+  const immersive = lockedInRoom || inHomestead;
   return (
-    <Layout className={`app-layout${view === 'farm' || view === 'ranch' || view === 'mine' ? ' app-layout--farm' : ''}`}>
-      {!lockedInRoom && <header className="app-header">
+    <Layout className={`app-layout${inHomestead ? ' app-layout--farm' : ''}`}>
+      {!immersive && <header className="app-header">
         <Brand compact />
         <nav className="app-nav" aria-label="主导航">
           <section className="app-nav__section" aria-labelledby="game-navigation">
@@ -53,14 +51,8 @@ export function AppShell({
           </section>
           <section className="app-nav__section" aria-labelledby="function-navigation">
             <span id="function-navigation" className="app-nav__label">功能</span>
-            <Button aria-current={view === 'farm' ? 'page' : undefined} type={view === 'farm' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onFarm}>
+            <Button type="text" disabled={lockedInRoom} onClick={onFarm}>
               农场
-            </Button>
-            <Button aria-current={view === 'ranch' ? 'page' : undefined} type={view === 'ranch' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onRanch}>
-              牧场
-            </Button>
-            <Button aria-current={view === 'mine' ? 'page' : undefined} type={view === 'mine' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onMine}>
-              矿山
             </Button>
             <Button aria-current={view === 'reader' ? 'page' : undefined} type={view === 'reader' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onReader}>
               TXT 小说阅读
@@ -85,7 +77,7 @@ export function AppShell({
           <Button size="small" onClick={onLogout}>退出</Button>
         </Space>
       </header>}
-      <div className={`${view === 'game' ? 'app-content app-content--game' : 'app-content'}${lockedInRoom ? ' app-content--immersive' : ''}`}>
+      <div className={`${view === 'game' ? 'app-content app-content--game' : 'app-content'}${immersive ? ' app-content--immersive' : ''}`}>
         {children}
       </div>
     </Layout>

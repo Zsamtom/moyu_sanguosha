@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FarmCropDefinition, FarmPlot } from '../types';
-import { farmPlotRuntime } from './FarmScreen';
+import { farmPlotRuntime, farmPlotToolAction } from './FarmScreen';
 
 const crop: FarmCropDefinition = {
   id: 'wheat',
@@ -67,5 +67,60 @@ describe('FarmScreen real-time plot projection', () => {
       estimatedYield: 3,
       remainingMs: 0,
     });
+  });
+});
+
+describe('FarmScreen plot toolbar', () => {
+  const emptyPlot: FarmPlot = {
+    index: 2,
+    cycle: 0,
+    cropId: null,
+    plantedAt: null,
+    maturesAt: null,
+    watered: false,
+    weedAt: null,
+    pestAt: null,
+    weedCleared: false,
+    pestCleared: false,
+    stolen: 0,
+    stealAttempts: [],
+    stolenBy: [],
+    unlocked: true,
+    ready: false,
+    progress: 0,
+    hasWeeds: false,
+    hasPests: false,
+    estimatedYield: 0,
+    maximumStealable: 0,
+  };
+
+  it('maps crop and shovel selection to the matching authoritative action', () => {
+    expect(farmPlotToolAction(
+      { type: 'plant', cropId: 'corn' },
+      emptyPlot,
+    )).toEqual({
+      type: 'farming_plant',
+      cropId: 'corn',
+      plotIndex: 2,
+    });
+    expect(farmPlotToolAction(
+      { type: 'shovel' },
+      { ...emptyPlot, cropId: 'wheat' },
+    )).toEqual({
+      type: 'farming_clear_plot',
+      plotIndex: 2,
+    });
+  });
+
+  it('does not offer a nonsensical plot action', () => {
+    expect(farmPlotToolAction({ type: 'shovel' }, emptyPlot)).toBeNull();
+    expect(farmPlotToolAction(
+      { type: 'plant', cropId: 'wheat' },
+      { ...emptyPlot, cropId: 'carrot' },
+    )).toBeNull();
+    expect(farmPlotToolAction(
+      { type: 'plant', cropId: 'wheat' },
+      { ...emptyPlot, unlocked: false },
+    )).toBeNull();
   });
 });
