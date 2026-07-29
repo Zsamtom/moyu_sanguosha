@@ -2,7 +2,6 @@ import {
   Button,
   InputNumber,
   Progress,
-  Select,
   Spin,
   Tag,
   message,
@@ -133,9 +132,12 @@ export function MineScreen() {
   const [snapshot, setSnapshot] = useState<MineSnapshot>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<MineClientAction>();
   const [now, setNow] = useState(Date.now());
   const clockOffset = useRef(0);
+  const actionInFlight = useRef(false);
   const [selectedDeposit, setSelectedDeposit] = useState<MineDepositId>('coal');
+  const [marketOpen, setMarketOpen] = useState(false);
   const [quantities, setQuantities] = useState<Record<MineDepositId, number>>(
     Object.fromEntries(DEPOSIT_IDS.map((depositId) => [depositId, 1])) as Record<MineDepositId, number>,
   );
@@ -168,8 +170,10 @@ export function MineScreen() {
   }, []);
 
   const runAction = async (action: MineClientAction) => {
-    if (!snapshot || busy) return;
+    if (!snapshot || actionInFlight.current) return;
+    actionInFlight.current = true;
     setBusy(true);
+    setPendingAction(action);
     try {
       const game = snapshot.mine;
       const next = await api.applyMineAction(
@@ -181,6 +185,11 @@ export function MineScreen() {
       setSnapshot(next);
       clockOffset.current = next.mine.serverTime - Date.now();
       setNow(next.mine.serverTime);
+      if (action.type === 'mine_start') {
+        toast.success(
+          `已在 ${action.shaftIndex + 1} 号矿井开采${next.mine.deposits[action.depositId].name}`,
+        );
+      }
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -194,7 +203,9 @@ export function MineScreen() {
       }
       toast.error(errorMessage(error));
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
+      setPendingAction(undefined);
     }
   };
 
@@ -335,17 +346,6 @@ export function MineScreen() {
         </section>
       ) : (
         <>
-          <section className="farm-market-event mine-economy-loop">
-            <div>
-              <span>RANCH SUPPLY → MINE → FARM COIN</span>
-              <h2>三业循环已闭合</h2>
-            </div>
-            <p>
-              鸡蛋、鸭蛋、牛奶与羊奶作为采掘口粮；兔绒、羊毛用于矿道加固；
-              矿石出售收入回到农场账户。
-            </p>
-          </section>
-
           <div className="farm-document-grid">
             <section className="farm-panel farm-panel--field">
               <header className="farm-panel__header">
@@ -353,24 +353,36 @@ export function MineScreen() {
                   <span>SECTION 01</span>
                   <h2>实时矿井作业</h2>
                 </div>
-                <Select
-                  aria-label="选择矿脉"
-                  size="small"
-                  value={selectedDeposit}
-                  options={DEPOSIT_IDS.map((depositId) => {
-                    const deposit = game.deposits[depositId];
-                    const unlocked = unlockedDeposits.includes(depositId);
-                    return {
-                      value: depositId,
-                      disabled: !unlocked,
-                      label: unlocked
-                        ? `勘探：${deposit.name}`
-                        : `${deposit.name} · 农${deposit.requiredFarmLevel}/牧${deposit.requiredRanchLevel}/矿${deposit.requiredMineLevel}`,
-                    };
-                  })}
-                  onChange={setSelectedDeposit}
-                />
               </header>
+              <div className="farm-tool-strip" aria-label="矿脉选择工具">
+                <span className="farm-tool-strip__label">开采</span>
+                {unlockedDeposits.map((depositId) => {
+                  const deposit = game.deposits[depositId];
+                  return (
+                    <Button
+                      key={depositId}
+                      aria-pressed={selectedDeposit === depositId}
+                      size="small"
+                      type={selectedDeposit === depositId ? 'primary' : 'default'}
+                      onClick={() => {
+                        setSelectedDeposit(depositId);
+                        toast.info(`已选择${deposit.name}，请点击空闲矿井开采`);
+                      }}
+                    >
+                      {selectedDeposit === depositId && <span aria-hidden="true">✓</span>}
+                      {deposit.name}
+                      <small>◎{deposit.expeditionCost}</small>
+                    </Button>
+                  );
+                })}
+                <span className="farm-tool-strip__hint">
+                  {pendingAction
+                    ? '正在保存本次矿山操作…'
+                    : `点击空闲矿井开采${selectedDefinition.name}；需${
+                      PRODUCT_NAMES[selectedDefinition.rationProductId]
+                    }×${selectedDefinition.rationAmount}`}
+                </span>
+              </div>
               <div className="farm-plots mine-shafts">
                 {game.shafts.map((shaft) => {
                   const deposit = shaft.depositId
@@ -382,6 +394,11 @@ export function MineScreen() {
                     game.pickaxeYieldBonus,
                     now,
                   );
+                  const shaftPending =
+                    pendingAction !== undefined &&
+                    'shaftIndex' in pendingAction &&
+                    pendingAction.shaftIndex === shaft.index;
+                  const canStartHere = !deposit && !busy && canStartSelected;
                   if (!shaft.unlocked) {
                     return (
                       <article className="farm-plot farm-plot--locked mine-shaft" key={shaft.index}>
@@ -398,12 +415,31 @@ export function MineScreen() {
                   }
                   return (
                     <article
-                      className={`farm-plot mine-shaft${runtime.ready ? ' farm-plot--ready' : ''}`}
+                      className={`farm-plot mine-shaft${
+                        runtime.ready ? ' farm-plot--ready' : ''
+                      }${canStartHere ? ' farm-plot--tool-ready' : ''}${
+                        shaftPending ? ' farm-plot--pending' : ''
+                      }`}
                       key={shaft.index}
+                      onClick={(event) => {
+                        if (
+                          !canStartHere ||
+                          (event.target as HTMLElement).closest('button')
+                        ) return;
+                        void runAction({
+                          type: 'mine_start',
+                          depositId: selectedDeposit,
+                          shaftIndex: shaft.index,
+                        });
+                      }}
                     >
                       <header>
                         <span>SHAFT-{String(shaft.index + 1).padStart(2, '0')}</span>
-                        <i>{runtime.ready ? 'READY' : deposit ? 'MINING' : 'IDLE'}</i>
+                        <i>
+                          {shaftPending
+                            ? 'SYNCING'
+                            : runtime.ready ? 'READY' : deposit ? 'MINING' : 'IDLE'}
+                        </i>
                       </header>
                       <div className="farm-plot__body mine-shaft__body">
                         {deposit && (
@@ -415,7 +451,7 @@ export function MineScreen() {
                         <small>
                           {deposit
                             ? `${remainingLabel(runtime.remainingMs)} · 预计 ${runtime.estimatedYield} 份`
-                            : '选择矿脉后派出采掘队'}
+                            : `点击下方按钮开采${selectedDefinition.name}`}
                         </small>
                         <div className="farm-plot__tags">
                           {runtime.hasHazard && <Tag color="orange">需加固</Tag>}
@@ -435,7 +471,7 @@ export function MineScreen() {
                           <Button
                             block
                             size="small"
-                            disabled={busy || !canStartSelected}
+                            disabled={!canStartHere}
                             onClick={() => void runAction({
                               type: 'mine_start',
                               depositId: selectedDeposit,
@@ -487,9 +523,16 @@ export function MineScreen() {
                   <span>SECTION 02</span>
                   <h2>矿脉与矿石市场</h2>
                 </div>
-                <small>FIXED CONTRACT / COIN</small>
+                <Button
+                  aria-expanded={marketOpen}
+                  size="small"
+                  type="text"
+                  onClick={() => setMarketOpen((current) => !current)}
+                >
+                  {marketOpen ? '收起 ↑' : '展开 ↓'}
+                </Button>
               </header>
-              <div className="farm-table-wrap">
+              {marketOpen && <div className="farm-table-wrap">
                 <table className="farm-table">
                   <thead>
                     <tr>
@@ -560,7 +603,7 @@ export function MineScreen() {
                     })}
                   </tbody>
                 </table>
-              </div>
+              </div>}
             </section>
 
             <section className="farm-panel">

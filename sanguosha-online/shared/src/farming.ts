@@ -366,6 +366,11 @@ export type FarmingAction =
       readonly quantity: number;
     }
   | {
+      readonly type: "farming_redeem_mutation";
+      readonly cropId: FarmingCropId;
+      readonly quantity: number;
+    }
+  | {
       readonly type: "farming_expand_plot";
     }
   | {
@@ -455,6 +460,7 @@ export type FarmingRuleErrorCode =
   | "FARMING_NOT_ENOUGH_COINS"
   | "FARMING_NOT_ENOUGH_SEEDS"
   | "FARMING_NOT_ENOUGH_PRODUCE"
+  | "FARMING_NOT_ENOUGH_MUTATIONS"
   | "FARMING_INVALID_PLOT"
   | "FARMING_PLOT_LOCKED"
   | "FARMING_PLOT_OCCUPIED"
@@ -1067,6 +1073,29 @@ export function applyFarmingAction(
       effectiveNow,
       "economy",
       `出售 ${action.quantity} 份${FARMING_CROPS[action.cropId].name}，收入 ${revenue} 金币。`,
+    );
+  } else if (action.type === "farming_redeem_mutation") {
+    if (!isCropId(action.cropId)) {
+      throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
+    }
+    if (!validQuantity(action.quantity)) {
+      throw new FarmingRuleError("FARMING_INVALID_QUANTITY", "兑换数量需为 1 至 99");
+    }
+    if (game.mutations[action.cropId] < action.quantity) {
+      throw new FarmingRuleError("FARMING_NOT_ENOUGH_MUTATIONS", "变异作物数量不足");
+    }
+    const crop = FARMING_CROPS[action.cropId];
+    const coinReward = game.market[action.cropId].price * 5 * action.quantity;
+    const experienceReward = crop.harvestExperience * action.quantity;
+    game.mutations[action.cropId] -= action.quantity;
+    game.coins += coinReward;
+    game.statistics.coinsEarned += coinReward;
+    addExperience(game, experienceReward, effectiveNow);
+    addLog(
+      game,
+      effectiveNow,
+      "progression",
+      `珍稀订单兑换 ${action.quantity} 株变异${crop.name}，获得 ${coinReward} 金币和 ${experienceReward} 经验。`,
     );
   } else if (action.type === "farming_expand_plot") {
     if (game.unlockedPlots >= FARMING_MAX_PLOTS) {

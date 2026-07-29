@@ -128,6 +128,29 @@ describe("real-time farming engine", () => {
     expect(state.produce.wheat).toBe(1);
   });
 
+  it("redeems mutation collectibles through premium orders for coins and experience", () => {
+    let state = game();
+    state.mutations.wheat = 2;
+    const price = state.market.wheat.price;
+
+    state = applyFarmingAction(state, {
+      type: "farming_redeem_mutation",
+      cropId: "wheat",
+      quantity: 1,
+    }, start);
+
+    expect(state.mutations.wheat).toBe(1);
+    expect(state.coins).toBe(100 + price * 5);
+    expect(state.experience).toBe(FARMING_CROPS.wheat.harvestExperience);
+    expect(state.logs.at(-1)?.text).toContain("珍稀订单兑换");
+    expect(() => applyFarmingAction(state, {
+      type: "farming_redeem_mutation",
+      cropId: "wheat",
+      quantity: 2,
+    }, start + 1)).toThrow("变异作物数量不足");
+    expect(() => assertRestorableFarmingGameState(state)).not.toThrow();
+  });
+
   it("lets the owner shovel an occupied plot without refunding its seed", () => {
     let state = game();
     state = applyFarmingAction(state, {

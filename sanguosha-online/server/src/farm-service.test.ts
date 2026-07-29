@@ -88,6 +88,7 @@ describe("real-time FarmService", () => {
       cropId: "wheat",
       quantity: 1,
     });
+    expect(changed).not.toHaveProperty("neighbors");
 
     const restored = await new FarmService(store, registry, () => start).getOrCreate(user);
     expect(restored.farm).toEqual(changed.farm);

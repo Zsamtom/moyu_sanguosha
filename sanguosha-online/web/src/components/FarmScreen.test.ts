@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { FarmCropDefinition, FarmPlot } from '../types';
-import { farmPlotRuntime, farmPlotToolAction } from './FarmScreen';
+import type { FarmCropDefinition, FarmPlot, FarmSnapshot } from '../types';
+import {
+  farmPlotRuntime,
+  farmPlotToolAction,
+  optimisticFarmAction,
+} from './FarmScreen';
 
 const crop: FarmCropDefinition = {
   id: 'wheat',
@@ -122,5 +126,43 @@ describe('FarmScreen plot toolbar', () => {
       { type: 'plant', cropId: 'wheat' },
       { ...emptyPlot, unlocked: false },
     )).toBeNull();
+  });
+
+  it('shows a planted crop and reduced seed inventory before the server responds', () => {
+    const snapshot = {
+      farm: {
+        isOwner: true,
+        revision: 4,
+        inventory: {
+          coins: 100,
+          seeds: { wheat: 2 },
+          produce: { wheat: 0 },
+          mutations: { wheat: 0 },
+        },
+        crops: { wheat: crop },
+        plots: [emptyPlot],
+        market: { wheat: { price: 6 } },
+      },
+      neighbors: [],
+      marketDirectorAvailable: false,
+    } as unknown as FarmSnapshot;
+
+    const optimistic = optimisticFarmAction(snapshot, {
+      type: 'farming_plant',
+      cropId: 'wheat',
+      plotIndex: 2,
+    }, 10_000);
+
+    expect(optimistic.farm).toMatchObject({
+      revision: 5,
+      inventory: { seeds: { wheat: 1 } },
+      plots: [{
+        cropId: 'wheat',
+        plantedAt: 10_000,
+        maturesAt: 310_000,
+      }],
+    });
+    expect(snapshot.farm.inventory!.seeds.wheat).toBe(2);
+    expect(snapshot.farm.plots[0]!.cropId).toBeNull();
   });
 });

@@ -55,6 +55,11 @@ const actionSchema = z.discriminatedUnion("type", [
     cropId: cropIdSchema,
     quantity: quantitySchema,
   }).strict(),
+  z.object({
+    type: z.literal("farming_redeem_mutation"),
+    cropId: cropIdSchema,
+    quantity: quantitySchema,
+  }).strict(),
   z.object({ type: z.literal("farming_expand_plot") }).strict(),
   z.object({ type: z.literal("farming_upgrade_dog") }).strict(),
 ]);

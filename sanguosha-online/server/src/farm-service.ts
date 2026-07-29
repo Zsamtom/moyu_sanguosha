@@ -58,6 +58,11 @@ export interface FarmSnapshot {
   readonly marketDirectorAvailable: boolean;
 }
 
+export interface FarmActionSnapshot {
+  readonly farm: FarmingGameView;
+  readonly marketDirectorAvailable: boolean;
+}
+
 export interface FarmVisitSnapshot extends FarmSnapshot {
   readonly neighbor: FarmingGameView;
   readonly outcome: FarmingVisitResult["outcome"];
@@ -66,6 +71,10 @@ export interface FarmVisitSnapshot extends FarmSnapshot {
 export interface RanchSnapshot {
   readonly ranch: RanchGameView;
   readonly neighbors: RanchNeighborSummary[];
+}
+
+export interface RanchActionSnapshot {
+  readonly ranch: RanchGameView;
 }
 
 export interface RanchVisitSnapshot extends RanchSnapshot {
@@ -548,7 +557,7 @@ export class FarmService {
     user: PublicUser,
     expectedRevision: number,
     action: FarmClientAction,
-  ): Promise<FarmSnapshot> {
+  ): Promise<FarmActionSnapshot> {
     return this.serializedMany([user.id], async () => {
       const game = await this.loadOrCreate(user);
       this.assertRevision(game, expectedRevision);
@@ -559,7 +568,10 @@ export class FarmService {
         this.mapRuleError(error);
       }
       await this.store.save(user.id, next!);
-      return this.snapshot(next!, user.id);
+      return {
+        farm: getFarmingGameView(next!, user.id, this.clock()),
+        marketDirectorAvailable: this.marketDirectorAvailable,
+      };
     });
   }
 
@@ -634,7 +646,7 @@ export class FarmService {
     expectedFarmRevision: number,
     expectedRanchRevision: number,
     action: RanchClientAction,
-  ): Promise<RanchSnapshot> {
+  ): Promise<RanchActionSnapshot> {
     return this.serializedMany([user.id], async () => {
       const farm = await this.loadOrCreate(user);
       const ranch = await this.loadOrCreateRanch(user);
@@ -659,7 +671,9 @@ export class FarmService {
         nextFarm.updatedAt = Math.max(nextFarm.updatedAt, this.clock());
       }
       await this.store.saveFarmAndRanch(user.id, nextFarm, result!.ranch);
-      return this.ranchSnapshot(result!.ranch, nextFarm, user.id);
+      return {
+        ranch: this.ranchView(result!.ranch, nextFarm, user.id),
+      };
     });
   }
 

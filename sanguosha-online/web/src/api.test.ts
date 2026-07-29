@@ -223,6 +223,40 @@ describe('room draft API', () => {
 });
 
 describe('farm API', () => {
+  it('submits an owner action and accepts the lightweight action snapshot', async () => {
+    const payload = {
+      farm: { version: 2, revision: 3 },
+      marketDirectorAvailable: false,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.applyFarmAction(
+      2,
+      {
+        type: 'farming_redeem_mutation',
+        cropId: 'wheat',
+        quantity: 1,
+      },
+    );
+
+    expect(result).toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/farm/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedRevision: 2,
+          action: {
+            type: 'farming_redeem_mutation',
+            cropId: 'wheat',
+            quantity: 1,
+          },
+        }),
+      }),
+    );
+  });
+
   it('submits a cross-account farm action with both optimistic revisions', async () => {
     const payload = {
       farm: { version: 2 },

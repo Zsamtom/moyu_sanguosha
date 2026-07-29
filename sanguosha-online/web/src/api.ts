@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -205,8 +205,8 @@ export const api = {
   async applyFarmAction(
     expectedRevision: number,
     action: FarmClientAction,
-  ): Promise<FarmSnapshot> {
-    return request<FarmSnapshot>('/api/farm/actions', {
+  ): Promise<FarmActionSnapshot> {
+    return request<FarmActionSnapshot>('/api/farm/actions', {
       method: 'POST',
       ...jsonBody({ expectedRevision, action }),
     });
@@ -247,8 +247,8 @@ export const api = {
     expectedFarmRevision: number,
     expectedRanchRevision: number,
     action: RanchClientAction,
-  ): Promise<RanchSnapshot> {
-    return request<RanchSnapshot>('/api/ranch/actions', {
+  ): Promise<RanchActionSnapshot> {
+    return request<RanchActionSnapshot>('/api/ranch/actions', {
       method: 'POST',
       ...jsonBody({ expectedFarmRevision, expectedRanchRevision, action }),
     });

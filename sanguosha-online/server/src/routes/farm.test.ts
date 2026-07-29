@@ -36,6 +36,14 @@ describe("real-time farm HTTP schemas", () => {
         plotIndex: 4,
       },
     })).toBeTruthy();
+    expect(farmActionEnvelopeSchema.parse({
+      expectedRevision: 7,
+      action: {
+        type: "farming_redeem_mutation",
+        cropId: "wheat",
+        quantity: 1,
+      },
+    })).toBeTruthy();
   });
 
   it("rejects injected player ids and invalid quantities", () => {

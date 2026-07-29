@@ -141,6 +141,7 @@ export type FarmClientAction =
   | { type: 'farming_harvest'; plotIndex: number }
   | { type: 'farming_clear_plot'; plotIndex: number }
   | { type: 'farming_sell'; cropId: FarmCropId; quantity: number }
+  | { type: 'farming_redeem_mutation'; cropId: FarmCropId; quantity: number }
   | { type: 'farming_expand_plot' }
   | { type: 'farming_upgrade_dog' };
 
@@ -163,6 +164,11 @@ export interface FarmNeighborSummary {
 export interface FarmSnapshot {
   farm: FarmGameView;
   neighbors: FarmNeighborSummary[];
+  marketDirectorAvailable: boolean;
+}
+
+export interface FarmActionSnapshot {
+  farm: FarmGameView;
   marketDirectorAvailable: boolean;
 }
 
@@ -307,6 +313,10 @@ export interface RanchNeighborSummary {
 export interface RanchSnapshot {
   ranch: RanchGameView;
   neighbors: RanchNeighborSummary[];
+}
+
+export interface RanchActionSnapshot {
+  ranch: RanchGameView;
 }
 
 export interface RanchVisitSnapshot extends RanchSnapshot {
