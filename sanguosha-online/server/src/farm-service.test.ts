@@ -6,9 +6,13 @@ import {
   applyFarmAction,
   createFarmGame,
   createFarmingGame,
+  createHomesteadGame,
+  createMineGame,
   createRanchGame,
   type FarmingGameState,
   type FarmingMarketDecision,
+  type HomesteadGameState,
+  type MineGameState,
   type RanchGameState,
 } from "@sanguosha/shared";
 import {
@@ -499,5 +503,114 @@ describe("real-time FarmService", () => {
     expect(store.quarantinedMines).toHaveLength(1);
     expect(await store.load(user.id)).toEqual(farm);
     expect(await store.loadRanch(user.id)).toEqual(ranch);
+  });
+
+  it("persists one linked production job across all four homestead states", async () => {
+    let now = start;
+    const store = new MemoryFarmStateStore();
+    const farm = mineReadyFarm(user);
+    farm.produce.pumpkin = 1;
+    const ranch = mineReadyRanch(user);
+    ranch.products.egg = 1;
+    const mine = createMineGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "mine-homestead",
+      now,
+    });
+    mine.ores.coal = 1;
+    const homestead = createHomesteadGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "linked-homestead",
+      now,
+    });
+    homestead.reputation = 100;
+    store.setRaw(user.id, farm);
+    store.setRawRanch(user.id, ranch);
+    store.setRawMine(user.id, mine);
+    store.setRawHomestead(user.id, homestead);
+
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+    );
+    let snapshot = await service.getOrCreateHomestead(user);
+    snapshot = await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      {
+        type: "homestead_build_facility",
+        facilityId: "fertilizer_plant",
+      },
+    );
+    snapshot = await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      {
+        type: "homestead_start_job",
+        recipeId: "fertilizer_soil_conditioner",
+      },
+    );
+
+    expect((await store.load(user.id) as FarmingGameState).produce.pumpkin)
+      .toBe(0);
+    expect((await store.loadRanch(user.id) as RanchGameState).products.egg)
+      .toBe(0);
+    expect((await store.loadMine(user.id) as MineGameState).ores.coal).toBe(0);
+
+    now += 45 * 60_000;
+    snapshot = await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      {
+        type: "homestead_collect_job",
+        facilityId: "fertilizer_plant",
+      },
+    );
+    expect(snapshot.homestead.goods.soil_conditioner).toBe(2);
+  });
+
+  it("quarantines only an invalid homestead save", async () => {
+    const store = new MemoryFarmStateStore();
+    const farm = mineReadyFarm(user);
+    const ranch = mineReadyRanch(user);
+    const mine = createMineGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "valid-mine",
+      now: start,
+    });
+    store.setRaw(user.id, farm);
+    store.setRawRanch(user.id, ranch);
+    store.setRawMine(user.id, mine);
+    store.setRawHomestead(user.id, { kind: "homestead", version: 99 });
+
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const recovered = await service.getOrCreateHomestead(user);
+
+    expect(recovered.homestead).toMatchObject({
+      kind: "homestead",
+      version: 1,
+      revision: 0,
+    });
+    expect(store.quarantinedHomesteads).toHaveLength(1);
+    expect(await store.load(user.id)).toEqual(farm);
+    expect(await store.loadRanch(user.id)).toEqual(ranch);
+    expect(await store.loadMine(user.id)).toEqual(mine);
   });
 });

@@ -5,8 +5,8 @@ import type {
 } from "./ranch.js";
 
 export const MINE_STATE_VERSION = 1 as const;
-export const MINE_REQUIRED_FARM_LEVEL = 6;
-export const MINE_REQUIRED_RANCH_LEVEL = 3;
+export const MINE_REQUIRED_FARM_LEVEL = 3;
+export const MINE_REQUIRED_RANCH_LEVEL = 2;
 export const MINE_STARTING_SHAFTS = 2;
 export const MINE_MAX_SHAFTS = 6;
 export const MINE_MAX_LOGS = 80;
@@ -46,8 +46,8 @@ export const MINE_DEPOSITS: Readonly<Record<MineDepositId, MineDepositDefinition
   coal: {
     id: "coal",
     name: "煤层",
-    requiredFarmLevel: 6,
-    requiredRanchLevel: 3,
+    requiredFarmLevel: 3,
+    requiredRanchLevel: 2,
     requiredMineLevel: 1,
     expeditionCost: 20,
     rationProductId: "egg",
@@ -62,8 +62,8 @@ export const MINE_DEPOSITS: Readonly<Record<MineDepositId, MineDepositDefinition
   iron: {
     id: "iron",
     name: "铁矿脉",
-    requiredFarmLevel: 6,
-    requiredRanchLevel: 3,
+    requiredFarmLevel: 3,
+    requiredRanchLevel: 2,
     requiredMineLevel: 1,
     expeditionCost: 30,
     rationProductId: "egg",

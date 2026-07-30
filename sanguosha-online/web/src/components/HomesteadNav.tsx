@@ -1,6 +1,6 @@
 import { Button } from 'antd';
 
-export type HomesteadView = 'farm' | 'ranch' | 'mine';
+export type HomesteadView = 'homestead' | 'farm' | 'ranch' | 'mine';
 
 interface HomesteadNavProps {
   active: HomesteadView;
@@ -9,6 +9,7 @@ interface HomesteadNavProps {
 }
 
 const ENTRIES: ReadonlyArray<{ view: HomesteadView; label: string }> = [
+  { view: 'homestead', label: '庄园总览' },
   { view: 'farm', label: '农场' },
   { view: 'ranch', label: '牧场' },
   { view: 'mine', label: '矿山' },

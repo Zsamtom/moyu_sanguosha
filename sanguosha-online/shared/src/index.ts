@@ -8,6 +8,8 @@ export * from "./farm.js";
 export * from "./farming.js";
 export * from "./ranch.js";
 export * from "./mine.js";
+export * from "./homestead.js";
+export * from "./homestead-longterm.js";
 export {
   ALL_GENERALS,
   DEFAULT_GENERALS,

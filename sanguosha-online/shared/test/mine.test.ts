@@ -55,12 +55,12 @@ describe("linked mine engine", () => {
     });
     expect(getMineGameView(
       mine,
-      economy({ ranchLevel: 2 }),
+      economy({ ranchLevel: 1 }),
       start,
     ).unlocked).toBe(false);
     expect(() => applyMineAction(
       mine,
-      economy({ farmLevel: 5 }),
+      economy({ farmLevel: 2 }),
       { type: "mine_start", depositId: "coal", shaftIndex: 0 },
       start,
     )).toThrowError(MineRuleError);

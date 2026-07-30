@@ -441,6 +441,439 @@ export interface MineSnapshot {
   mine: MineGameView;
 }
 
+export type HomesteadFacilityId =
+  | 'mill'
+  | 'feed_factory'
+  | 'fertilizer_plant'
+  | 'kitchen'
+  | 'textile_mill'
+  | 'smelter'
+  | 'machine_shop';
+
+export type HomesteadGoodId =
+  | 'flour'
+  | 'coarse_feed'
+  | 'fortified_feed'
+  | 'soil_conditioner'
+  | 'work_clothes'
+  | 'iron_ingot'
+  | 'mining_kit'
+  | 'festival_crate'
+  | 'greenhouse_parts';
+
+export type HomesteadRecipeId =
+  | 'mill_flour'
+  | 'mill_coarse_feed'
+  | 'feed_fortified'
+  | 'fertilizer_soil_conditioner'
+  | 'textile_work_clothes'
+  | 'smelt_iron_ingot'
+  | 'workshop_mining_kit'
+  | 'kitchen_festival_crate'
+  | 'workshop_greenhouse_parts';
+
+export type HomesteadResearchNodeId =
+  | 'soil_science'
+  | 'crop_rotation'
+  | 'animal_nutrition'
+  | 'animal_genetics'
+  | 'geology'
+  | 'deep_mining'
+  | 'estate_engineering'
+  | 'automation'
+  | 'civic_network'
+  | 'seasonal_mastery';
+
+export type HomesteadCropFamily = 'grain' | 'root' | 'orchard' | 'fiber';
+export type HomesteadFeedProgramId = 'pasture' | 'balanced' | 'mineral';
+export type HomesteadAnimalTraitId =
+  | 'steady'
+  | 'productive'
+  | 'resilient'
+  | 'fertile'
+  | 'rare_coat';
+export type HomesteadMineLayerId = 'shallow' | 'middle' | 'deep' | 'ancient';
+export type HomesteadNpcId =
+  | 'agronomist_lin'
+  | 'veterinarian_su'
+  | 'engineer_qiao';
+export type HomesteadNpcTopicId =
+  | 'soil'
+  | 'rotation'
+  | 'nutrition'
+  | 'traits'
+  | 'layers'
+  | 'safety';
+export type HomesteadSeasonMilestoneId = 'bronze' | 'silver' | 'gold';
+
+export interface HomesteadResourceView {
+  source: 'farm' | 'ranch' | 'mine' | 'goods';
+  itemId: string;
+  quantity: number;
+  available: number;
+  sufficient: boolean;
+}
+
+export interface HomesteadFacilityView {
+  id: HomesteadFacilityId;
+  built: boolean;
+  job: {
+    recipeId: HomesteadRecipeId;
+    startedAt: number;
+    completesAt: number;
+    outputQuantity: number;
+  } | null;
+  level: number;
+  definition: {
+    id: HomesteadFacilityId;
+    name: string;
+    requiredReputation: number;
+    coinCost: number;
+  };
+  ready: boolean;
+  progress: number;
+  canBuild: boolean;
+  maximumLevel: number;
+  nextUpgrade: {
+    level: number;
+    coinCost: number;
+    ironIngotCost: number;
+    requiredResearch: HomesteadResearchNodeId;
+    canUpgrade: boolean;
+  } | null;
+}
+
+export interface HomesteadRecipeView {
+  id: HomesteadRecipeId;
+  name: string;
+  facilityId: HomesteadFacilityId;
+  durationSeconds: number;
+  inputs: Array<{
+    source: 'farm' | 'ranch' | 'mine' | 'goods';
+    itemId: string;
+    quantity: number;
+  }>;
+  output: {
+    itemId: HomesteadGoodId;
+    quantity: number;
+  };
+  facilityBuilt: boolean;
+  facilityBusy: boolean;
+  inputsView: HomesteadResourceView[];
+  canStart: boolean;
+  effectiveDurationSeconds: number;
+  effectiveOutputQuantity: number;
+}
+
+export interface HomesteadOrderView {
+  id: string;
+  templateId: string;
+  dayKey: string;
+  completed: boolean;
+  template: {
+    id: string;
+    title: string;
+    description: string;
+    requirements: Array<{
+      source: 'farm' | 'ranch' | 'mine' | 'goods';
+      itemId: string;
+      quantity: number;
+    }>;
+    coinReward: number;
+    reputationReward: number;
+    researchReward: number;
+  };
+  requirements: HomesteadResourceView[];
+  canComplete: boolean;
+}
+
+export interface HomesteadWorldEventView {
+  eventId: string;
+  dayKey: string;
+  selectedOptionId: string | null;
+  narrative: string;
+  source: 'rules' | 'llm';
+  definition: {
+    id: string;
+    title: string;
+    summary: string;
+    tone: 'calm' | 'opportunity' | 'risk';
+    options: Array<{
+      id: string;
+      label: string;
+      description: string;
+      costs: Array<{
+        source: 'farm' | 'ranch' | 'mine' | 'goods';
+        itemId: string;
+        quantity: number;
+      }>;
+      coinCost: number;
+      coinReward: number;
+      reputationReward: number;
+      researchReward: number;
+    }>;
+  };
+}
+
+export interface HomesteadResearchView {
+  definition: {
+    id: HomesteadResearchNodeId;
+    name: string;
+    description: string;
+    branch: 'farm' | 'ranch' | 'mine' | 'estate' | 'community';
+    researchCost: number;
+    requiredReputation: number;
+    prerequisites: HomesteadResearchNodeId[];
+  };
+  unlocked: boolean;
+  canUnlock: boolean;
+  missingPrerequisites: HomesteadResearchNodeId[];
+}
+
+export interface HomesteadSpecializationsView {
+  farm: {
+    soilHealth: number;
+    lastCropFamily: HomesteadCropFamily | null;
+    rotationStreak: number;
+    fertilizerApplications: number;
+    lastManagedDayKey: string | null;
+    yieldBonusPercent: number;
+  };
+  ranch: {
+    herdHealth: number;
+    lastFeedProgram: HomesteadFeedProgramId | null;
+    discoveredTraits: HomesteadAnimalTraitId[];
+    lastManagedDayKey: string | null;
+    productBonusPercent: number;
+  };
+  mine: {
+    protectionLevel: number;
+    surveyProgress: number;
+    discoveredLayers: HomesteadMineLayerId[];
+    lastManagedDayKey: string | null;
+    oreBonusPercent: number;
+  };
+  cropFamilies: Array<{
+    definition: {
+      id: HomesteadCropFamily;
+      name: string;
+      example: string;
+      rewardCropId: FarmCropId;
+      rewardQuantity: number;
+    };
+    canPlan: boolean;
+    rotationImprovesSoil: boolean;
+  }>;
+  feedPrograms: Array<{
+    definition: {
+      id: HomesteadFeedProgramId;
+      name: string;
+      description: string;
+      goodCost: {
+        itemId: 'coarse_feed' | 'fortified_feed';
+        quantity: number;
+      } | null;
+      healthGain: number;
+      traitChance: number;
+      requiredResearch: HomesteadResearchNodeId | null;
+    };
+    canRun: boolean;
+    lockedByResearch: boolean;
+    hasResources: boolean;
+  }>;
+  mineLayers: Array<{
+    definition: {
+      id: HomesteadMineLayerId;
+      name: string;
+      description: string;
+      requiredResearch: HomesteadResearchNodeId | null;
+      requiredProtection: number;
+      kitCost: number;
+      rewardDepositId: MineDepositId;
+      rewardQuantity: number;
+      progressReward: number;
+    };
+    discovered: boolean;
+    canSurvey: boolean;
+    lockedByResearch: boolean;
+    lockedByProtection: boolean;
+    hasResources: boolean;
+  }>;
+  canManageFarmToday: boolean;
+  canManageRanchToday: boolean;
+  canManageMineToday: boolean;
+  nextProtectionUpgrade: {
+    level: number;
+    coinCost: number;
+    ironIngotCost: number;
+    miningKitCost: number;
+    canUpgrade: boolean;
+  } | null;
+}
+
+export interface HomesteadNpcView {
+  npcId: HomesteadNpcId;
+  affinity: number;
+  trust: number;
+  lastConversationDayKey: string | null;
+  lastTopicId: HomesteadNpcTopicId | null;
+  lastDialogue: string;
+  facts: Array<{ key: string; value: string; at: number }>;
+  definition: {
+    id: HomesteadNpcId;
+    name: string;
+    role: string;
+    topics: HomesteadNpcTopicId[];
+  };
+  canTalkToday: boolean;
+}
+
+export interface HomesteadSeasonView {
+  id: string;
+  startsAt: number;
+  endsAt: number;
+  score: number;
+  claimedMilestones: HomesteadSeasonMilestoneId[];
+  counters: {
+    jobs: number;
+    orders: number;
+    specializations: number;
+    community: number;
+  };
+  progressPercent: number;
+  milestones: Array<{
+    definition: {
+      id: HomesteadSeasonMilestoneId;
+      name: string;
+      score: number;
+      coinReward: number;
+      researchReward: number;
+      goodReward: {
+        itemId: 'soil_conditioner' | 'fortified_feed' | 'mining_kit';
+        quantity: number;
+      } | null;
+    };
+    claimed: boolean;
+    canClaim: boolean;
+  }>;
+}
+
+export interface HomesteadCollectionView {
+  id: string;
+  category:
+    | 'facility'
+    | 'recipe'
+    | 'farm'
+    | 'ranch'
+    | 'mine'
+    | 'research'
+    | 'npc'
+    | 'season';
+  name: string;
+  description: string;
+  unlocked: boolean;
+  unlockedAt: number | null;
+}
+
+export interface HomesteadAdviceView {
+  dayKey: string;
+  source: 'rules' | 'llm';
+  headline: string;
+  narrative: string;
+  recommendation: string;
+  npcId: HomesteadNpcId;
+  npcLine: string;
+  generatedAt: number;
+}
+
+export interface HomesteadGameView {
+  kind: 'homestead';
+  version: 1;
+  revision: number;
+  serverTime: number;
+  ownerId: string;
+  ownerName: string;
+  reputation: number;
+  researchPoints: number;
+  coins: number;
+  goods: Record<HomesteadGoodId, number>;
+  facilities: HomesteadFacilityView[];
+  recipes: HomesteadRecipeView[];
+  orders: HomesteadOrderView[];
+  worldEvent: HomesteadWorldEventView;
+  research: HomesteadResearchView[];
+  specializations: HomesteadSpecializationsView;
+  npcs: HomesteadNpcView[];
+  season: HomesteadSeasonView;
+  collections: HomesteadCollectionView[];
+  advice: HomesteadAdviceView;
+  statistics: {
+    jobsStarted: number;
+    jobsCollected: number;
+    ordersCompleted: number;
+    eventsResolved: number;
+    facilitiesBuilt: number;
+    facilityUpgrades: number;
+    researchUnlocked: number;
+    fieldPlansCompleted: number;
+    herdProgramsCompleted: number;
+    surveysCompleted: number;
+    npcConversations: number;
+    seasonRewardsClaimed: number;
+  };
+  logs: Array<{
+    id: string;
+    at: number;
+    type:
+      | 'facility'
+      | 'production'
+      | 'order'
+      | 'event'
+      | 'research'
+      | 'farm'
+      | 'ranch'
+      | 'mine'
+      | 'npc'
+      | 'season';
+    message: string;
+  }>;
+  revisions: {
+    farm: number;
+    ranch: number;
+    mine: number;
+  };
+}
+
+export type HomesteadClientAction =
+  | { type: 'homestead_build_facility'; facilityId: HomesteadFacilityId }
+  | { type: 'homestead_start_job'; recipeId: HomesteadRecipeId }
+  | { type: 'homestead_collect_job'; facilityId: HomesteadFacilityId }
+  | { type: 'homestead_complete_order'; orderId: string }
+  | { type: 'homestead_choose_event'; optionId: string }
+  | { type: 'homestead_unlock_research'; nodeId: HomesteadResearchNodeId }
+  | { type: 'homestead_upgrade_facility'; facilityId: HomesteadFacilityId }
+  | {
+      type: 'homestead_plan_rotation';
+      cropFamily: HomesteadCropFamily;
+      useFertilizer: boolean;
+    }
+  | { type: 'homestead_run_feed_program'; programId: HomesteadFeedProgramId }
+  | { type: 'homestead_upgrade_mine_protection' }
+  | { type: 'homestead_survey_layer'; layerId: HomesteadMineLayerId }
+  | {
+      type: 'homestead_talk_npc';
+      npcId: HomesteadNpcId;
+      topicId: HomesteadNpcTopicId;
+    }
+  | {
+      type: 'homestead_claim_season_reward';
+      milestoneId: HomesteadSeasonMilestoneId;
+    };
+
+export interface HomesteadSnapshot {
+  homestead: HomesteadGameView;
+}
+
 export type UserRole = 'admin' | 'player';
 
 export interface AuthUser {

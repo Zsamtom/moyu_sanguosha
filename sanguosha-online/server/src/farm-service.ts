@@ -19,6 +19,7 @@ import {
   type FarmingVisitAction,
   type FarmingVisitResult,
   RanchRuleError,
+  RANCH_REQUIRED_FARM_LEVEL,
   applyRanchAction,
   applyRanchVisitAction,
   assertRestorableRanchGameState,
@@ -40,9 +41,21 @@ import {
   type MineAction,
   type MineGameState,
   type MineGameView,
+  HomesteadRuleError,
+  applyHomesteadAction as applyHomesteadLinkedAction,
+  applyHomesteadWorldEventDecision,
+  assertRestorableHomesteadGameState,
+  createHomesteadGame,
+  getHomesteadGameView,
+  refreshHomesteadGame,
+  type HomesteadAction,
+  type HomesteadGameState,
+  type HomesteadGameView,
+  type HomesteadLinkedEconomy,
 } from "@sanguosha/shared";
 import type { BotDecisionRegistry } from "./bots/decision-registry.js";
 import { createFarmMarketDecision } from "./bots/farm-market-llm.js";
+import { createHomesteadDirectorDecision } from "./bots/homestead-director-llm.js";
 import { HttpError } from "./errors.js";
 import type { PublicUser } from "./users.js";
 
@@ -51,6 +64,7 @@ export type FarmVisitClientAction = FarmingVisitAction;
 export type RanchClientAction = RanchAction;
 export type RanchVisitClientAction = RanchVisitAction;
 export type MineClientAction = MineAction;
+export type HomesteadClientAction = HomesteadAction;
 
 export interface FarmSnapshot {
   readonly farm: FarmingGameView;
@@ -84,6 +98,10 @@ export interface RanchVisitSnapshot extends RanchSnapshot {
 
 export interface MineSnapshot {
   readonly mine: MineGameView;
+}
+
+export interface HomesteadSnapshot {
+  readonly homestead: HomesteadGameView;
 }
 
 export interface FarmStateStore {
@@ -121,6 +139,23 @@ export interface FarmStateStore {
     mine: MineGameState,
   ): Promise<void>;
   quarantineMine(userId: string, state: unknown, reason: string): Promise<void>;
+  loadHomesteadState(userId: string): Promise<unknown | undefined>;
+  saveHomesteadState(
+    userId: string,
+    state: HomesteadGameState,
+  ): Promise<void>;
+  saveEstate(
+    userId: string,
+    farm: FarmingGameState,
+    ranch: RanchGameState,
+    mine: MineGameState,
+    homestead: HomesteadGameState,
+  ): Promise<void>;
+  quarantineHomestead(
+    userId: string,
+    state: unknown,
+    reason: string,
+  ): Promise<void>;
 }
 
 export class PostgresFarmStateStore implements FarmStateStore {
@@ -386,12 +421,93 @@ export class PostgresFarmStateStore implements FarmStateStore {
       client.release();
     }
   }
+
+  async loadHomesteadState(userId: string): Promise<unknown | undefined> {
+    const result = await this.pool.query<{ state: unknown }>(
+      "SELECT state FROM homestead_state WHERE user_id = $1",
+      [userId],
+    );
+    return result.rows[0]?.state;
+  }
+
+  async saveHomesteadState(
+    userId: string,
+    state: HomesteadGameState,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO homestead_state (user_id, state, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+       SET state = EXCLUDED.state, updated_at = NOW()`,
+      [userId, JSON.stringify(state)],
+    );
+  }
+
+  async saveEstate(
+    userId: string,
+    farm: FarmingGameState,
+    ranch: RanchGameState,
+    mine: MineGameState,
+    homestead: HomesteadGameState,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const [table, state] of [
+        ["farm_state", farm],
+        ["ranch_state", ranch],
+        ["mine_state", mine],
+        ["homestead_state", homestead],
+      ] as const) {
+        await client.query(
+          `INSERT INTO ${table} (user_id, state, updated_at)
+           VALUES ($1, $2::jsonb, NOW())
+           ON CONFLICT (user_id) DO UPDATE
+           SET state = EXCLUDED.state, updated_at = NOW()`,
+          [userId, JSON.stringify(state)],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async quarantineHomestead(
+    userId: string,
+    state: unknown,
+    reason: string,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO homestead_state_quarantine (user_id, state, reason)
+         VALUES ($1, $2::jsonb, $3)`,
+        [userId, JSON.stringify(state), reason],
+      );
+      await client.query(
+        "DELETE FROM homestead_state WHERE user_id = $1",
+        [userId],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export class MemoryFarmStateStore implements FarmStateStore {
   private readonly states = new Map<string, unknown>();
   private readonly ranchStates = new Map<string, unknown>();
   private readonly mineStates = new Map<string, unknown>();
+  private readonly homesteadStates = new Map<string, unknown>();
   readonly quarantined: Array<{ userId: string; state: unknown; reason: string }> = [];
   readonly quarantinedRanches: Array<{
     userId: string;
@@ -399,6 +515,11 @@ export class MemoryFarmStateStore implements FarmStateStore {
     reason: string;
   }> = [];
   readonly quarantinedMines: Array<{
+    userId: string;
+    state: unknown;
+    reason: string;
+  }> = [];
+  readonly quarantinedHomesteads: Array<{
     userId: string;
     state: unknown;
     reason: string;
@@ -530,6 +651,48 @@ export class MemoryFarmStateStore implements FarmStateStore {
 
   setRawMine(userId: string, state: unknown): void {
     this.mineStates.set(userId, structuredClone(state));
+  }
+
+  async loadHomesteadState(userId: string): Promise<unknown | undefined> {
+    const state = this.homesteadStates.get(userId);
+    return state === undefined ? undefined : structuredClone(state);
+  }
+
+  async saveHomesteadState(
+    userId: string,
+    state: HomesteadGameState,
+  ): Promise<void> {
+    this.homesteadStates.set(userId, structuredClone(state));
+  }
+
+  async saveEstate(
+    userId: string,
+    farm: FarmingGameState,
+    ranch: RanchGameState,
+    mine: MineGameState,
+    homestead: HomesteadGameState,
+  ): Promise<void> {
+    this.states.set(userId, structuredClone(farm));
+    this.ranchStates.set(userId, structuredClone(ranch));
+    this.mineStates.set(userId, structuredClone(mine));
+    this.homesteadStates.set(userId, structuredClone(homestead));
+  }
+
+  async quarantineHomestead(
+    userId: string,
+    state: unknown,
+    reason: string,
+  ): Promise<void> {
+    this.quarantinedHomesteads.push({
+      userId,
+      state: structuredClone(state),
+      reason,
+    });
+    this.homesteadStates.delete(userId);
+  }
+
+  setRawHomestead(userId: string, state: unknown): void {
+    this.homesteadStates.set(userId, structuredClone(state));
   }
 }
 
@@ -707,8 +870,12 @@ export class FarmService {
     }
     return this.serializedMany([user.id, neighborId], async () => {
       const visitorFarm = await this.loadOrCreate(user);
-      if (visitorFarm.level < 3) {
-        throw new HttpError(400, "RANCH_LOCKED", "农场达到 3 级后开放牧场");
+      if (visitorFarm.level < RANCH_REQUIRED_FARM_LEVEL) {
+        throw new HttpError(
+          400,
+          "RANCH_LOCKED",
+          `农场达到 ${RANCH_REQUIRED_FARM_LEVEL} 级后开放牧场`,
+        );
       }
       const visitor = await this.loadOrCreateRanch(user);
       const owner = await this.loadExistingRanch(neighborId);
@@ -803,6 +970,100 @@ export class FarmService {
         result!.mine,
       );
       return { mine: this.mineView(result!.mine, nextFarm, nextRanch) };
+    });
+  }
+
+  async getOrCreateHomestead(user: PublicUser): Promise<HomesteadSnapshot> {
+    return this.serializedMany([user.id], async () => {
+      const farm = await this.loadOrCreate(user);
+      const ranch = await this.loadOrCreateRanch(user);
+      const mine = await this.loadOrCreateMine(user);
+      const homestead = await this.loadOrCreateHomestead(
+        user,
+        farm,
+        ranch,
+        mine,
+      );
+      return {
+        homestead: getHomesteadGameView(
+          homestead,
+          this.homesteadEconomy(farm, ranch, mine),
+          this.clock(),
+        ),
+      };
+    });
+  }
+
+  async applyHomesteadAction(
+    user: PublicUser,
+    expectedFarmRevision: number,
+    expectedRanchRevision: number,
+    expectedMineRevision: number,
+    expectedHomesteadRevision: number,
+    action: HomesteadClientAction,
+  ): Promise<HomesteadSnapshot> {
+    return this.serializedMany([user.id], async () => {
+      const farm = await this.loadOrCreate(user);
+      const ranch = await this.loadOrCreateRanch(user);
+      const mine = await this.loadOrCreateMine(user);
+      const homestead = await this.loadOrCreateHomestead(
+        user,
+        farm,
+        ranch,
+        mine,
+      );
+      this.assertRevision(farm, expectedFarmRevision);
+      this.assertRanchRevision(ranch, expectedRanchRevision);
+      this.assertMineRevision(mine, expectedMineRevision);
+      this.assertHomesteadRevision(homestead, expectedHomesteadRevision);
+
+      let result: ReturnType<typeof applyHomesteadLinkedAction>;
+      try {
+        result = applyHomesteadLinkedAction(
+          homestead,
+          this.homesteadEconomy(farm, ranch, mine),
+          action,
+          this.clock(),
+        );
+      } catch (error) {
+        this.mapHomesteadRuleError(error);
+      }
+
+      const nextFarm = structuredClone(farm);
+      const nextRanch = structuredClone(ranch);
+      const nextMine = structuredClone(mine);
+      const now = this.clock();
+      if (result!.farmChanged) {
+        nextFarm.coins = result!.economy.coins;
+        nextFarm.produce = structuredClone(result!.economy.farmProduce);
+        nextFarm.revision = result!.economy.farmRevision;
+        nextFarm.updatedAt = Math.max(nextFarm.updatedAt, now);
+      }
+      if (result!.ranchChanged) {
+        nextRanch.products = structuredClone(result!.economy.ranchProducts);
+        nextRanch.revision = result!.economy.ranchRevision;
+        nextRanch.updatedAt = Math.max(nextRanch.updatedAt, now);
+      }
+      if (result!.mineChanged) {
+        nextMine.ores = structuredClone(result!.economy.mineOres);
+        nextMine.revision = result!.economy.mineRevision;
+        nextMine.updatedAt = Math.max(nextMine.updatedAt, now);
+      }
+
+      await this.store.saveEstate(
+        user.id,
+        nextFarm,
+        nextRanch,
+        nextMine,
+        result!.homestead,
+      );
+      return {
+        homestead: getHomesteadGameView(
+          result!.homestead,
+          this.homesteadEconomy(nextFarm, nextRanch, nextMine),
+          now,
+        ),
+      };
     });
   }
 
@@ -1003,6 +1264,69 @@ export class FarmService {
     return mine;
   }
 
+  private async loadOrCreateHomestead(
+    user: PublicUser,
+    farm: FarmingGameState,
+    ranch: RanchGameState,
+    mine: MineGameState,
+  ): Promise<HomesteadGameState> {
+    const loaded = await this.store.loadHomesteadState(user.id);
+    if (loaded === undefined) {
+      const homestead = await this.applyHomesteadDirector(
+        this.createHomestead(user),
+        farm,
+        ranch,
+        mine,
+        user.id,
+      );
+      await this.store.saveHomesteadState(user.id, homestead);
+      return homestead;
+    }
+    let homestead: HomesteadGameState;
+    try {
+      assertRestorableHomesteadGameState(loaded);
+      homestead = structuredClone(loaded);
+    } catch (error) {
+      return this.recoverInvalidHomestead(
+        user.id,
+        loaded,
+        error instanceof Error ? error.message : String(error),
+        user,
+      );
+    }
+    if (homestead.ownerId !== user.id) {
+      return this.recoverInvalidHomestead(
+        user.id,
+        loaded,
+        "Homestead save owner does not match the authenticated user",
+        user,
+      );
+    }
+    let changed = false;
+    if (homestead.ownerName !== user.displayName) {
+      homestead.ownerName = user.displayName;
+      changed = true;
+    }
+    const previousDay = homestead.dayKey;
+    let refreshed = refreshHomesteadGame(homestead, this.clock());
+    if (refreshed.revision !== homestead.revision) changed = true;
+    if (refreshed.dayKey !== previousDay) {
+      refreshed = await this.applyHomesteadDirector(
+        refreshed,
+        farm,
+        ranch,
+        mine,
+        user.id,
+      );
+      changed = true;
+    }
+    if (changed) {
+      refreshed.updatedAt = Math.max(refreshed.updatedAt, this.clock());
+      await this.store.saveHomesteadState(user.id, refreshed);
+    }
+    return refreshed;
+  }
+
   private async restore(
     userId: string,
     loaded: unknown,
@@ -1074,6 +1398,21 @@ export class FarmService {
     return mine;
   }
 
+  private async recoverInvalidHomestead(
+    userId: string,
+    loaded: unknown,
+    reason: string,
+    user: PublicUser,
+  ): Promise<HomesteadGameState> {
+    await this.store.quarantineHomestead(userId, loaded, reason);
+    console.error(
+      `Quarantined invalid homestead save for user ${userId}: ${reason}`,
+    );
+    const homestead = this.createHomestead(user);
+    await this.store.saveHomesteadState(userId, homestead);
+    return homestead;
+  }
+
   private create(user: PublicUser): FarmingGameState {
     return createFarmingGame({
       ownerId: user.id,
@@ -1101,6 +1440,15 @@ export class FarmService {
     });
   }
 
+  private createHomestead(user: PublicUser): HomesteadGameState {
+    return createHomesteadGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: randomBytes(24).toString("hex"),
+      now: this.clock(),
+    });
+  }
+
   private async applyMarketDirector(
     game: FarmingGameState,
     playerId: string,
@@ -1118,6 +1466,51 @@ export class FarmService {
     } catch (error) {
       console.error("Farm market director failed; using rules fallback", error);
       return game;
+    }
+  }
+
+  private async applyHomesteadDirector(
+    homestead: HomesteadGameState,
+    farm: FarmingGameState,
+    ranch: RanchGameState,
+    mine: MineGameState,
+    playerId: string,
+  ): Promise<HomesteadGameState> {
+    const request = createHomesteadDirectorDecision(
+      homestead,
+      farm,
+      ranch,
+      mine,
+      playerId,
+    );
+    if (!request) return homestead;
+    try {
+      const result = await this.decisions.decide(
+        "homestead",
+        request.input,
+      );
+      const selected = result?.candidateIndex === null || result === null
+        ? undefined
+        : request.input.candidates[result.candidateIndex];
+      return selected
+          ? applyHomesteadWorldEventDecision(
+            homestead,
+            selected.eventId,
+            "llm",
+            this.clock(),
+            {
+              narrative: result?.presentation?.narrative,
+              recommendation: result?.presentation?.recommendation,
+              npcLine: result?.presentation?.npcLine,
+            },
+          )
+        : homestead;
+    } catch (error) {
+      console.error(
+        "Homestead world director failed; using rules fallback",
+        error,
+      );
+      return homestead;
     }
   }
 
@@ -1157,6 +1550,19 @@ export class FarmService {
     }
   }
 
+  private assertHomesteadRevision(
+    game: HomesteadGameState,
+    expectedRevision: number,
+  ): void {
+    if (game.revision !== expectedRevision) {
+      throw new HttpError(
+        409,
+        "HOMESTEAD_REVISION_CONFLICT",
+        "庄园状态已更新，请刷新后重试",
+      );
+    }
+  }
+
   private mapRuleError(error: unknown): never {
     if (error instanceof FarmingRuleError) {
       throw new HttpError(400, error.code, error.message);
@@ -1173,6 +1579,13 @@ export class FarmService {
 
   private mapMineRuleError(error: unknown): never {
     if (error instanceof MineRuleError) {
+      throw new HttpError(400, error.code, error.message);
+    }
+    throw error;
+  }
+
+  private mapHomesteadRuleError(error: unknown): never {
+    if (error instanceof HomesteadRuleError) {
       throw new HttpError(400, error.code, error.message);
     }
     throw error;
@@ -1277,6 +1690,22 @@ export class FarmService {
       ranchLevel: ranch.level,
       ranchProducts: ranch.products,
     }, this.clock());
+  }
+
+  private homesteadEconomy(
+    farm: FarmingGameState,
+    ranch: RanchGameState,
+    mine: MineGameState,
+  ): HomesteadLinkedEconomy {
+    return {
+      farmRevision: farm.revision,
+      ranchRevision: ranch.revision,
+      mineRevision: mine.revision,
+      coins: farm.coins,
+      farmProduce: farm.produce,
+      ranchProducts: ranch.products,
+      mineOres: mine.ores,
+    };
   }
 
   private async serializedMany<T>(

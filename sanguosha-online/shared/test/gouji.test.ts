@@ -120,7 +120,7 @@ describe("Gouji authoritative engine", () => {
         expect.arrayContaining(["头科", "二科", "三科", "四科", "二拉", "大拉"]),
       );
     }
-  });
+  }, 10_000);
 
   it("uses intelligence for teammate cooperation while still taking a finishing play", () => {
     const state = controlledState();

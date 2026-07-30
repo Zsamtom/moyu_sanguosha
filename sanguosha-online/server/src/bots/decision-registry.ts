@@ -1,4 +1,9 @@
-export type BotGameKind = "sanguosha" | "gouji" | "doudizhu" | "farm";
+export type BotGameKind =
+  | "sanguosha"
+  | "gouji"
+  | "doudizhu"
+  | "farm"
+  | "homestead";
 
 export interface BotDecisionUsage {
   readonly promptTokens: number;
@@ -26,6 +31,13 @@ export interface BotDecisionResult {
   readonly candidateIndex: number | null;
   readonly usage: BotDecisionUsage;
   readonly failureReason?: BotDecisionFailureReason;
+  /** Optional display-only copy. It never carries executable rule values. */
+  readonly presentation?: {
+    readonly title?: string;
+    readonly narrative?: string;
+    readonly recommendation?: string;
+    readonly npcLine?: string;
+  };
 }
 
 export class BotDecisionProviderError extends Error {

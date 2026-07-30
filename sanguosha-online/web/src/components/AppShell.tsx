@@ -3,7 +3,7 @@ import { GAME_REGISTRY } from '../games/registry';
 import type { AuthUser } from '../types';
 import { Brand } from './Brand';
 
-type ShellView = 'lobby' | 'farm' | 'ranch' | 'mine' | 'reader' | 'admin' | 'room' | 'game';
+type ShellView = 'lobby' | 'homestead' | 'farm' | 'ranch' | 'mine' | 'reader' | 'admin' | 'room' | 'game';
 
 interface AppShellProps {
   user: AuthUser;
@@ -31,7 +31,7 @@ export function AppShell({
   onLogout,
 }: AppShellProps) {
   const lockedInRoom = view === 'room' || view === 'game';
-  const inHomestead = view === 'farm' || view === 'ranch' || view === 'mine';
+  const inHomestead = view === 'homestead' || view === 'farm' || view === 'ranch' || view === 'mine';
   const immersive = lockedInRoom || inHomestead;
   return (
     <Layout className={`app-layout${inHomestead ? ' app-layout--farm' : ''}`}>
@@ -52,7 +52,7 @@ export function AppShell({
           <section className="app-nav__section" aria-labelledby="function-navigation">
             <span id="function-navigation" className="app-nav__label">功能</span>
             <Button type="text" disabled={lockedInRoom} onClick={onFarm}>
-              农场
+              庄园
             </Button>
             <Button aria-current={view === 'reader' ? 'page' : undefined} type={view === 'reader' ? 'primary' : 'text'} disabled={lockedInRoom} onClick={onReader}>
               TXT 小说阅读

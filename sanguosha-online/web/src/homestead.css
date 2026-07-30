@@ -1,0 +1,432 @@
+.homestead-page {
+  --estate-ink: #1c2a24;
+  --estate-line: #ccd5cf;
+  --estate-paper: #f7f8f4;
+  --estate-green: #315d45;
+}
+
+.homestead-hero {
+  align-items: flex-end;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--estate-ink);
+}
+
+.homestead-hero h1,
+.homestead-section h2,
+.homestead-section h3 {
+  margin: 0;
+}
+
+.homestead-hero p {
+  max-width: 680px;
+  margin: 8px 0 0;
+}
+
+.homestead-metrics {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+}
+
+.homestead-metrics > div {
+  min-width: 76px;
+  text-align: right;
+}
+
+.homestead-metrics strong,
+.homestead-metrics span {
+  display: block;
+}
+
+.homestead-metrics strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.homestead-metrics span {
+  margin-top: 5px;
+  color: #68736d;
+  font-size: 11px;
+}
+
+.homestead-alert {
+  margin-top: 14px;
+}
+
+.homestead-section {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--estate-line);
+  background: var(--estate-paper);
+}
+
+.homestead-section__heading,
+.homestead-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.homestead-section__heading {
+  margin-bottom: 16px;
+}
+
+.homestead-section__heading > span {
+  color: #68736d;
+}
+
+.homestead-event {
+  border-color: #9eb4a6;
+  background: #f2f6f1;
+}
+
+.homestead-advice {
+  border-color: #9ba9c5;
+  background: linear-gradient(135deg, #f4f6fb, #f7f8f4 70%);
+}
+
+.homestead-advice blockquote,
+.homestead-npc-grid blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-left: 3px solid #6b7896;
+  background: rgb(255 255 255 / 72%);
+}
+
+.homestead-npc-line {
+  margin-bottom: 0;
+  color: #47536a;
+  font-weight: 600;
+}
+
+.homestead-option-grid,
+.homestead-facility-grid,
+.homestead-recipe-grid,
+.homestead-order-grid,
+.homestead-research-grid,
+.homestead-depth-grid,
+.homestead-npc-grid,
+.homestead-collection-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.homestead-option-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.homestead-facility-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.homestead-recipe-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-order-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-research-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.homestead-depth-grid,
+.homestead-npc-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-option-grid article,
+.homestead-facility-grid article,
+.homestead-recipe-grid article,
+.homestead-order-grid article,
+.homestead-research-grid article,
+.homestead-depth-card,
+.homestead-npc-grid > article {
+  display: flex;
+  min-width: 0;
+  min-height: 142px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--estate-line);
+  background: #fff;
+}
+
+.homestead-order-grid article.is-complete {
+  background: #f1f5f2;
+  opacity: 0.72;
+}
+
+.homestead-research-grid article.is-complete {
+  border-color: #91b39e;
+  background: #f0f7f2;
+}
+
+.homestead-option-grid .ant-btn,
+.homestead-facility-grid .ant-btn,
+.homestead-recipe-grid .ant-btn,
+.homestead-order-grid .ant-btn,
+.homestead-research-grid .ant-btn {
+  align-self: flex-start;
+  margin-top: auto;
+}
+
+.homestead-card-title > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.homestead-card-title .ant-tag {
+  margin: 0;
+}
+
+.homestead-complete-label {
+  color: #61806e;
+  font-size: 12px;
+}
+
+.homestead-depth-card {
+  min-height: 420px;
+}
+
+.homestead-depth-card--farm {
+  border-top: 3px solid #5a8b59;
+}
+
+.homestead-depth-card--ranch {
+  border-top: 3px solid #b87938;
+}
+
+.homestead-depth-card--mine {
+  border-top: 3px solid #58738d;
+}
+
+.homestead-action-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.homestead-action-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 9px;
+  border: 1px solid #d9dfdb;
+  background: #fafbf9;
+}
+
+.homestead-action-list > div small {
+  grid-column: 1;
+  color: #707a74;
+}
+
+.homestead-action-list > div .ant-btn {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.homestead-action-list--inline {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.homestead-traits {
+  min-height: 26px;
+}
+
+.homestead-npc-grid details {
+  margin-top: auto;
+  border-top: 1px solid var(--estate-line);
+  padding-top: 10px;
+}
+
+.homestead-npc-grid summary,
+.homestead-collection-card > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.homestead-npc-grid details p {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  color: #5f6963;
+  font-size: 12px;
+}
+
+.homestead-season-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+}
+
+.homestead-season-card,
+.homestead-collection-card {
+  padding: 14px;
+  border: 1px solid var(--estate-line);
+  background: #fff;
+}
+
+.homestead-season-counters {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.homestead-season-counters span {
+  padding: 7px;
+  background: #f1f4f1;
+  text-align: center;
+  font-size: 12px;
+}
+
+.homestead-milestone-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.homestead-milestone-grid > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #d9dfdb;
+}
+
+.homestead-milestone-grid small {
+  grid-column: 1;
+}
+
+.homestead-milestone-grid .ant-btn {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.homestead-collection-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.homestead-collection-grid article {
+  display: flex;
+  min-height: 92px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border: 1px dashed #c8ceca;
+  background: #f4f5f3;
+  color: #8a918d;
+}
+
+.homestead-collection-grid article.is-unlocked {
+  border-style: solid;
+  border-color: #91b39e;
+  background: #f0f7f2;
+  color: var(--estate-ink);
+}
+
+.homestead-collection-grid .ant-tag {
+  align-self: flex-start;
+  margin: 0;
+}
+
+.homestead-resources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.homestead-resources .ant-tag {
+  margin: 0;
+}
+
+.homestead-output {
+  color: var(--estate-green);
+  font-weight: 600;
+}
+
+.homestead-reward {
+  color: #5d6b63;
+  font-size: 12px;
+}
+
+.homestead-ledger {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  border: 1px solid var(--estate-line);
+  background: #fff;
+}
+
+.homestead-ledger > div {
+  padding: 14px;
+}
+
+.homestead-ledger > div + div {
+  border-left: 1px solid var(--estate-line);
+}
+
+.homestead-ledger p {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 8px 0;
+}
+
+.homestead-ledger p span {
+  color: #7b847f;
+  white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .homestead-facility-grid,
+  .homestead-recipe-grid,
+  .homestead-research-grid,
+  .homestead-collection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .homestead-order-grid,
+  .homestead-depth-grid,
+  .homestead-npc-grid,
+  .homestead-season-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .homestead-hero,
+  .homestead-metrics {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .homestead-metrics > div {
+    text-align: left;
+  }
+
+  .homestead-option-grid,
+  .homestead-facility-grid,
+  .homestead-recipe-grid,
+  .homestead-research-grid,
+  .homestead-collection-grid,
+  .homestead-ledger {
+    grid-template-columns: 1fr;
+  }
+
+  .homestead-season-counters {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .homestead-ledger > div + div {
+    border-top: 1px solid var(--estate-line);
+    border-left: 0;
+  }
+}

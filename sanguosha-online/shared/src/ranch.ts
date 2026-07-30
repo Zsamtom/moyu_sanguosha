@@ -5,7 +5,7 @@ import {
 } from "./farming.js";
 
 export const RANCH_STATE_VERSION = 1 as const;
-export const RANCH_REQUIRED_FARM_LEVEL = 3;
+export const RANCH_REQUIRED_FARM_LEVEL = 2;
 export const RANCH_STARTING_PENS = 3;
 export const RANCH_MAX_PENS = 8;
 export const RANCH_MAX_LOGS = 80;
@@ -59,7 +59,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     name: "母鸡",
     productId: "egg",
     productName: "鸡蛋",
-    requiredFarmLevel: 3,
+    requiredFarmLevel: 2,
     requiredRanchLevel: 1,
     purchaseCost: 80,
     resalePrice: 40,

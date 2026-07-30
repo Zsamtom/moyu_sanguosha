@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -303,6 +303,26 @@ export const api = {
         expectedFarmRevision,
         expectedRanchRevision,
         expectedMineRevision,
+        action,
+      }),
+    });
+  },
+
+  async getHomestead(): Promise<HomesteadSnapshot> {
+    return request<HomesteadSnapshot>('/api/homestead');
+  },
+
+  async applyHomesteadAction(
+    snapshot: HomesteadSnapshot,
+    action: HomesteadClientAction,
+  ): Promise<HomesteadSnapshot> {
+    return request<HomesteadSnapshot>('/api/homestead/actions', {
+      method: 'POST',
+      ...jsonBody({
+        expectedFarmRevision: snapshot.homestead.revisions.farm,
+        expectedRanchRevision: snapshot.homestead.revisions.ranch,
+        expectedMineRevision: snapshot.homestead.revisions.mine,
+        expectedHomesteadRevision: snapshot.homestead.revision,
         action,
       }),
     });

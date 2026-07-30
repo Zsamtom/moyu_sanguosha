@@ -47,14 +47,14 @@ describe("persistent ranch engine", () => {
       viewerId: "owner",
       now: start,
       farmRevision: 0,
-      farmLevel: 2,
+      farmLevel: 1,
       dogLevel: 0,
       coins: 100,
       produce: economy().produce,
     }).unlocked).toBe(false);
     expect(() => applyRanchAction(
       ranch,
-      economy({ farmLevel: 2 }),
+      economy({ farmLevel: 1 }),
       { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
       start,
     )).toThrowError(RanchRuleError);

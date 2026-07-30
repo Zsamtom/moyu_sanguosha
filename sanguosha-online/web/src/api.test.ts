@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
-import type { RoomRuleConfig } from './types';
+import type { HomesteadSnapshot, RoomRuleConfig } from './types';
 
 const ruleConfig: RoomRuleConfig = {
   ruleSetVersion: 'original-66-v1',
@@ -380,6 +380,71 @@ describe('mine API', () => {
             type: 'mine_start',
             depositId: 'iron',
             shaftIndex: 1,
+          },
+        }),
+      }),
+    );
+  });
+});
+
+describe('homestead API', () => {
+  it('submits linked actions with all four optimistic revisions', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse({
+      homestead: { version: 1 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const snapshot = {
+      homestead: {
+        revision: 7,
+        revisions: {
+          farm: 18,
+          ranch: 9,
+          mine: 4,
+        },
+      },
+    } as HomesteadSnapshot;
+
+    await api.applyHomesteadAction(snapshot, {
+      type: 'homestead_start_job',
+      recipeId: 'fertilizer_soil_conditioner',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/homestead/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedFarmRevision: 18,
+          expectedRanchRevision: 9,
+          expectedMineRevision: 4,
+          expectedHomesteadRevision: 7,
+          action: {
+            type: 'homestead_start_job',
+            recipeId: 'fertilizer_soil_conditioner',
+          },
+        }),
+      }),
+    );
+
+    await api.applyHomesteadAction(snapshot, {
+      type: 'homestead_talk_npc',
+      npcId: 'agronomist_lin',
+      topicId: 'rotation',
+    });
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/homestead/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedFarmRevision: 18,
+          expectedRanchRevision: 9,
+          expectedMineRevision: 4,
+          expectedHomesteadRevision: 7,
+          action: {
+            type: 'homestead_talk_npc',
+            npcId: 'agronomist_lin',
+            topicId: 'rotation',
           },
         }),
       }),
