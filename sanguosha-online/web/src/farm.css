@@ -1,5 +1,5 @@
 .app-layout--farm {
-  min-width: 0;
+  min-width: 0 !important;
 }
 
 .homestead-nav {
@@ -715,11 +715,19 @@
   }
 }
 
+@media (max-width: 980px) {
+  html:has(.app-layout--farm),
+  body:has(.app-layout--farm),
+  body:has(.app-layout--farm) #root {
+    min-width: 0 !important;
+  }
+}
+
 @media (max-width: 640px) {
   html:has(.app-layout--farm),
   body:has(.app-layout--farm),
   body:has(.app-layout--farm) #root {
-    min-width: 0;
+    min-width: 0 !important;
   }
 
   .app-layout--farm .app-content {

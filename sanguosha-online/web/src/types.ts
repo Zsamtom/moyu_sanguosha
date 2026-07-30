@@ -48,6 +48,9 @@ export interface FarmPlot {
   stolen: number;
   stealAttempts: string[];
   stolenBy: string[];
+  productionModifierPercent?: number;
+  durationModifierPercent?: number;
+  productionModifierLabel?: string;
   unlocked: boolean;
   ready: boolean;
   progress: number;
@@ -221,6 +224,9 @@ export interface RanchPen {
   taken: number;
   collectAttempts: string[];
   takenBy: string[];
+  productionModifierPercent?: number;
+  durationModifierPercent?: number;
+  productionModifierLabel?: string;
   unlocked: boolean;
   ready: boolean;
   progress: number;
@@ -360,6 +366,9 @@ export interface MineShaft {
   completesAt: number | null;
   hazardAt: number | null;
   reinforced: boolean;
+  productionModifierPercent?: number;
+  durationModifierPercent?: number;
+  productionModifierLabel?: string;
   unlocked: boolean;
   ready: boolean;
   progress: number;
@@ -505,6 +514,27 @@ export type HomesteadNpcTopicId =
   | 'layers'
   | 'safety';
 export type HomesteadSeasonMilestoneId = 'bronze' | 'silver' | 'gold';
+export type HomesteadWeatherId = 'clear' | 'gentle_rain' | 'heatwave' | 'frost';
+export type HomesteadResilienceId =
+  | 'weather_station'
+  | 'drainage'
+  | 'shelter';
+export type HomesteadTownId = 'greenvale' | 'frostpeak';
+export type HomesteadTownSectorId = 'farm' | 'ranch' | 'mine';
+export type HomesteadTownResourceId =
+  | 'snow_potato'
+  | 'yak_milk'
+  | 'frost_crystal';
+export type HomesteadValueRouteId =
+  | 'valley_sauce_batch'
+  | 'berry_preserves'
+  | 'oil_and_melon_crate'
+  | 'rare_fruit_gift'
+  | 'grain_cooperative'
+  | 'dairy_bakery_supply'
+  | 'thermal_textiles'
+  | 'utility_alloy'
+  | 'jeweler_commission';
 
 export interface HomesteadResourceView {
   source: 'farm' | 'ranch' | 'mine' | 'goods';
@@ -611,8 +641,78 @@ export interface HomesteadWorldEventView {
       coinReward: number;
       reputationReward: number;
       researchReward: number;
+      costsView: HomesteadResourceView[];
+      canChoose: boolean;
+      missingCoins: number;
     }>;
   };
+}
+
+export interface HomesteadWeatherView {
+  weatherId: HomesteadWeatherId;
+  dayKey: string;
+  definition: {
+    id: HomesteadWeatherId;
+    name: string;
+    description: string;
+    tone: 'good' | 'neutral' | 'warning';
+    farmYieldPercent: number;
+    farmDurationPercent: number;
+    ranchYieldPercent: number;
+    ranchDurationPercent: number;
+    mineYieldPercent: number;
+    mineDurationPercent: number;
+  };
+  tomorrow: HomesteadWeatherView['definition'] | null;
+}
+
+export interface HomesteadDisasterView {
+  eventId: 'mountain_seepage' | 'cold_snap';
+  startedDayKey: string;
+  remainingDays: number;
+  unresolvedDays: number;
+  severity: number;
+  mitigated: boolean;
+  resolution: string | null;
+}
+
+export interface HomesteadProductionRuleView {
+  yieldPercent: number;
+  durationPercent: number;
+  label: string;
+}
+
+export interface HomesteadResilienceView {
+  definition: {
+    id: HomesteadResilienceId;
+    name: string;
+    description: string;
+  };
+  level: number;
+  maximumLevel: number;
+  nextUpgrade: {
+    level: number;
+    coinCost: number;
+    researchCost: number;
+    ironIngotCost: number;
+    canUpgrade: boolean;
+  } | null;
+}
+
+export interface HomesteadEmergencyOperationView {
+  id: 'farm' | 'ranch' | 'mine';
+  name: string;
+  description: string;
+  costs: Array<{
+    source: 'farm' | 'ranch' | 'mine' | 'goods';
+    itemId: string;
+    quantity: number;
+  }>;
+  yieldBonusPercent: number;
+  durationBonusPercent: number;
+  activated: boolean;
+  costsView: HomesteadResourceView[];
+  canActivate: boolean;
 }
 
 export interface HomesteadResearchView {
@@ -755,6 +855,7 @@ export interface HomesteadSeasonView {
     };
     claimed: boolean;
     canClaim: boolean;
+    lockedByResearch: boolean;
   }>;
 }
 
@@ -786,6 +887,113 @@ export interface HomesteadAdviceView {
   generatedAt: number;
 }
 
+export interface HomesteadTownEstateView {
+  definition: {
+    id: HomesteadTownId;
+    name: string;
+    subtitle: string;
+    climate: string;
+    description: string;
+    landmarkName: string;
+    specialties: string[];
+    status: 'available' | 'planned';
+  };
+  active: boolean;
+  reputation: number;
+  landmarkStage: number;
+  landmarkComplete: boolean;
+  inventory: Record<HomesteadTownResourceId, number>;
+  sectors: Array<{
+    level: number;
+    cycle: number;
+    job: {
+      cycle: number;
+      startedAt: number;
+      completesAt: number;
+    } | null;
+    definition: {
+      id: HomesteadTownSectorId;
+      name: string;
+      actionName: string;
+      durationSeconds: number;
+      input: {
+        itemId: HomesteadTownResourceId;
+        quantity: number;
+      } | null;
+      output: {
+        itemId: HomesteadTownResourceId;
+        quantity: number;
+      };
+    };
+    ready: boolean;
+    progress: number;
+    outputQuantity: number;
+    canStart: boolean;
+    canCollect: boolean;
+    nextUpgrade: {
+      level: number;
+      coinCost: number;
+      reputationRequired: number;
+      crystalCost: number;
+      canUpgrade: boolean;
+    } | null;
+  }>;
+  currentProblem: {
+    id: string;
+    title: string;
+    description: string;
+    requirements: Array<{
+      itemId: HomesteadTownResourceId;
+      quantity: number;
+    }>;
+    coinReward: number;
+    reputationReward: number;
+    researchReward: number;
+    requirementsView: Array<{
+      itemId: HomesteadTownResourceId;
+      quantity: number;
+      available: number;
+      sufficient: boolean;
+    }>;
+    canResolve: boolean;
+  } | null;
+  nextLandmark: {
+    stage: number;
+    name: string;
+    requiredProblems: number;
+    requiredReputation: number;
+    coinCost: number;
+    requirements: Array<{
+      itemId: HomesteadTownResourceId;
+      quantity: number;
+    }>;
+    reputationReward: number;
+    renownReward: number;
+    requirementsView: Array<{
+      itemId: HomesteadTownResourceId;
+      quantity: number;
+      available: number;
+      sufficient: boolean;
+    }>;
+    canRestore: boolean;
+  } | null;
+}
+
+export interface HomesteadValueRouteView {
+  id: HomesteadValueRouteId;
+  title: string;
+  description: string;
+  kind: 'processing' | 'public_project' | 'specialty_order';
+  stage: 2 | 3;
+  requirements: HomesteadResourceView[];
+  coinReward: number;
+  reputationReward: number;
+  researchReward: number;
+  requirementsView: HomesteadResourceView[];
+  completedToday: boolean;
+  canComplete: boolean;
+}
+
 export interface HomesteadGameView {
   kind: 'homestead';
   version: 1;
@@ -794,13 +1002,26 @@ export interface HomesteadGameView {
   ownerId: string;
   ownerName: string;
   reputation: number;
+  merchantRenown: number;
   researchPoints: number;
   coins: number;
+  activeTownId: HomesteadTownId;
+  towns: HomesteadTownEstateView[];
+  valueRoutes: HomesteadValueRouteView[];
   goods: Record<HomesteadGoodId, number>;
   facilities: HomesteadFacilityView[];
   recipes: HomesteadRecipeView[];
   orders: HomesteadOrderView[];
   worldEvent: HomesteadWorldEventView;
+  weather: HomesteadWeatherView;
+  disaster: HomesteadDisasterView | null;
+  productionRules: {
+    farm: HomesteadProductionRuleView;
+    ranch: HomesteadProductionRuleView;
+    mine: HomesteadProductionRuleView;
+  };
+  resilience: HomesteadResilienceView[];
+  emergencyOperations: HomesteadEmergencyOperationView[];
   research: HomesteadResearchView[];
   specializations: HomesteadSpecializationsView;
   npcs: HomesteadNpcView[];
@@ -834,7 +1055,9 @@ export interface HomesteadGameView {
       | 'ranch'
       | 'mine'
       | 'npc'
-      | 'season';
+      | 'season'
+      | 'community'
+      | 'market';
     message: string;
   }>;
   revisions: {
@@ -868,6 +1091,38 @@ export type HomesteadClientAction =
   | {
       type: 'homestead_claim_season_reward';
       milestoneId: HomesteadSeasonMilestoneId;
+    }
+  | {
+      type: 'homestead_upgrade_resilience';
+      resilienceId: HomesteadResilienceId;
+    }
+  | {
+      type: 'homestead_activate_emergency_boost';
+      sectorId: 'farm' | 'ranch' | 'mine';
+    }
+  | { type: 'homestead_switch_town'; townId: HomesteadTownId }
+  | {
+      type: 'homestead_start_town_sector';
+      sectorId: HomesteadTownSectorId;
+    }
+  | {
+      type: 'homestead_collect_town_sector';
+      sectorId: HomesteadTownSectorId;
+    }
+  | {
+      type: 'homestead_upgrade_town_sector';
+      sectorId: HomesteadTownSectorId;
+    }
+  | {
+      type: 'homestead_sell_town_resource';
+      resourceId: HomesteadTownResourceId;
+      quantity: number;
+    }
+  | { type: 'homestead_resolve_town_problem'; problemId: string }
+  | { type: 'homestead_restore_town_landmark' }
+  | {
+      type: 'homestead_complete_value_route';
+      routeId: HomesteadValueRouteId;
     };
 
 export interface HomesteadSnapshot {

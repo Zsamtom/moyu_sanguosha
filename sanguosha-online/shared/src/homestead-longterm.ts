@@ -416,7 +416,7 @@ export const HOMESTEAD_SEASON_MILESTONES: Readonly<
   bronze: {
     id: "bronze",
     name: "协作起步",
-    score: 10,
+    score: 150,
     coinReward: 180,
     researchReward: 2,
     goodReward: { itemId: "soil_conditioner", quantity: 1 },
@@ -424,7 +424,7 @@ export const HOMESTEAD_SEASON_MILESTONES: Readonly<
   silver: {
     id: "silver",
     name: "三业骨干",
-    score: 30,
+    score: 500,
     coinReward: 520,
     researchReward: 5,
     goodReward: { itemId: "fortified_feed", quantity: 2 },
@@ -432,7 +432,7 @@ export const HOMESTEAD_SEASON_MILESTONES: Readonly<
   gold: {
     id: "gold",
     name: "城镇典范",
-    score: 65,
+    score: 1_200,
     coinReward: 1_200,
     researchReward: 10,
     goodReward: { itemId: "mining_kit", quantity: 2 },

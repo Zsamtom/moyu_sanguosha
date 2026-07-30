@@ -47,6 +47,7 @@ import {
   assertRestorableHomesteadGameState,
   createHomesteadGame,
   getHomesteadGameView,
+  getHomesteadProductionRules,
   refreshHomesteadGame,
   type HomesteadAction,
   type HomesteadGameState,
@@ -723,10 +724,23 @@ export class FarmService {
   ): Promise<FarmActionSnapshot> {
     return this.serializedMany([user.id], async () => {
       const game = await this.loadOrCreate(user);
+      const ranch = await this.loadOrCreateRanch(user);
+      const mine = await this.loadOrCreateMine(user);
+      const homestead = await this.loadOrCreateHomestead(
+        user,
+        game,
+        ranch,
+        mine,
+      );
       this.assertRevision(game, expectedRevision);
       let next: FarmingGameState;
       try {
-        next = applyFarmingAction(game, action, this.clock());
+        next = applyFarmingAction(
+          game,
+          action,
+          this.clock(),
+          getHomesteadProductionRules(homestead).farm,
+        );
       } catch (error) {
         this.mapRuleError(error);
       }
@@ -813,16 +827,29 @@ export class FarmService {
     return this.serializedMany([user.id], async () => {
       const farm = await this.loadOrCreate(user);
       const ranch = await this.loadOrCreateRanch(user);
+      const mine = await this.loadOrCreateMine(user);
+      const homestead = await this.loadOrCreateHomestead(
+        user,
+        farm,
+        ranch,
+        mine,
+      );
       this.assertRevision(farm, expectedFarmRevision);
       this.assertRanchRevision(ranch, expectedRanchRevision);
       let result: ReturnType<typeof applyRanchAction>;
       try {
-        result = applyRanchAction(ranch, {
-          farmRevision: farm.revision,
-          farmLevel: farm.level,
-          coins: farm.coins,
-          produce: farm.produce,
-        }, action, this.clock());
+        result = applyRanchAction(
+          ranch,
+          {
+            farmRevision: farm.revision,
+            farmLevel: farm.level,
+            coins: farm.coins,
+            produce: farm.produce,
+          },
+          action,
+          this.clock(),
+          getHomesteadProductionRules(homestead).ranch,
+        );
       } catch (error) {
         this.mapRanchRuleError(error);
       }
@@ -934,20 +961,32 @@ export class FarmService {
       const farm = await this.loadOrCreate(user);
       const ranch = await this.loadOrCreateRanch(user);
       const mine = await this.loadOrCreateMine(user);
+      const homestead = await this.loadOrCreateHomestead(
+        user,
+        farm,
+        ranch,
+        mine,
+      );
       this.assertRevision(farm, expectedFarmRevision);
       this.assertRanchRevision(ranch, expectedRanchRevision);
       this.assertMineRevision(mine, expectedMineRevision);
       let result: ReturnType<typeof applyMineAction>;
       try {
-        result = applyMineAction(mine, {
-          farmRevision: farm.revision,
-          farmLevel: farm.level,
-          coins: farm.coins,
-          farmProduce: farm.produce,
-          ranchRevision: ranch.revision,
-          ranchLevel: ranch.level,
-          ranchProducts: ranch.products,
-        }, action, this.clock());
+        result = applyMineAction(
+          mine,
+          {
+            farmRevision: farm.revision,
+            farmLevel: farm.level,
+            coins: farm.coins,
+            farmProduce: farm.produce,
+            ranchRevision: ranch.revision,
+            ranchLevel: ranch.level,
+            ranchProducts: ranch.products,
+          },
+          action,
+          this.clock(),
+          getHomesteadProductionRules(homestead).mine,
+        );
       } catch (error) {
         this.mapMineRuleError(error);
       }

@@ -7,7 +7,9 @@ import {
   HOMESTEAD_NPC_IDS,
   HOMESTEAD_NPC_TOPIC_IDS,
   HOMESTEAD_RESEARCH_NODE_IDS,
+  HOMESTEAD_RESILIENCE_IDS,
   HOMESTEAD_SEASON_MILESTONE_IDS,
+  HOMESTEAD_VALUE_ROUTE_IDS,
 } from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
 import type {
@@ -91,6 +93,46 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("homestead_claim_season_reward"),
     milestoneId: z.enum(HOMESTEAD_SEASON_MILESTONE_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_upgrade_resilience"),
+    resilienceId: z.enum(HOMESTEAD_RESILIENCE_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_activate_emergency_boost"),
+    sectorId: z.enum(["farm", "ranch", "mine"]),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_switch_town"),
+    townId: z.enum(["greenvale", "frostpeak"]),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_start_town_sector"),
+    sectorId: z.enum(["farm", "ranch", "mine"]),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_collect_town_sector"),
+    sectorId: z.enum(["farm", "ranch", "mine"]),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_upgrade_town_sector"),
+    sectorId: z.enum(["farm", "ranch", "mine"]),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_sell_town_resource"),
+    resourceId: z.enum(["snow_potato", "yak_milk", "frost_crystal"]),
+    quantity: z.number().int().min(1).max(999),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_resolve_town_problem"),
+    problemId: z.string().min(1).max(80),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_restore_town_landmark"),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_complete_value_route"),
+    routeId: z.enum(HOMESTEAD_VALUE_ROUTE_IDS),
   }).strict(),
 ]);
 

@@ -1,6 +1,7 @@
 import {
-  HOMESTEAD_WORLD_EVENT_IDS,
+  HOMESTEAD_WEATHER,
   HOMESTEAD_WORLD_EVENTS,
+  getHomesteadProductionRules,
   type FarmingGameState,
   type HomesteadGameState,
   type HomesteadWorldEventId,
@@ -40,6 +41,16 @@ export interface HomesteadDirectorCompactState {
   readonly seasonScore: number;
   readonly npcTrust: readonly string[];
   readonly recentOperations: readonly string[];
+  readonly weather: string;
+  readonly disaster: string | null;
+  readonly productionEffects: readonly string[];
+  readonly resilience: readonly string[];
+  readonly activeTown: string;
+  readonly localReputation: number;
+  readonly merchantRenown: number;
+  readonly townResources: readonly string[];
+  readonly townProblem: string | null;
+  readonly townLandmarkStage: number;
 }
 
 export interface HomesteadDirectorRequest {
@@ -69,13 +80,25 @@ export function createHomesteadDirectorDecision(
   ) {
     return null;
   }
-  const candidates = HOMESTEAD_WORLD_EVENT_IDS.map((eventId) => {
+  const candidateIds: readonly HomesteadWorldEventId[] = homestead.disaster
+    ? [homestead.disaster.eventId]
+    : ["steady_weather", "harvest_festival"];
+  const candidates = candidateIds.map((eventId) => {
     const event = HOMESTEAD_WORLD_EVENTS[eventId];
     return { eventId, title: event.title, tone: event.tone };
   });
   const fallback = candidates.find(
     ({ eventId }) => eventId === homestead.worldEvent.eventId,
   ) ?? candidates[0]!;
+  const production = getHomesteadProductionRules(homestead);
+  const activeTownId = homestead.townNetwork?.activeTownId ?? "greenvale";
+  const activeTown = homestead.townNetwork?.towns[activeTownId];
+  const frostTown = homestead.townNetwork?.towns.frostpeak;
+  const townProblem = activeTownId === "frostpeak"
+    ? ["blocked_supply_road", "frozen_waterworks", "avalanche_mine"].find(
+      (id) => !frostTown?.resolvedProblemIds.includes(id),
+    ) ?? null
+    : null;
   return {
     input: {
       roomId: "persistent-homestead",
@@ -105,6 +128,28 @@ export function createHomesteadDirectorDecision(
         recentOperations: homestead.logs
           .slice(0, 6)
           .map(({ message }) => message.replaceAll(homestead.ownerName, "庄主")),
+        weather: HOMESTEAD_WEATHER[homestead.weather.weatherId].name,
+        disaster: homestead.disaster
+          ? `${homestead.disaster.eventId}:severity-${homestead.disaster.severity}:resolved-${homestead.disaster.mitigated}`
+          : null,
+        productionEffects: [
+          `farm:${production.farm.yieldPercent}/${production.farm.durationPercent}`,
+          `ranch:${production.ranch.yieldPercent}/${production.ranch.durationPercent}`,
+          `mine:${production.mine.yieldPercent}/${production.mine.durationPercent}`,
+        ],
+        resilience: Object.entries(homestead.resilience)
+          .map(([id, level]) => `${id}:${level}`),
+        activeTown: activeTownId,
+        localReputation: activeTownId === "greenvale"
+          ? homestead.reputation
+          : activeTown?.reputation ?? 0,
+        merchantRenown: homestead.townNetwork?.merchantRenown ?? 0,
+        townResources: activeTownId === "frostpeak" && activeTown
+          ? Object.entries(activeTown.inventory)
+            .map(([id, quantity]) => `${id}:${quantity}`)
+          : [],
+        townProblem,
+        townLandmarkStage: activeTown?.landmarkStage ?? 0,
       },
       candidates,
     },
@@ -113,7 +158,7 @@ export function createHomesteadDirectorDecision(
 }
 
 const SYSTEM_PROMPT =
-  "你是三业庄园的每日世界导演。农场、牧场和矿山必须被同等考虑。根据结构化库存、等级、设施和最近操作，从给定候选事件中选择最能产生跨产业取舍的一项。不得编造事件、奖励、成本或任何数值。只返回 JSON：{\"i\":0,\"t\":\"短标题\",\"n\":\"不超过120字的叙事\",\"a\":\"不超过80字且不含数值的经营建议\",\"l\":\"不超过50字的NPC台词\"}。";
+  "你是多城镇三业庄园的每日世界导演。农场、牧场和矿山必须被同等考虑；叙事和建议应结合当前城镇、当地声望、待解决问题、地标阶段与本地库存。根据结构化状态和最近操作，从给定候选事件中选择最能产生跨产业取舍的一项。不得编造事件、奖励、成本、物品或任何数值；LLM只负责选择和表达，服务器负责全部规则结算。只返回 JSON：{\"i\":0,\"t\":\"短标题\",\"n\":\"不超过120字的叙事\",\"a\":\"不超过80字且不含数值的经营建议\",\"l\":\"不超过50字的NPC台词\"}。";
 
 function compactPrompt(
   input: BotDecisionInput<

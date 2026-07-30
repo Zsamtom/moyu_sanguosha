@@ -184,6 +184,14 @@ describe("real-time FarmService", () => {
     );
     await service.getOrCreate(user);
     let neighborSnapshot = await service.getOrCreate(neighbor);
+    const stableHomestead = createHomesteadGame({
+      ownerId: neighbor.id,
+      ownerName: neighbor.displayName,
+      seed: "stable-neighbor-weather",
+      now,
+    });
+    stableHomestead.weather = { weatherId: "clear", dayKey: stableHomestead.dayKey };
+    store.setRawHomestead(neighbor.id, stableHomestead);
     neighborSnapshot = await service.applyAction(
       neighbor,
       neighborSnapshot.farm.revision,
@@ -209,7 +217,7 @@ describe("real-time FarmService", () => {
     expect(helped.outcome).toBe("helped");
     expect(helped.neighbor.plots[0]).toMatchObject({ watered: true });
 
-    now += FARMING_CROPS.wheat.growthSeconds * 1_000;
+    now = neighborSnapshot.farm.plots[0]!.maturesAt!;
     visitorSnapshot = await service.getOrCreate(user);
     let matureNeighbor = await service.getNeighbor(user, neighbor.id);
     for (const [care, needed] of [
@@ -309,7 +317,7 @@ describe("real-time FarmService", () => {
       { type: "ranch_feed", penIndex: 0 },
     );
     expect(snapshot.ranch.economy!.produce.wheat).toBe(9);
-    now += RANCH_ANIMALS.chicken.productionSeconds * 1_000;
+    now = snapshot.ranch.pens[0]!.producesAt!;
 
     snapshot = await service.applyRanchAction(
       user,
@@ -369,6 +377,14 @@ describe("real-time FarmService", () => {
     const store = new MemoryFarmStateStore();
     store.setRaw(user.id, ranchReadyFarm(user));
     store.setRaw(neighbor.id, ranchReadyFarm(neighbor));
+    const stableHomestead = createHomesteadGame({
+      ownerId: neighbor.id,
+      ownerName: neighbor.displayName,
+      seed: "stable-ranch-neighbor-weather",
+      now,
+    });
+    stableHomestead.weather = { weatherId: "clear", dayKey: stableHomestead.dayKey };
+    store.setRawHomestead(neighbor.id, stableHomestead);
     const service = new FarmService(
       store,
       new BotDecisionRegistry(),
@@ -388,7 +404,7 @@ describe("real-time FarmService", () => {
       { type: "ranch_feed", penIndex: 0 },
     );
     let visitor = await service.getOrCreateRanch(user);
-    now += RANCH_ANIMALS.chicken.productionSeconds * 1_000;
+    now = owner.ranch.pens[0]!.producesAt!;
 
     const helped = await service.applyRanchVisitAction(
       user,
@@ -445,7 +461,7 @@ describe("real-time FarmService", () => {
       ranchProducts: { egg: 9 },
     });
 
-    now += MINE_DEPOSITS.coal.durationSeconds * 1_000;
+    now = snapshot.mine.shafts[0]!.completesAt!;
     snapshot = await service.applyMineAction(
       user,
       snapshot.mine.farmRevision,

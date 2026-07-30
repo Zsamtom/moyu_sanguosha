@@ -5,8 +5,8 @@ import type {
 } from "./ranch.js";
 
 export const MINE_STATE_VERSION = 1 as const;
-export const MINE_REQUIRED_FARM_LEVEL = 3;
-export const MINE_REQUIRED_RANCH_LEVEL = 2;
+export const MINE_REQUIRED_FARM_LEVEL = 1;
+export const MINE_REQUIRED_RANCH_LEVEL = 1;
 export const MINE_STARTING_SHAFTS = 2;
 export const MINE_MAX_SHAFTS = 6;
 export const MINE_MAX_LOGS = 80;
@@ -46,8 +46,8 @@ export const MINE_DEPOSITS: Readonly<Record<MineDepositId, MineDepositDefinition
   coal: {
     id: "coal",
     name: "煤层",
-    requiredFarmLevel: 3,
-    requiredRanchLevel: 2,
+    requiredFarmLevel: 1,
+    requiredRanchLevel: 1,
     requiredMineLevel: 1,
     expeditionCost: 20,
     rationProductId: "egg",
@@ -62,8 +62,8 @@ export const MINE_DEPOSITS: Readonly<Record<MineDepositId, MineDepositDefinition
   iron: {
     id: "iron",
     name: "铁矿脉",
-    requiredFarmLevel: 3,
-    requiredRanchLevel: 2,
+    requiredFarmLevel: 1,
+    requiredRanchLevel: 1,
     requiredMineLevel: 1,
     expeditionCost: 30,
     rationProductId: "egg",
@@ -192,6 +192,10 @@ export interface MineShaftState {
   completesAt: number | null;
   hazardAt: number | null;
   reinforced: boolean;
+  /** Captured when the expedition starts for deterministic estate effects. */
+  productionModifierPercent?: number;
+  durationModifierPercent?: number;
+  productionModifierLabel?: string;
 }
 
 export interface MineStatistics {
@@ -384,6 +388,9 @@ function emptyShaft(index: number, cycle = 0): MineShaftState {
     completesAt: null,
     hazardAt: null,
     reinforced: false,
+    productionModifierPercent: 0,
+    durationModifierPercent: 0,
+    productionModifierLabel: "常态生产",
   };
 }
 
@@ -492,11 +499,17 @@ function shaftYield(
 ): number {
   if (!shaft.depositId) return 0;
   const deposit = MINE_DEPOSITS[shaft.depositId];
-  return Math.max(
+  const base = Math.max(
     1,
     deposit.yield +
       pickaxeYieldBonus(game.pickaxeLevel) -
       (hasHazard(shaft, now) ? 1 : 0),
+  );
+  return Math.max(
+    1,
+    Math.round(
+      base * (100 + (shaft.productionModifierPercent ?? 0)) / 100,
+    ),
   );
 }
 
@@ -564,6 +577,11 @@ export function applyMineAction(
   economyState: MineLinkedEconomy,
   action: MineAction,
   now: number,
+  production: import("./farming.js").EstateProductionRule = {
+    yieldPercent: 0,
+    durationPercent: 0,
+    label: "常态生产",
+  },
 ): MineActionResult {
   assertTime(now);
   const mine = structuredClone(state);
@@ -604,7 +622,13 @@ export function applyMineAction(
         `需要 ${deposit.rationAmount} 份牧场口粮`,
       );
     }
-    const duration = deposit.durationSeconds * 1_000;
+    const duration = Math.max(
+      60_000,
+      Math.round(
+        deposit.durationSeconds * 1_000 *
+          (100 + production.durationPercent) / 100,
+      ),
+    );
     economy.coins -= deposit.expeditionCost;
     economy.ranchProducts[deposit.rationProductId] -= deposit.rationAmount;
     farmChanged = true;
@@ -616,6 +640,9 @@ export function applyMineAction(
       startedAt: effectiveNow,
       completesAt: effectiveNow + duration,
       hazardAt: effectiveNow + Math.floor(duration * 0.55),
+      productionModifierPercent: production.yieldPercent,
+      durationModifierPercent: production.durationPercent,
+      productionModifierLabel: production.label,
     });
     mine.statistics.expeditionsStarted += 1;
     addExperience(mine, 2, effectiveNow);
@@ -920,7 +947,30 @@ export function assertRestorableMineGameState(
       shaft.index !== index ||
       !isNonNegativeInteger(shaft.cycle) ||
       (shaft.depositId !== null && !isDepositId(shaft.depositId)) ||
-      typeof shaft.reinforced !== "boolean"
+      typeof shaft.reinforced !== "boolean" ||
+      (
+        shaft.productionModifierPercent !== undefined &&
+        (
+          !Number.isSafeInteger(shaft.productionModifierPercent) ||
+          Number(shaft.productionModifierPercent) < -100 ||
+          Number(shaft.productionModifierPercent) > 100
+        )
+      ) ||
+      (
+        shaft.durationModifierPercent !== undefined &&
+        (
+          !Number.isSafeInteger(shaft.durationModifierPercent) ||
+          Number(shaft.durationModifierPercent) < -100 ||
+          Number(shaft.durationModifierPercent) > 100
+        )
+      ) ||
+      (
+        shaft.productionModifierLabel !== undefined &&
+        (
+          typeof shaft.productionModifierLabel !== "string" ||
+          shaft.productionModifierLabel.length > 160
+        )
+      )
     ) {
       throw new Error("矿井状态无效");
     }

@@ -5,7 +5,7 @@ import {
 } from "./farming.js";
 
 export const RANCH_STATE_VERSION = 1 as const;
-export const RANCH_REQUIRED_FARM_LEVEL = 2;
+export const RANCH_REQUIRED_FARM_LEVEL = 1;
 export const RANCH_STARTING_PENS = 3;
 export const RANCH_MAX_PENS = 8;
 export const RANCH_MAX_LOGS = 80;
@@ -59,7 +59,7 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
     name: "母鸡",
     productId: "egg",
     productName: "鸡蛋",
-    requiredFarmLevel: 2,
+    requiredFarmLevel: 1,
     requiredRanchLevel: 1,
     purchaseCost: 80,
     resalePrice: 40,
@@ -191,6 +191,10 @@ export interface RanchPenState {
   taken: number;
   collectAttempts: string[];
   takenBy: string[];
+  /** Captured at feeding time for deterministic weather/disaster production. */
+  productionModifierPercent?: number;
+  durationModifierPercent?: number;
+  productionModifierLabel?: string;
 }
 
 export interface RanchDailySocial {
@@ -436,6 +440,9 @@ function emptyPen(index: number): RanchPenState {
     taken: 0,
     collectAttempts: [],
     takenBy: [],
+    productionModifierPercent: 0,
+    durationModifierPercent: 0,
+    productionModifierLabel: "常态生产",
   };
 }
 
@@ -447,6 +454,9 @@ function resetProduction(pen: RanchPenState): void {
   pen.taken = 0;
   pen.collectAttempts = [];
   pen.takenBy = [];
+  pen.productionModifierPercent = 0;
+  pen.durationModifierPercent = 0;
+  pen.productionModifierLabel = "常态生产";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -475,7 +485,7 @@ function assertTime(now: number): void {
 
 function dayKey(now: number): string {
   assertTime(now);
-  return new Date(now).toISOString().slice(0, 10);
+  return new Date(now + 8 * 60 * 60 * 1_000).toISOString().slice(0, 10);
 }
 
 function levelForExperience(experience: number): number {
@@ -556,7 +566,13 @@ function messAppeared(pen: RanchPenState, now: number): boolean {
 function penYield(pen: RanchPenState, now: number): number {
   if (!pen.animalId || pen.producesAt === null) return 0;
   const base = RANCH_ANIMALS[pen.animalId].yield;
-  return Math.max(1, base - (messAppeared(pen, now) ? 1 : 0));
+  return Math.max(
+    1,
+    Math.round(
+      (base - (messAppeared(pen, now) ? 1 : 0)) *
+        (100 + (pen.productionModifierPercent ?? 0)) / 100,
+    ),
+  );
 }
 
 function maximumNeighborCollectable(pen: RanchPenState, now: number): number {
@@ -639,6 +655,11 @@ export function applyRanchAction(
   economyState: RanchEconomyState,
   action: RanchAction,
   now: number,
+  production: import("./farming.js").EstateProductionRule = {
+    yieldPercent: 0,
+    durationPercent: 0,
+    label: "常态生产",
+  },
 ): RanchActionResult {
   let ranch = refreshRanchGame(state, now);
   ranch = structuredClone(ranch);
@@ -737,12 +758,21 @@ export function applyRanchAction(
         `需要 ${animal.feedAmount} 份${animal.feedCropId === "wheat" ? "小麦" : animal.feedCropId === "corn" ? "玉米" : "胡萝卜"}作为饲料`,
       );
     }
-    const duration = animal.productionSeconds * 1_000;
+    const duration = Math.max(
+      60_000,
+      Math.round(
+        animal.productionSeconds * 1_000 *
+          (100 + production.durationPercent) / 100,
+      ),
+    );
     economy.produce[animal.feedCropId] -= animal.feedAmount;
     economyChanged = true;
     pen.cycle += 1;
     pen.fedAt = effectiveNow;
     pen.producesAt = effectiveNow + duration;
+    pen.productionModifierPercent = production.yieldPercent;
+    pen.durationModifierPercent = production.durationPercent;
+    pen.productionModifierLabel = production.label;
     pen.messAt = effectiveNow + Math.floor(duration * 0.52);
     pen.messCleaned = false;
     pen.taken = 0;
@@ -1126,7 +1156,30 @@ export function assertRestorableRanchGameState(
       pen.collectAttempts.some((id) => typeof id !== "string" || id.length === 0) ||
       new Set(pen.collectAttempts).size !== pen.collectAttempts.length ||
       !Array.isArray(pen.takenBy) ||
-      pen.takenBy.some((id) => typeof id !== "string" || id.length === 0)
+      pen.takenBy.some((id) => typeof id !== "string" || id.length === 0) ||
+      (
+        pen.productionModifierPercent !== undefined &&
+        (
+          !Number.isSafeInteger(pen.productionModifierPercent) ||
+          Number(pen.productionModifierPercent) < -100 ||
+          Number(pen.productionModifierPercent) > 100
+        )
+      ) ||
+      (
+        pen.durationModifierPercent !== undefined &&
+        (
+          !Number.isSafeInteger(pen.durationModifierPercent) ||
+          Number(pen.durationModifierPercent) < -100 ||
+          Number(pen.durationModifierPercent) > 100
+        )
+      ) ||
+      (
+        pen.productionModifierLabel !== undefined &&
+        (
+          typeof pen.productionModifierLabel !== "string" ||
+          pen.productionModifierLabel.length > 160
+        )
+      )
     ) {
       throw new Error("牧场畜舍状态无效");
     }

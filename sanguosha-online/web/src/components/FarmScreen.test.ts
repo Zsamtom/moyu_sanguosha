@@ -72,6 +72,16 @@ describe('FarmScreen real-time plot projection', () => {
       remainingMs: 0,
     });
   });
+
+  it('uses the production modifier captured by the server', () => {
+    expect(farmPlotRuntime({
+      ...plot(),
+      watered: true,
+      weedCleared: true,
+      pestCleared: true,
+      productionModifierPercent: 50,
+    }, crop, 301_000).estimatedYield).toBe(5);
+  });
 });
 
 describe('FarmScreen plot toolbar', () => {

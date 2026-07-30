@@ -64,4 +64,12 @@ describe('RanchScreen real-time pen projection', () => {
       remainingMs: 0,
     });
   });
+
+  it('uses the disaster bonus captured at feeding time', () => {
+    expect(ranchPenRuntime(
+      { ...pen(), messCleaned: true, productionModifierPercent: 50 },
+      animal,
+      601_000,
+    ).estimatedYield).toBe(5);
+  });
 });

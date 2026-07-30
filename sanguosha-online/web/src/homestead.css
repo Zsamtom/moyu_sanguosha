@@ -3,12 +3,18 @@
   --estate-line: #ccd5cf;
   --estate-paper: #f7f8f4;
   --estate-green: #315d45;
+  --estate-soft-green: #eaf1eb;
 }
 
 .homestead-hero {
   align-items: flex-end;
-  padding: 22px 0;
+  padding: 18px 0;
   border-bottom: 1px solid var(--estate-ink);
+}
+
+.homestead-hero--compact h1,
+.homestead-hero h1 {
+  font-size: clamp(34px, 4vw, 52px);
 }
 
 .homestead-hero h1,
@@ -54,10 +60,11 @@
 }
 
 .homestead-section {
-  margin-top: 18px;
-  padding: 18px;
+  margin-top: 14px;
+  padding: 16px;
   border: 1px solid var(--estate-line);
   background: var(--estate-paper);
+  border-radius: 8px;
 }
 
 .homestead-section__heading,
@@ -69,11 +76,376 @@
 }
 
 .homestead-section__heading {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.homestead-town-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.homestead-town-switcher > button,
+.homestead-town-switcher__future {
+  display: grid;
+  min-height: 102px;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 1px solid var(--estate-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--estate-ink);
+  text-align: left;
+}
+
+.homestead-town-switcher > button {
+  cursor: pointer;
+}
+
+.homestead-town-switcher > button:hover {
+  border-color: #789381;
+  background: #f4f8f4;
+}
+
+.homestead-town-switcher > button.is-active {
+  border-color: var(--estate-green);
+  background: var(--estate-soft-green);
+  box-shadow: inset 4px 0 var(--estate-green);
+}
+
+.homestead-town-switcher span,
+.homestead-town-switcher small,
+.homestead-town-switcher em {
+  color: #68736d;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.homestead-town-switcher strong {
+  font-size: 18px;
+}
+
+.homestead-town-switcher__future {
+  border-style: dashed;
+  opacity: .7;
+}
+
+.homestead-local-nav {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 8px;
+  border: 1px solid var(--estate-line);
+  border-radius: 8px;
+  background: rgb(247 248 244 / 92%);
+  backdrop-filter: blur(10px);
+}
+
+.homestead-panel-today .homestead-panel-item:not(.homestead-panel-item--today),
+.homestead-panel-operations .homestead-panel-item:not(.homestead-panel-item--operations),
+.homestead-panel-growth .homestead-panel-item:not(.homestead-panel-item--growth) {
+  display: none;
+}
+
+.homestead-town-inventory,
+.homestead-town-sector-grid,
+.homestead-town-goal-grid,
+.homestead-value-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.homestead-town-inventory {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-town-inventory article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px 12px;
+  padding: 12px;
+  border: 1px solid var(--estate-line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.homestead-town-inventory strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  font-size: 26px;
+}
+
+.homestead-town-inventory .ant-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.homestead-town-sector-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-town-sector-grid article,
+.homestead-value-grid article {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--estate-line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.homestead-town-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.homestead-town-goal-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.homestead-town-goal-grid .homestead-section {
+  min-width: 0;
+}
+
+.homestead-value-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-value-grid article.is-complete {
+  opacity: .7;
+  background: #f0f5f1;
+}
+
+.homestead-value-grid .ant-btn {
+  align-self: flex-start;
+  margin-top: auto;
 }
 
 .homestead-section__heading > span {
   color: #68736d;
+}
+
+.homestead-weather-section {
+  padding: 22px;
+  background: #f8faf8;
+}
+
+.homestead-weather-summary {
+  max-width: 820px;
+  margin: -4px 0 16px;
+  color: #4d5952;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.homestead-weather-alert {
+  margin-bottom: 16px;
+  border: 1px solid #d8e2dc !important;
+  background: #eef4f0 !important;
+  color: #33463b !important;
+}
+
+.homestead-weather-alert .ant-alert-message,
+.homestead-weather-alert .ant-alert-description,
+.homestead-weather-alert .ant-alert-icon {
+  color: inherit !important;
+}
+
+.homestead-subsection-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 2px;
+}
+
+.homestead-subsection-heading--spaced {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--estate-line);
+}
+
+.homestead-subsection-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.homestead-subsection-heading > div > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--estate-ink);
+  color: #fff;
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.homestead-subsection-heading strong,
+.homestead-subsection-heading small {
+  display: block;
+}
+
+.homestead-subsection-heading strong {
+  font-size: 15px;
+}
+
+.homestead-subsection-heading small,
+.homestead-subsection-heading em {
+  margin-top: 2px;
+  color: #6d7871;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.homestead-weather-rule-grid,
+.homestead-resilience-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.homestead-weather-rule {
+  display: flex;
+  min-width: 0;
+  min-height: 162px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #d5ddd8;
+  border-top-width: 3px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.homestead-weather-rule--farm {
+  border-top-color: #5c8a64;
+}
+
+.homestead-weather-rule--ranch {
+  border-top-color: #b17a42;
+}
+
+.homestead-weather-rule--mine {
+  border-top-color: #5c7892;
+}
+
+.homestead-weather-rule__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.homestead-weather-rule__title > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: #eef2ef;
+  color: #35473d;
+  font-weight: 700;
+}
+
+.homestead-weather-rule__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.homestead-weather-rule__metrics > div {
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #f3f5f3;
+}
+
+.homestead-weather-rule__metrics span,
+.homestead-weather-rule__metrics strong {
+  display: block;
+}
+
+.homestead-weather-rule__metrics span {
+  color: #748078;
+  font-size: 10px;
+}
+
+.homestead-weather-rule__metrics strong {
+  margin-top: 3px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.homestead-weather-rule__metrics .is-negative {
+  color: #a34f37;
+}
+
+.homestead-weather-rule__metrics .is-positive {
+  color: #32704c;
+}
+
+.homestead-weather-rule > small {
+  margin-top: auto;
+  color: #68736d;
+  line-height: 1.5;
+}
+
+.homestead-resilience-card {
+  display: flex;
+  min-width: 0;
+  min-height: 238px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 17px;
+  border: 1px solid #cfd9d2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.homestead-resilience-card p {
+  min-height: 42px;
+  margin: 0;
+  color: #4d5952;
+  line-height: 1.65;
+}
+
+.homestead-upgrade-costs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: auto;
+}
+
+.homestead-upgrade-costs > span {
+  padding: 8px;
+  border-radius: 6px;
+  background: #f2f5f2;
+}
+
+.homestead-upgrade-costs small,
+.homestead-upgrade-costs strong {
+  display: block;
+}
+
+.homestead-upgrade-costs small {
+  color: #748078;
+  font-size: 10px;
+}
+
+.homestead-upgrade-costs strong {
+  margin-top: 2px;
+  font-size: 14px;
 }
 
 .homestead-event {
@@ -396,7 +768,11 @@
   .homestead-order-grid,
   .homestead-depth-grid,
   .homestead-npc-grid,
-  .homestead-season-layout {
+  .homestead-season-layout,
+  .homestead-town-sector-grid,
+  .homestead-value-grid,
+  .homestead-weather-rule-grid,
+  .homestead-resilience-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -417,8 +793,28 @@
   .homestead-recipe-grid,
   .homestead-research-grid,
   .homestead-collection-grid,
-  .homestead-ledger {
+  .homestead-ledger,
+  .homestead-town-switcher,
+  .homestead-town-inventory,
+  .homestead-town-goal-grid {
     grid-template-columns: 1fr;
+  }
+
+  .homestead-local-nav {
+    overflow-x: auto;
+  }
+
+  .homestead-weather-section {
+    padding: 15px;
+  }
+
+  .homestead-weather-rule-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .homestead-subsection-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .homestead-season-counters {

@@ -92,7 +92,11 @@ export function mineShaftRuntime(
     hasHazard,
     estimatedYield: Math.max(
       1,
-      deposit.yield + pickaxeYieldBonus - (hasHazard ? 1 : 0),
+      Math.round(
+        (deposit.yield + pickaxeYieldBonus - (hasHazard ? 1 : 0)) *
+          (100 + (shaft.productionModifierPercent ?? 0)) /
+          100,
+      ),
     ),
     remainingMs: Math.max(0, shaft.completesAt - now),
   };
@@ -468,6 +472,13 @@ export function MineScreen() {
                             : `点击下方按钮开采${selectedDefinition.name}`}
                         </small>
                         <div className="farm-plot__tags">
+                          {deposit && (shaft.productionModifierPercent ?? 0) !== 0 && (
+                            <Tag color={(shaft.productionModifierPercent ?? 0) > 0 ? 'green' : 'volcano'}>
+                              {shaft.productionModifierLabel ?? '庄园环境'}
+                              {' '}· 产量 {(shaft.productionModifierPercent ?? 0) > 0 ? '+' : ''}
+                              {shaft.productionModifierPercent}%
+                            </Tag>
+                          )}
                           {runtime.hasHazard && <Tag color="orange">需加固</Tag>}
                           {shaft.reinforced && <Tag color="green">已加固</Tag>}
                           {deposit && (

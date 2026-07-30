@@ -61,4 +61,17 @@ describe('MineScreen real-time shaft projection', () => {
       remainingMs: 0,
     });
   });
+
+  it('uses the emergency efficiency captured at expedition start', () => {
+    expect(mineShaftRuntime(
+      {
+        ...shaft(),
+        reinforced: true,
+        productionModifierPercent: 50,
+      },
+      deposit,
+      2,
+      901_000,
+    ).estimatedYield).toBe(8);
+  });
 });

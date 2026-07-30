@@ -10,14 +10,14 @@ interface HomesteadNavProps {
 
 const ENTRIES: ReadonlyArray<{ view: HomesteadView; label: string }> = [
   { view: 'homestead', label: '庄园总览' },
-  { view: 'farm', label: '农场' },
-  { view: 'ranch', label: '牧场' },
-  { view: 'mine', label: '矿山' },
+  { view: 'farm', label: '青禾农场' },
+  { view: 'ranch', label: '青禾牧场' },
+  { view: 'mine', label: '青禾矿山' },
 ];
 
 export function HomesteadNav({ active, onNavigate, onExit }: HomesteadNavProps) {
   return (
-    <nav className="homestead-nav" aria-label="农场功能">
+    <nav className="homestead-nav" aria-label="庄园功能">
       {ENTRIES.map((entry) => (
         <Button
           key={entry.view}
@@ -29,7 +29,7 @@ export function HomesteadNav({ active, onNavigate, onExit }: HomesteadNavProps) 
         </Button>
       ))}
       <Button className="homestead-nav__exit" onClick={onExit}>
-        退出农场
+        退出庄园
       </Button>
     </nav>
   );

@@ -240,7 +240,14 @@ export function farmPlotRuntime(
     progress,
     hasWeeds,
     hasPests,
-    estimatedYield: Math.max(1, estimatedYield),
+    estimatedYield: Math.max(
+      1,
+      Math.round(
+        estimatedYield *
+          (100 + (plot.productionModifierPercent ?? 0)) /
+          100,
+      ),
+    ),
     remainingMs: Math.max(0, plot.maturesAt - now),
   };
 }
@@ -662,6 +669,13 @@ export function FarmScreen() {
                               : `${ownGame.crops[selectedCrop].name}种子不足，请先到市场购入`}
                     </small>
                     <div className="farm-plot__tags">
+                      {crop && (plot.productionModifierPercent ?? 0) !== 0 && (
+                        <Tag color={(plot.productionModifierPercent ?? 0) > 0 ? 'green' : 'volcano'}>
+                          {plot.productionModifierLabel ?? '庄园环境'}
+                          {' '}· 产量 {(plot.productionModifierPercent ?? 0) > 0 ? '+' : ''}
+                          {plot.productionModifierPercent}%
+                        </Tag>
+                      )}
                       {plot.watered && <Tag color="blue">已浇水</Tag>}
                       {runtime.hasWeeds && <Tag color="orange">有杂草</Tag>}
                       {runtime.hasPests && <Tag color="red">有害虫</Tag>}

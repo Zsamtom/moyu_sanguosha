@@ -98,7 +98,14 @@ export function ranchPenRuntime(
     ready,
     progress,
     hasMess,
-    estimatedYield: Math.max(1, animal.yield - (hasMess ? 1 : 0)),
+    estimatedYield: Math.max(
+      1,
+      Math.round(
+        (animal.yield - (hasMess ? 1 : 0)) *
+          (100 + (pen.productionModifierPercent ?? 0)) /
+          100,
+      ),
+    ),
     remainingMs: Math.max(0, pen.producesAt - now),
   };
 }
@@ -567,6 +574,13 @@ export function RanchScreen() {
                               : `${remainingLabel(runtime.remainingMs)} · 预计 ${runtime.estimatedYield} 份${animal.productName}`}
                         </small>
                         <div className="farm-plot__tags">
+                          {pen.fedAt !== null && (pen.productionModifierPercent ?? 0) !== 0 && (
+                            <Tag color={(pen.productionModifierPercent ?? 0) > 0 ? 'green' : 'volcano'}>
+                              {pen.productionModifierLabel ?? '庄园环境'}
+                              {' '}· 产量 {(pen.productionModifierPercent ?? 0) > 0 ? '+' : ''}
+                              {pen.productionModifierPercent}%
+                            </Tag>
+                          )}
                           {animal && pen.fedAt === null && <Tag>待投喂</Tag>}
                           {runtime.hasMess && <Tag color="orange">需清扫</Tag>}
                           {pen.messCleaned && pen.fedAt !== null && <Tag color="green">已清扫</Tag>}

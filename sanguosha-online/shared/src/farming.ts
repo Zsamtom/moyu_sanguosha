@@ -251,6 +251,16 @@ export interface FarmingPlotState {
   stolen: number;
   stealAttempts: string[];
   stolenBy: string[];
+  /** Captured when the crop is planted so later weather changes cannot rewrite history. */
+  productionModifierPercent?: number;
+  durationModifierPercent?: number;
+  productionModifierLabel?: string;
+}
+
+export interface EstateProductionRule {
+  readonly yieldPercent: number;
+  readonly durationPercent: number;
+  readonly label: string;
 }
 
 export interface FarmingMarketQuote {
@@ -522,6 +532,9 @@ function emptyPlot(index: number, cycle = 0): FarmingPlotState {
     stolen: 0,
     stealAttempts: [],
     stolenBy: [],
+    productionModifierPercent: 0,
+    durationModifierPercent: 0,
+    productionModifierLabel: "常态生产",
   };
 }
 
@@ -546,7 +559,7 @@ function assertTime(now: number): void {
 
 function dayKey(now: number): string {
   assertTime(now);
-  return new Date(now).toISOString().slice(0, 10);
+  return new Date(now + 8 * 60 * 60 * 1_000).toISOString().slice(0, 10);
 }
 
 function levelForExperience(experience: number): number {
@@ -655,7 +668,10 @@ function plotYield(plot: FarmingPlotState, now: number): number {
   if (!plot.watered) result -= 1;
   if (cropIssueAppeared(plot.weedAt, plot.weedCleared, now)) result -= 1;
   if (cropIssueAppeared(plot.pestAt, plot.pestCleared, now)) result -= 1;
-  return Math.max(1, result);
+  return Math.max(
+    1,
+    Math.round(result * (100 + (plot.productionModifierPercent ?? 0)) / 100),
+  );
 }
 
 function maximumStealable(plot: FarmingPlotState, now: number): number {
@@ -909,6 +925,11 @@ export function applyFarmingAction(
   state: FarmingGameState,
   action: FarmingAction,
   now: number,
+  production: EstateProductionRule = {
+    yieldPercent: 0,
+    durationPercent: 0,
+    label: "常态生产",
+  },
 ): FarmingGameState {
   let game = refreshFarmingGame(state, now);
   game = structuredClone(game);
@@ -958,7 +979,13 @@ export function applyFarmingAction(
     if (game.seeds[action.cropId] < 1) {
       throw new FarmingRuleError("FARMING_NOT_ENOUGH_SEEDS", "没有对应种子");
     }
-    const duration = crop.growthSeconds * 1_000;
+    const duration = Math.max(
+      60_000,
+      Math.round(
+        crop.growthSeconds * 1_000 *
+          (100 + production.durationPercent) / 100,
+      ),
+    );
     const cycle = plot.cycle + 1;
     game.seeds[action.cropId] -= 1;
     Object.assign(plot, {
@@ -966,6 +993,9 @@ export function applyFarmingAction(
       cropId: action.cropId,
       plantedAt: effectiveNow,
       maturesAt: effectiveNow + duration,
+      productionModifierPercent: production.yieldPercent,
+      durationModifierPercent: production.durationPercent,
+      productionModifierLabel: production.label,
       weedAt: hashText(`${game.seed}:weed:${plot.index}:${cycle}`) % 100 < 45
         ? effectiveNow + Math.floor(duration * 0.4)
         : null,
@@ -1480,7 +1510,30 @@ export function assertRestorableFarmingGameState(
       new Set(plot.stealAttempts).size !== plot.stealAttempts.length ||
       !Array.isArray(plot.stolenBy) ||
       plot.stolenBy.some((id) => typeof id !== "string" || id.length === 0) ||
-      new Set(plot.stolenBy).size !== plot.stolenBy.length
+      new Set(plot.stolenBy).size !== plot.stolenBy.length ||
+      (
+        plot.productionModifierPercent !== undefined &&
+        (
+          !Number.isSafeInteger(plot.productionModifierPercent) ||
+          Number(plot.productionModifierPercent) < -100 ||
+          Number(plot.productionModifierPercent) > 100
+        )
+      ) ||
+      (
+        plot.durationModifierPercent !== undefined &&
+        (
+          !Number.isSafeInteger(plot.durationModifierPercent) ||
+          Number(plot.durationModifierPercent) < -100 ||
+          Number(plot.durationModifierPercent) > 100
+        )
+      ) ||
+      (
+        plot.productionModifierLabel !== undefined &&
+        (
+          typeof plot.productionModifierLabel !== "string" ||
+          plot.productionModifierLabel.length > 160
+        )
+      )
     ) {
       throw new Error("实时农场田地状态无效");
     }

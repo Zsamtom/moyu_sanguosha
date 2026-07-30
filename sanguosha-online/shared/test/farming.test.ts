@@ -63,6 +63,31 @@ describe("real-time farming engine", () => {
     expect(after.plots[0]).toMatchObject({ ready: true, progress: 1 });
   });
 
+  it("captures estate weather bonuses when a crop is planted", () => {
+    let state = applyFarmingAction(
+      game(),
+      { type: "farming_plant", cropId: "wheat", plotIndex: 0 },
+      start,
+      { yieldPercent: 50, durationPercent: 20, label: "灾期温室抢种" },
+    );
+    const plot = state.plots[0]!;
+    expect(plot.maturesAt! - plot.plantedAt!).toBe(
+      FARMING_CROPS.wheat.growthSeconds * 1_200,
+    );
+    expect(plot.productionModifierLabel).toBe("灾期温室抢种");
+    plot.watered = true;
+    plot.weedAt = null;
+    plot.pestAt = null;
+    state = applyFarmingAction(
+      state,
+      { type: "farming_harvest", plotIndex: 0 },
+      plot.maturesAt!,
+    );
+    expect(state.produce.wheat).toBe(
+      Math.round(FARMING_CROPS.wheat.yield * 1.5),
+    );
+  });
+
   it("rewards care, harvest experience, levels, and crop unlocks", () => {
     let state = game();
     const matureAt = start + FARMING_CROPS.wheat.growthSeconds * 1_000;

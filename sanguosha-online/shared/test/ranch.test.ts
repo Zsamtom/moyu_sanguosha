@@ -35,7 +35,7 @@ function economy(input: Partial<RanchEconomyState> = {}): RanchEconomyState {
 }
 
 describe("persistent ranch engine", () => {
-  it("gates the ranch behind farm progression", () => {
+  it("opens the starter ranch on day one while retaining later animal gates", () => {
     const ranch = createRanchGame({
       ownerId: "owner",
       ownerName: "经营者",
@@ -51,11 +51,17 @@ describe("persistent ranch engine", () => {
       dogLevel: 0,
       coins: 100,
       produce: economy().produce,
-    }).unlocked).toBe(false);
+    }).unlocked).toBe(true);
     expect(() => applyRanchAction(
       ranch,
       economy({ farmLevel: 1 }),
       { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    )).not.toThrow();
+    expect(() => applyRanchAction(
+      ranch,
+      economy({ farmLevel: 1 }),
+      { type: "ranch_buy_animal", animalId: "duck", penIndex: 0 },
       start,
     )).toThrowError(RanchRuleError);
   });
@@ -117,6 +123,45 @@ describe("persistent ranch engine", () => {
       1_000 -
       RANCH_ANIMALS.chicken.purchaseCost +
       RANCH_ANIMALS.chicken.productPrice * 2,
+    );
+  });
+
+  it("captures disaster-time production bonuses when feeding starts", () => {
+    let ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-weather",
+      now: start,
+    });
+    let linked = economy();
+    let result = applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_feed", penIndex: 0 },
+      start + 1,
+      { yieldPercent: 50, durationPercent: -20, label: "强化营养" },
+    );
+    ranch = result.ranch;
+    linked = result.economy;
+    const pen = ranch.pens[0]!;
+    expect(pen.producesAt! - pen.fedAt!).toBe(
+      RANCH_ANIMALS.chicken.productionSeconds * 800,
+    );
+    pen.messAt = null;
+    result = applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_collect", penIndex: 0 },
+      pen.producesAt!,
+    );
+    expect(result.ranch.products.egg).toBe(
+      Math.round(RANCH_ANIMALS.chicken.yield * 1.5),
     );
   });
 

@@ -75,6 +75,29 @@ describe("homestead HTTP schemas", () => {
         topicId: "soil",
       },
       { type: "homestead_claim_season_reward", milestoneId: "bronze" },
+      { type: "homestead_upgrade_resilience", resilienceId: "drainage" },
+      {
+        type: "homestead_activate_emergency_boost",
+        sectorId: "mine",
+      },
+      { type: "homestead_switch_town", townId: "frostpeak" },
+      { type: "homestead_start_town_sector", sectorId: "farm" },
+      { type: "homestead_collect_town_sector", sectorId: "ranch" },
+      { type: "homestead_upgrade_town_sector", sectorId: "mine" },
+      {
+        type: "homestead_sell_town_resource",
+        resourceId: "frost_crystal",
+        quantity: 1,
+      },
+      {
+        type: "homestead_resolve_town_problem",
+        problemId: "blocked_supply_road",
+      },
+      { type: "homestead_restore_town_landmark" },
+      {
+        type: "homestead_complete_value_route",
+        routeId: "valley_sauce_batch",
+      },
     ]) {
       expect(() => homesteadActionEnvelopeSchema.parse(envelope(action)))
         .not.toThrow();

@@ -29,6 +29,16 @@ describe('HomesteadScreen helpers', () => {
       'homestead_survey_layer',
       'homestead_talk_npc',
       'homestead_claim_season_reward',
+      'homestead_upgrade_resilience',
+      'homestead_activate_emergency_boost',
+      'homestead_switch_town',
+      'homestead_start_town_sector',
+      'homestead_collect_town_sector',
+      'homestead_upgrade_town_sector',
+      'homestead_sell_town_resource',
+      'homestead_resolve_town_problem',
+      'homestead_restore_town_landmark',
+      'homestead_complete_value_route',
     ]) {
       expect(source).toContain(`type: '${actionType}'`);
     }

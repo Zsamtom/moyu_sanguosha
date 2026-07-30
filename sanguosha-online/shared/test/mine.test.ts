@@ -46,7 +46,7 @@ function economy(input: Partial<MineLinkedEconomy> = {}): MineLinkedEconomy {
 }
 
 describe("linked mine engine", () => {
-  it("requires both farm and ranch progression", () => {
+  it("opens starter deposits on day one while retaining deeper progression", () => {
     const mine = createMineGame({
       ownerId: "owner",
       ownerName: "经营者",
@@ -57,11 +57,17 @@ describe("linked mine engine", () => {
       mine,
       economy({ ranchLevel: 1 }),
       start,
-    ).unlocked).toBe(false);
+    ).unlocked).toBe(true);
     expect(() => applyMineAction(
       mine,
-      economy({ farmLevel: 2 }),
+      economy({ farmLevel: 1, ranchLevel: 1 }),
       { type: "mine_start", depositId: "coal", shaftIndex: 0 },
+      start,
+    )).not.toThrow();
+    expect(() => applyMineAction(
+      mine,
+      economy({ farmLevel: 1, ranchLevel: 1 }),
+      { type: "mine_start", depositId: "copper", shaftIndex: 0 },
       start,
     )).toThrowError(MineRuleError);
   });
@@ -114,6 +120,36 @@ describe("linked mine engine", () => {
       3_000 -
       MINE_DEPOSITS.coal.expeditionCost +
       MINE_DEPOSITS.coal.orePrice * 2,
+    );
+  });
+
+  it("captures disaster-time efficiency when an expedition starts", () => {
+    const mine = createMineGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "mine-weather",
+      now: start,
+    });
+    let result = applyMineAction(
+      mine,
+      economy(),
+      { type: "mine_start", depositId: "coal", shaftIndex: 0 },
+      start,
+      { yieldPercent: 50, durationPercent: -20, label: "应急排采" },
+    );
+    const shaft = result.mine.shafts[0]!;
+    expect(shaft.completesAt! - shaft.startedAt!).toBe(
+      MINE_DEPOSITS.coal.durationSeconds * 800,
+    );
+    shaft.hazardAt = null;
+    result = applyMineAction(
+      result.mine,
+      result.economy,
+      { type: "mine_collect", shaftIndex: 0 },
+      shaft.completesAt!,
+    );
+    expect(result.mine.ores.coal).toBe(
+      Math.round(MINE_DEPOSITS.coal.yield * 1.5),
     );
   });
 
