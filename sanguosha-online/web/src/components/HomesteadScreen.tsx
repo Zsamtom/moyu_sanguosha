@@ -7,8 +7,12 @@ import {
   Tag,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
+import {
+  isLatestRequest,
+  isRevisionVectorAtLeast,
+} from '../snapshotGuards';
 import type {
   HomesteadClientAction,
   HomesteadFacilityView,
@@ -221,7 +225,7 @@ function FrostpeakDashboard({
                 <strong>{town.inventory[resourceId]}</strong>
                 <small>商路单价 {TOWN_ITEM_PRICES[resourceId]} 金币</small>
                 <Button
-                  disabled={town.inventory[resourceId] < 1}
+                  disabled={Boolean(busyKey) || town.inventory[resourceId] < 1}
                   loading={busyKey === `town:sell:${resourceId}`}
                   onClick={() => void act(
                     {
@@ -308,6 +312,7 @@ function FrostpeakDashboard({
                   {ready ? (
                     <Button
                       type="primary"
+                      disabled={Boolean(busyKey) || !sector.canCollect}
                       loading={
                         busyKey === `town:collect:${sector.definition.id}`
                       }
@@ -325,7 +330,7 @@ function FrostpeakDashboard({
                   ) : (
                     <Button
                       type="primary"
-                      disabled={!sector.canStart}
+                      disabled={Boolean(busyKey) || !sector.canStart}
                       loading={
                         busyKey === `town:start:${sector.definition.id}`
                       }
@@ -338,12 +343,20 @@ function FrostpeakDashboard({
                         `${sector.definition.actionName}已开始`,
                       )}
                     >
-                      {sector.job ? '生产中' : sector.definition.actionName}
+                      {sector.job
+                        ? '生产中'
+                        : input &&
+                            town.inventory[input.itemId] < input.quantity
+                          ? '原料不足'
+                          : sector.definition.actionName}
                     </Button>
                   )}
                   {sector.nextUpgrade && (
                     <Button
-                      disabled={!sector.nextUpgrade.canUpgrade}
+                      disabled={
+                        Boolean(busyKey) ||
+                        !sector.nextUpgrade.canUpgrade
+                      }
                       loading={
                         busyKey === `town:upgrade:${sector.definition.id}`
                       }
@@ -398,7 +411,7 @@ function FrostpeakDashboard({
               </p>
               <Button
                 type="primary"
-                disabled={!town.currentProblem.canResolve}
+                disabled={Boolean(busyKey) || !town.currentProblem.canResolve}
                 loading={busyKey === `town:problem:${town.currentProblem.id}`}
                 onClick={() => void act(
                   {
@@ -449,7 +462,7 @@ function FrostpeakDashboard({
               </p>
               <Button
                 type="primary"
-                disabled={!town.nextLandmark.canRestore}
+                disabled={Boolean(busyKey) || !town.nextLandmark.canRestore}
                 loading={busyKey === 'town:landmark'}
                 onClick={() => void act(
                   { type: 'homestead_restore_town_landmark' },
@@ -485,17 +498,56 @@ export function HomesteadScreen() {
     'today' | 'operations' | 'growth'
   >('today');
   const [toast, toastContext] = message.useMessage();
+  const snapshotRef = useRef<HomesteadSnapshot>();
+  const actionInFlight = useRef(false);
+  const loadRequestSequence = useRef(0);
 
-  const load = async (quiet = false) => {
+  const commitSnapshot = (next: HomesteadSnapshot): boolean => {
+    const current = snapshotRef.current;
+    const accepted = isRevisionVectorAtLeast(
+      [
+        next.homestead.revision,
+        next.homestead.revisions.farm,
+        next.homestead.revisions.ranch,
+        next.homestead.revisions.mine,
+      ],
+      current
+        ? [
+            current.homestead.revision,
+            current.homestead.revisions.farm,
+            current.homestead.revisions.ranch,
+            current.homestead.revisions.mine,
+          ]
+        : undefined,
+    );
+    if (!accepted) return false;
+    snapshotRef.current = next;
+    setSnapshot(next);
+    setNow(next.homestead.serverTime);
+    return true;
+  };
+
+  const load = async (quiet = false, allowDuringAction = false) => {
+    if (quiet && actionInFlight.current && !allowDuringAction) return;
+    const requestId = ++loadRequestSequence.current;
     if (quiet) setQuietLoading(true);
     else setLoading(true);
     try {
       const next = await api.getHomestead();
-      setSnapshot(next);
-      setFailure(undefined);
-      setNow(next.homestead.serverTime);
+      if (
+        isLatestRequest(requestId, loadRequestSequence.current) &&
+        (allowDuringAction || !actionInFlight.current) &&
+        commitSnapshot(next)
+      ) {
+        setFailure(undefined);
+      }
     } catch (error) {
-      setFailure(errorMessage(error));
+      if (
+        isLatestRequest(requestId, loadRequestSequence.current) &&
+        (allowDuringAction || !actionInFlight.current)
+      ) {
+        setFailure(errorMessage(error));
+      }
     } finally {
       setLoading(false);
       setQuietLoading(false);
@@ -517,24 +569,35 @@ export function HomesteadScreen() {
     key: string,
     success: string,
   ) => {
-    if (!snapshot || busyKey) return;
+    const current = snapshotRef.current;
+    if (!current || actionInFlight.current) return;
+    actionInFlight.current = true;
+    loadRequestSequence.current += 1;
     setBusyKey(key);
+    let refreshAfterAction = false;
     try {
-      const next = await api.applyHomesteadAction(snapshot, action);
-      setSnapshot(next);
-      setNow(next.homestead.serverTime);
+      const next = await api.applyHomesteadAction(current, action);
+      commitSnapshot(next);
       setFailure(undefined);
       toast.success(success);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        await load(true);
-        toast.warning('庄园状态已经变化，已为你刷新');
+        refreshAfterAction = true;
+        toast.warning('庄园状态已经变化，正在为你刷新');
       } else {
         const text = errorMessage(error);
         setFailure(text);
         toast.error(text);
       }
     } finally {
+      if (!refreshAfterAction) {
+        actionInFlight.current = false;
+        setBusyKey(undefined);
+      }
+    }
+    if (refreshAfterAction) {
+      await load(true, true);
+      actionInFlight.current = false;
       setBusyKey(undefined);
     }
   };
@@ -575,6 +638,7 @@ export function HomesteadScreen() {
   }
 
   const { homestead } = snapshot;
+  const actionsBusy = Boolean(busyKey);
   const unlockedResearch = new Set(
     homestead.research
       .filter(({ unlocked }) => unlocked)
@@ -643,10 +707,14 @@ export function HomesteadScreen() {
           </div>
           <div className="homestead-metrics">
             <div><strong>{homestead.coins}</strong><span>全局金币</span></div>
-            <div><strong>{homestead.reputation}</strong><span>当地声望</span></div>
+            <div><strong>{activeTown.reputation}</strong><span>当地声望</span></div>
             <div><strong>{homestead.merchantRenown}</strong><span>商会名望</span></div>
             <div><strong>{homestead.researchPoints}</strong><span>研究点</span></div>
-            <Button loading={quietLoading} onClick={() => void load(true)}>
+            <Button
+              disabled={actionsBusy}
+              loading={quietLoading}
+              onClick={() => void load(true)}
+            >
               刷新
             </Button>
           </div>
@@ -659,6 +727,14 @@ export function HomesteadScreen() {
             closable
             message={failure}
             onClose={() => setFailure(undefined)}
+          />
+        )}
+        {actionsBusy && (
+          <Alert
+            className="homestead-alert homestead-operation-status"
+            type="info"
+            showIcon
+            message="正在保存本次庄园操作，其他经营操作暂不可用"
           />
         )}
         {townSwitcher}
@@ -689,7 +765,13 @@ export function HomesteadScreen() {
           <div><strong>{homestead.reputation}</strong><span>当地声望</span></div>
           <div><strong>{homestead.merchantRenown}</strong><span>商会名望</span></div>
           <div><strong>{homestead.researchPoints}</strong><span>研究点</span></div>
-          <Button loading={quietLoading} onClick={() => void load(true)}>刷新</Button>
+          <Button
+            disabled={actionsBusy}
+            loading={quietLoading}
+            onClick={() => void load(true)}
+          >
+            刷新
+          </Button>
         </div>
       </header>
 
@@ -701,6 +783,14 @@ export function HomesteadScreen() {
           closable
           message={failure}
           onClose={() => setFailure(undefined)}
+        />
+      )}
+      {actionsBusy && (
+        <Alert
+          className="homestead-alert homestead-operation-status"
+          type="info"
+          showIcon
+          message="正在保存本次庄园操作，其他经营操作暂不可用"
         />
       )}
 
@@ -865,7 +955,7 @@ export function HomesteadScreen() {
                   </small>
                   <Button
                     type={operation.canActivate ? 'primary' : 'default'}
-                    disabled={!operation.canActivate}
+                    disabled={actionsBusy || !operation.canActivate}
                     loading={busyKey === `emergency:${operation.id}`}
                     onClick={() => void act(
                       {
@@ -916,7 +1006,7 @@ export function HomesteadScreen() {
                   <Button
                     block
                     type={entry.nextUpgrade.canUpgrade ? 'primary' : 'default'}
-                    disabled={!entry.nextUpgrade.canUpgrade}
+                    disabled={actionsBusy || !entry.nextUpgrade.canUpgrade}
                     loading={busyKey === `resilience:${entry.definition.id}`}
                     onClick={() => void act(
                       {
@@ -966,7 +1056,7 @@ export function HomesteadScreen() {
               </p>
               <Button
                 type="primary"
-                disabled={!option.canChoose}
+                disabled={actionsBusy || !option.canChoose}
                 loading={busyKey === `event:${option.id}`}
                 onClick={() => void act(
                   { type: 'homestead_choose_event', optionId: option.id },
@@ -1004,7 +1094,7 @@ export function HomesteadScreen() {
                 {npc.definition.topics.map((topicId) => (
                   <Button
                     key={topicId}
-                    disabled={!npc.canTalkToday}
+                    disabled={actionsBusy || !npc.canTalkToday}
                     loading={busyKey === `npc:${npc.npcId}:${topicId}`}
                     onClick={() => void act(
                       {
@@ -1075,7 +1165,7 @@ export function HomesteadScreen() {
                   </small>
                   <Button
                     type={milestone.canClaim ? 'primary' : 'default'}
-                    disabled={!milestone.canClaim}
+                    disabled={actionsBusy || !milestone.canClaim}
                     loading={busyKey === `season:${milestone.definition.id}`}
                     onClick={() => void act(
                       {
@@ -1161,7 +1251,7 @@ export function HomesteadScreen() {
               )}
               <Button
                 type={node.canUnlock ? 'primary' : 'default'}
-                disabled={node.unlocked || !node.canUnlock}
+                disabled={actionsBusy || node.unlocked || !node.canUnlock}
                 loading={busyKey === `research:${node.definition.id}`}
                 onClick={() => void act(
                   {
@@ -1206,7 +1296,7 @@ export function HomesteadScreen() {
             </p>
             <Checkbox
               checked={useFertilizer}
-              disabled={!fertilizerAvailable}
+              disabled={actionsBusy || !fertilizerAvailable}
               onChange={(event) => setUseFertilizer(event.target.checked)}
             >
               使用土壤改良剂（库存 {homestead.goods.soil_conditioner}）
@@ -1220,6 +1310,7 @@ export function HomesteadScreen() {
                   key={family.definition.id}
                   type={family.rotationImprovesSoil ? 'primary' : 'default'}
                   disabled={
+                    actionsBusy ||
                     !family.canPlan ||
                     (useFertilizer && !fertilizerAvailable)
                   }
@@ -1276,7 +1367,7 @@ export function HomesteadScreen() {
                       : ' · 无消耗'}
                   </small>
                   <Button
-                    disabled={!program.canRun}
+                    disabled={actionsBusy || !program.canRun}
                     loading={busyKey === `feed:${program.definition.id}`}
                     onClick={() => void act(
                       {
@@ -1312,7 +1403,10 @@ export function HomesteadScreen() {
             </p>
             {homestead.specializations.nextProtectionUpgrade ? (
               <Button
-                disabled={!homestead.specializations.nextProtectionUpgrade.canUpgrade}
+                disabled={
+                  actionsBusy ||
+                  !homestead.specializations.nextProtectionUpgrade.canUpgrade
+                }
                 loading={busyKey === 'mine-protection'}
                 onClick={() => void act(
                   { type: 'homestead_upgrade_mine_protection' },
@@ -1340,7 +1434,7 @@ export function HomesteadScreen() {
                     ×{layer.definition.rewardQuantity}
                   </small>
                   <Button
-                    disabled={!layer.canSurvey}
+                    disabled={actionsBusy || !layer.canSurvey}
                     loading={busyKey === `survey:${layer.definition.id}`}
                     onClick={() => void act(
                       {
@@ -1389,7 +1483,7 @@ export function HomesteadScreen() {
               <FacilityStatus facility={facility} now={now} />
               {!facility.built ? (
                 <Button
-                  disabled={!facility.canBuild}
+                  disabled={actionsBusy || !facility.canBuild}
                   loading={busyKey === `build:${facility.id}`}
                   onClick={() => void act(
                     { type: 'homestead_build_facility', facilityId: facility.id },
@@ -1402,6 +1496,7 @@ export function HomesteadScreen() {
               ) : facility.job && facility.job.completesAt <= now ? (
                 <Button
                   type="primary"
+                  disabled={actionsBusy}
                   loading={busyKey === `collect:${facility.id}`}
                   onClick={() => void act(
                     { type: 'homestead_collect_job', facilityId: facility.id },
@@ -1414,7 +1509,7 @@ export function HomesteadScreen() {
               ) : null}
               {facility.built && facility.nextUpgrade && (
                 <Button
-                  disabled={!facility.nextUpgrade.canUpgrade}
+                  disabled={actionsBusy || !facility.nextUpgrade.canUpgrade}
                   loading={busyKey === `upgrade:${facility.id}`}
                   onClick={() => void act(
                     { type: 'homestead_upgrade_facility', facilityId: facility.id },
@@ -1455,7 +1550,7 @@ export function HomesteadScreen() {
               </p>
               <Button
                 type={recipe.canStart ? 'primary' : 'default'}
-                disabled={!recipe.canStart}
+                disabled={actionsBusy || !recipe.canStart}
                 loading={busyKey === `recipe:${recipe.id}`}
                 onClick={() => void act(
                   { type: 'homestead_start_job', recipeId: recipe.id },
@@ -1463,11 +1558,15 @@ export function HomesteadScreen() {
                   `${recipe.name}已经开始`,
                 )}
               >
-                {!recipe.facilityBuilt
-                  ? '设施未建设'
-                  : recipe.facilityBusy
-                    ? '设施忙碌'
-                    : '开始加工'}
+                {actionsBusy
+                  ? '其他操作处理中'
+                  : !recipe.facilityBuilt
+                    ? '设施未建设'
+                    : recipe.facilityBusy
+                      ? '设施忙碌'
+                      : recipe.inputsView.some(({ sufficient }) => !sufficient)
+                        ? '原料不足'
+                        : '开始加工'}
               </Button>
             </article>
           ))}
@@ -1504,7 +1603,7 @@ export function HomesteadScreen() {
               </p>
               <Button
                 type={route.canComplete ? 'primary' : 'default'}
-                disabled={!route.canComplete}
+                disabled={actionsBusy || !route.canComplete}
                 loading={busyKey === `value-route:${route.id}`}
                 onClick={() => void act(
                   {
@@ -1545,7 +1644,7 @@ export function HomesteadScreen() {
               </p>
               <Button
                 type={order.canComplete ? 'primary' : 'default'}
-                disabled={!order.canComplete}
+                disabled={actionsBusy || !order.canComplete}
                 loading={busyKey === `order:${order.id}`}
                 onClick={() => void act(
                   { type: 'homestead_complete_order', orderId: order.id },

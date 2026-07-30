@@ -804,6 +804,12 @@
     overflow-x: auto;
   }
 
+  .homestead-page .ant-btn {
+    min-height: 40px;
+    height: auto;
+    white-space: normal;
+  }
+
   .homestead-weather-section {
     padding: 15px;
   }

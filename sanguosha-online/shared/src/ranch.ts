@@ -1,8 +1,22 @@
 import {
-  FARMING_CROP_IDS,
   type FarmingCropCounts,
   type FarmingCropId,
 } from "./farming.js";
+import {
+  FROSTPEAK_ANIMAL_IDS,
+  FROSTPEAK_PRODUCT_IDS,
+  FROSTPEAK_RANCH_ANIMALS,
+} from "./towns/frostpeak.js";
+import {
+  GREENVALE_ANIMAL_IDS,
+  GREENVALE_PRODUCT_IDS,
+} from "./towns/greenvale.js";
+import {
+  getTownDefinition,
+  isEstateTownId,
+  type EstateTownId,
+  type TownDefinition,
+} from "./towns/registry.js";
 
 export const RANCH_STATE_VERSION = 1 as const;
 export const RANCH_REQUIRED_FARM_LEVEL = 1;
@@ -12,25 +26,21 @@ export const RANCH_MAX_LOGS = 80;
 export const RANCH_MAX_DAILY_HELPS = 20;
 export const RANCH_MAX_DAILY_COLLECTS = 10;
 
-export const RANCH_ANIMAL_IDS = [
-  "chicken",
-  "duck",
-  "rabbit",
-  "sheep",
-  "cow",
-  "goat",
+/** @deprecated Greenvale-only compatibility catalog. Prefer a state's town catalog. */
+export const RANCH_ANIMAL_IDS = GREENVALE_ANIMAL_IDS;
+export const ALL_RANCH_ANIMAL_IDS = [
+  ...GREENVALE_ANIMAL_IDS,
+  ...FROSTPEAK_ANIMAL_IDS,
 ] as const;
-export type RanchAnimalId = (typeof RANCH_ANIMAL_IDS)[number];
+export type RanchAnimalId = (typeof ALL_RANCH_ANIMAL_IDS)[number];
 
-export const RANCH_PRODUCT_IDS = [
-  "egg",
-  "duck_egg",
-  "rabbit_fur",
-  "wool",
-  "milk",
-  "goat_milk",
+/** @deprecated Greenvale-only compatibility catalog. Prefer a state's town catalog. */
+export const RANCH_PRODUCT_IDS = GREENVALE_PRODUCT_IDS;
+export const ALL_RANCH_PRODUCT_IDS = [
+  ...GREENVALE_PRODUCT_IDS,
+  ...FROSTPEAK_PRODUCT_IDS,
 ] as const;
-export type RanchProductId = (typeof RANCH_PRODUCT_IDS)[number];
+export type RanchProductId = (typeof ALL_RANCH_PRODUCT_IDS)[number];
 export type RanchProductCounts = Record<RanchProductId, number>;
 
 export interface RanchAnimalDefinition {
@@ -53,7 +63,10 @@ export interface RanchAnimalDefinition {
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
 
-export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition>> = {
+export const RANCH_ANIMALS: Readonly<Record<
+  (typeof GREENVALE_ANIMAL_IDS)[number],
+  RanchAnimalDefinition
+>> = {
   chicken: {
     id: "chicken",
     name: "母鸡",
@@ -152,6 +165,36 @@ export const RANCH_ANIMALS: Readonly<Record<RanchAnimalId, RanchAnimalDefinition
   },
 };
 
+const ALL_RANCH_ANIMALS: Readonly<
+  Record<RanchAnimalId, RanchAnimalDefinition>
+> = {
+  ...RANCH_ANIMALS,
+  ...FROSTPEAK_RANCH_ANIMALS,
+} as Readonly<Record<RanchAnimalId, RanchAnimalDefinition>>;
+
+function ranchAnimalIds(townId: EstateTownId): readonly RanchAnimalId[] {
+  return getTownDefinition(townId).content.animalIds as readonly RanchAnimalId[];
+}
+
+function ranchProductIds(townId: EstateTownId): readonly RanchProductId[] {
+  return getTownDefinition(townId).content.productIds as readonly RanchProductId[];
+}
+
+function ranchAnimals(
+  townId: EstateTownId,
+): Readonly<Record<RanchAnimalId, RanchAnimalDefinition>> {
+  return Object.fromEntries(
+    ranchAnimalIds(townId).map((animalId) => [
+      animalId,
+      ALL_RANCH_ANIMALS[animalId],
+    ]),
+  ) as Readonly<Record<RanchAnimalId, RanchAnimalDefinition>>;
+}
+
+function ranchTownId(state: { readonly townId?: unknown }): EstateTownId {
+  return isEstateTownId(state.townId) ? state.townId : "greenvale";
+}
+
 export const RANCH_LEVEL_EXPERIENCE = [
   0,
   45,
@@ -234,6 +277,7 @@ export interface RanchLogEntry {
 export interface RanchGameState {
   readonly kind: "ranch";
   readonly version: typeof RANCH_STATE_VERSION;
+  townId: EstateTownId;
   readonly seed: string;
   revision: number;
   readonly ownerId: string;
@@ -315,6 +359,8 @@ export interface RanchPenView extends RanchPenState {
 export interface RanchGameView {
   readonly kind: "ranch";
   readonly version: typeof RANCH_STATE_VERSION;
+  readonly townId: EstateTownId;
+  readonly townDefinition: TownDefinition;
   readonly revision: number;
   readonly serverTime: number;
   readonly ownerId: string;
@@ -391,6 +437,7 @@ export type RanchRuleErrorCode =
   | "RANCH_MAX_PENS"
   | "RANCH_LEVEL_REQUIRED"
   | "RANCH_CANNOT_VISIT_SELF"
+  | "RANCH_TOWN_MISMATCH"
   | "RANCH_DAILY_HELP_LIMIT"
   | "RANCH_DAILY_COLLECT_LIMIT"
   | "RANCH_ALREADY_ATTEMPTED"
@@ -406,9 +453,12 @@ export class RanchRuleError extends Error {
   }
 }
 
-function productCounts(initial = 0): RanchProductCounts {
+function productCounts(
+  initial = 0,
+  townId: EstateTownId = "greenvale",
+): RanchProductCounts {
   return Object.fromEntries(
-    RANCH_PRODUCT_IDS.map((productId) => [productId, initial]),
+    ranchProductIds(townId).map((productId) => [productId, initial]),
   ) as RanchProductCounts;
 }
 
@@ -467,14 +517,20 @@ function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
-function isAnimalId(value: unknown): value is RanchAnimalId {
+function isAnimalId(
+  value: unknown,
+  townId: EstateTownId = "greenvale",
+): value is RanchAnimalId {
   return typeof value === "string" &&
-    (RANCH_ANIMAL_IDS as readonly string[]).includes(value);
+    (ranchAnimalIds(townId) as readonly string[]).includes(value);
 }
 
-function isProductId(value: unknown): value is RanchProductId {
+function isProductId(
+  value: unknown,
+  townId: EstateTownId = "greenvale",
+): value is RanchProductId {
   return typeof value === "string" &&
-    (RANCH_PRODUCT_IDS as readonly string[]).includes(value);
+    (ranchProductIds(townId) as readonly string[]).includes(value);
 }
 
 function assertTime(now: number): void {
@@ -565,7 +621,7 @@ function messAppeared(pen: RanchPenState, now: number): boolean {
 
 function penYield(pen: RanchPenState, now: number): number {
   if (!pen.animalId || pen.producesAt === null) return 0;
-  const base = RANCH_ANIMALS[pen.animalId].yield;
+  const base = ALL_RANCH_ANIMALS[pen.animalId].yield;
   return Math.max(
     1,
     Math.round(
@@ -597,6 +653,7 @@ export function createRanchGame(input: {
   readonly ownerName: string;
   readonly seed: string;
   readonly now: number;
+  readonly townId?: EstateTownId;
 }): RanchGameState {
   assertTime(input.now);
   if (
@@ -609,9 +666,11 @@ export function createRanchGame(input: {
   if (input.seed.length < 1 || input.seed.length > 128) {
     throw new Error("牧场随机种子无效");
   }
+  const townId = input.townId ?? "greenvale";
   return {
     kind: "ranch",
     version: RANCH_STATE_VERSION,
+    townId,
     seed: input.seed,
     revision: 0,
     ownerId: input.ownerId,
@@ -621,7 +680,7 @@ export function createRanchGame(input: {
     experience: 0,
     level: 1,
     unlockedPens: RANCH_STARTING_PENS,
-    products: productCounts(),
+    products: productCounts(0, townId),
     pens: Array.from({ length: RANCH_MAX_PENS }, (_, index) => emptyPen(index)),
     dailySocial: { dayKey: dayKey(input.now), helps: 0, collects: 0 },
     statistics: emptyStatistics(),
@@ -642,8 +701,16 @@ export function refreshRanchGame(
   const game = structuredClone(state);
   const effectiveNow = Math.max(now, game.updatedAt);
   const key = dayKey(effectiveNow);
+  let changed = false;
+  if (!isEstateTownId(game.townId)) {
+    game.townId = "greenvale";
+    changed = true;
+  }
   if (game.dailySocial.dayKey !== key) {
     game.dailySocial = { dayKey: key, helps: 0, collects: 0 };
+    changed = true;
+  }
+  if (changed) {
     game.updatedAt = effectiveNow;
     game.revision += 1;
   }
@@ -665,18 +732,19 @@ export function applyRanchAction(
   ranch = structuredClone(ranch);
   const economy = structuredClone(economyState);
   const effectiveNow = Math.max(now, ranch.updatedAt);
+  const animals = ranchAnimals(ranch.townId);
   requireUnlockedRanch(economy);
   let economyChanged = false;
 
   if (action.type === "ranch_buy_animal") {
-    if (!isAnimalId(action.animalId)) {
+    if (!isAnimalId(action.animalId, ranch.townId)) {
       throw new RanchRuleError("RANCH_UNKNOWN_ANIMAL", "动物不存在");
     }
     const pen = requirePen(ranch, action.penIndex);
     if (pen.animalId !== null) {
       throw new RanchRuleError("RANCH_PEN_OCCUPIED", "这间畜舍已有动物");
     }
-    const animal = RANCH_ANIMALS[action.animalId];
+    const animal = animals[action.animalId];
     if (
       economy.farmLevel < animal.requiredFarmLevel ||
       ranch.level < animal.requiredRanchLevel
@@ -715,7 +783,7 @@ export function applyRanchAction(
     if (target.animalId !== null) {
       throw new RanchRuleError("RANCH_PEN_OCCUPIED", "目标畜舍已有动物");
     }
-    const animal = RANCH_ANIMALS[source.animalId];
+    const animal = animals[source.animalId];
     Object.assign(target, emptyPen(target.index), { animalId: animal.id });
     Object.assign(source, emptyPen(source.index));
     addLog(
@@ -732,7 +800,7 @@ export function applyRanchAction(
     if (pen.fedAt !== null) {
       throw new RanchRuleError("RANCH_ANIMAL_BUSY", "生产中的动物不能出售，请先收取产品");
     }
-    const animal = RANCH_ANIMALS[pen.animalId];
+    const animal = animals[pen.animalId];
     economy.coins += animal.resalePrice;
     economyChanged = true;
     ranch.statistics.coinsEarned += animal.resalePrice;
@@ -751,7 +819,7 @@ export function applyRanchAction(
     if (pen.fedAt !== null) {
       throw new RanchRuleError("RANCH_ALREADY_FED", "这只动物正在生产");
     }
-    const animal = RANCH_ANIMALS[pen.animalId];
+    const animal = animals[pen.animalId];
     if (economy.produce[animal.feedCropId] < animal.feedAmount) {
       throw new RanchRuleError(
         "RANCH_NOT_ENOUGH_FEED",
@@ -806,7 +874,7 @@ export function applyRanchAction(
     if (effectiveNow < pen.producesAt) {
       throw new RanchRuleError("RANCH_NOT_READY", "动物产品尚未产出");
     }
-    const animal = RANCH_ANIMALS[pen.animalId];
+    const animal = animals[pen.animalId];
     const totalYield = penYield(pen, effectiveNow);
     const ownerYield = Math.max(0, totalYield - pen.taken);
     ranch.products[animal.productId] += ownerYield;
@@ -822,7 +890,7 @@ export function applyRanchAction(
     );
     resetProduction(pen);
   } else if (action.type === "ranch_sell") {
-    if (!isProductId(action.productId)) {
+    if (!isProductId(action.productId, ranch.townId)) {
       throw new RanchRuleError("RANCH_UNKNOWN_PRODUCT", "牧场产品不存在");
     }
     if (!validQuantity(action.quantity)) {
@@ -831,7 +899,7 @@ export function applyRanchAction(
     if (ranch.products[action.productId] < action.quantity) {
       throw new RanchRuleError("RANCH_NOT_ENOUGH_PRODUCTS", "牧场仓库库存不足");
     }
-    const animal = Object.values(RANCH_ANIMALS).find(
+    const animal = Object.values(animals).find(
       (candidate) => candidate.productId === action.productId,
     )!;
     const revenue = animal.productPrice * action.quantity;
@@ -892,11 +960,18 @@ export function applyRanchVisitAction(
   if (ownerState.ownerId === visitorState.ownerId) {
     throw new RanchRuleError("RANCH_CANNOT_VISIT_SELF", "不能访问自己的牧场");
   }
+  if (ranchTownId(ownerState) !== ranchTownId(visitorState)) {
+    throw new RanchRuleError(
+      "RANCH_TOWN_MISMATCH",
+      "只能访问同一城镇的牧场",
+    );
+  }
   let owner = refreshRanchGame(ownerState, now);
   let visitor = refreshRanchGame(visitorState, now);
   owner = structuredClone(owner);
   visitor = structuredClone(visitor);
   const effectiveNow = Math.max(now, owner.updatedAt, visitor.updatedAt);
+  const animals = ranchAnimals(owner.townId);
   const pen = requirePen(owner, action.penIndex);
   let outcome: RanchVisitResult["outcome"];
 
@@ -963,7 +1038,7 @@ export function applyRanchVisitAction(
       );
       outcome = "blocked";
     } else {
-      const animal = RANCH_ANIMALS[pen.animalId];
+      const animal = animals[pen.animalId];
       pen.taken += 1;
       pen.takenBy.push(visitor.ownerId);
       visitor.products[animal.productId] += 1;
@@ -1039,6 +1114,8 @@ export function getRanchGameView(
   return {
     kind: "ranch",
     version: RANCH_STATE_VERSION,
+    townId: game.townId,
+    townDefinition: structuredClone(getTownDefinition(game.townId)),
     revision: game.revision,
     serverTime: effectiveNow,
     ownerId: game.ownerId,
@@ -1056,7 +1133,7 @@ export function getRanchGameView(
     currentLevelExperience: currentThreshold,
     nextLevelExperience: nextThreshold,
     unlockedPens: game.unlockedPens,
-    animals: structuredClone(RANCH_ANIMALS),
+    animals: structuredClone(ranchAnimals(game.townId)),
     economy: isOwner && input.coins !== undefined && input.produce
       ? {
           coins: input.coins,
@@ -1102,10 +1179,18 @@ export function getRanchNeighborSummary(
   };
 }
 
-function validProducts(value: unknown): value is RanchProductCounts {
+function validProducts(
+  value: unknown,
+  townId: EstateTownId,
+): value is RanchProductCounts {
+  const townProductIds = ranchProductIds(townId);
+  const allowedIds = new Set(townProductIds as readonly string[]);
   return isRecord(value) &&
-    Object.keys(value).length === RANCH_PRODUCT_IDS.length &&
-    RANCH_PRODUCT_IDS.every((productId) => isNonNegativeInteger(value[productId]));
+    Object.keys(value).length === townProductIds.length &&
+    Object.keys(value).every((productId) => allowedIds.has(productId)) &&
+    townProductIds.every((productId) =>
+      isNonNegativeInteger(value[productId])
+    );
 }
 
 export function assertRestorableRanchGameState(
@@ -1118,6 +1203,10 @@ export function assertRestorableRanchGameState(
   ) {
     throw new Error("牧场存档版本无效");
   }
+  if (value.townId !== undefined && !isEstateTownId(value.townId)) {
+    throw new Error("牧场城镇无效");
+  }
+  const townId = isEstateTownId(value.townId) ? value.townId : "greenvale";
   if (
     typeof value.seed !== "string" ||
     value.seed.length < 1 ||
@@ -1137,7 +1226,7 @@ export function assertRestorableRanchGameState(
     !Number.isSafeInteger(value.unlockedPens) ||
     Number(value.unlockedPens) < RANCH_STARTING_PENS ||
     Number(value.unlockedPens) > RANCH_MAX_PENS ||
-    !validProducts(value.products)
+    !validProducts(value.products, townId)
   ) {
     throw new Error("牧场主状态无效");
   }
@@ -1149,7 +1238,7 @@ export function assertRestorableRanchGameState(
       !isRecord(pen) ||
       pen.index !== index ||
       !isNonNegativeInteger(pen.cycle) ||
-      (pen.animalId !== null && !isAnimalId(pen.animalId)) ||
+      (pen.animalId !== null && !isAnimalId(pen.animalId, townId)) ||
       typeof pen.messCleaned !== "boolean" ||
       !isNonNegativeInteger(pen.taken) ||
       !Array.isArray(pen.collectAttempts) ||

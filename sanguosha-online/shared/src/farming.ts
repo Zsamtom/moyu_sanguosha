@@ -3,6 +3,17 @@ import {
   assertRestorableFarmGameState,
   type FarmGameState,
 } from "./farm.js";
+import {
+  FROSTPEAK_CROP_IDS,
+  FROSTPEAK_FARM_CROPS,
+} from "./towns/frostpeak.js";
+import { GREENVALE_CROP_IDS } from "./towns/greenvale.js";
+import {
+  getTownDefinition,
+  isEstateTownId,
+  type EstateTownId,
+  type TownDefinition,
+} from "./towns/registry.js";
 
 export const FARMING_STATE_VERSION = 2 as const;
 export const FARMING_STARTING_PLOTS = 6;
@@ -11,22 +22,14 @@ export const FARMING_MAX_LOGS = 80;
 export const FARMING_MAX_DAILY_HELPS = 20;
 export const FARMING_MAX_DAILY_STEALS = 20;
 
-export const FARMING_CROP_IDS = [
-  "wheat",
-  "carrot",
-  "tomato",
-  "corn",
-  "pumpkin",
-  "strawberry",
-  "sunflower",
-  "watermelon",
-  "grape",
-  "blueberry",
-  "cotton",
-  "dragonfruit",
+/** @deprecated Greenvale-only compatibility catalog. Prefer a state's town catalog. */
+export const FARMING_CROP_IDS = GREENVALE_CROP_IDS;
+export const ALL_FARMING_CROP_IDS = [
+  ...GREENVALE_CROP_IDS,
+  ...FROSTPEAK_CROP_IDS,
 ] as const;
 
-export type FarmingCropId = (typeof FARMING_CROP_IDS)[number];
+export type FarmingCropId = (typeof ALL_FARMING_CROP_IDS)[number];
 
 export interface FarmingCropDefinition {
   readonly id: FarmingCropId;
@@ -44,7 +47,10 @@ export interface FarmingCropDefinition {
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
 
-export const FARMING_CROPS: Readonly<Record<FarmingCropId, FarmingCropDefinition>> = {
+export const FARMING_CROPS: Readonly<Record<
+  (typeof GREENVALE_CROP_IDS)[number],
+  FarmingCropDefinition
+>> = {
   wheat: {
     id: "wheat",
     name: "小麦",
@@ -191,6 +197,36 @@ export const FARMING_CROPS: Readonly<Record<FarmingCropId, FarmingCropDefinition
   },
 };
 
+const ALL_FARMING_CROPS: Readonly<
+  Record<FarmingCropId, FarmingCropDefinition>
+> = {
+  ...FARMING_CROPS,
+  ...FROSTPEAK_FARM_CROPS,
+} as Readonly<Record<FarmingCropId, FarmingCropDefinition>>;
+
+export function getFarmingCropDefinition(
+  cropId: FarmingCropId,
+): FarmingCropDefinition {
+  return ALL_FARMING_CROPS[cropId];
+}
+
+function farmingCropIds(townId: EstateTownId): readonly FarmingCropId[] {
+  return getTownDefinition(townId).content.cropIds as readonly FarmingCropId[];
+}
+
+function farmingCrops(
+  townId: EstateTownId,
+): Readonly<Record<FarmingCropId, FarmingCropDefinition>> {
+  const ids = farmingCropIds(townId);
+  return Object.fromEntries(
+    ids.map((cropId) => [cropId, ALL_FARMING_CROPS[cropId]]),
+  ) as Readonly<Record<FarmingCropId, FarmingCropDefinition>>;
+}
+
+function farmingTownId(state: { readonly townId?: unknown }): EstateTownId {
+  return isEstateTownId(state.townId) ? state.townId : "greenvale";
+}
+
 export const FARMING_LEVEL_EXPERIENCE = [
   0,
   40,
@@ -320,6 +356,7 @@ export interface FarmingDailySocial {
 export interface FarmingGameState {
   readonly kind: "farm";
   readonly version: typeof FARMING_STATE_VERSION;
+  townId: EstateTownId;
   readonly seed: string;
   revision: number;
   readonly ownerId: string;
@@ -418,6 +455,8 @@ export interface FarmingInventoryView {
 export interface FarmingGameView {
   readonly kind: "farm";
   readonly version: typeof FARMING_STATE_VERSION;
+  readonly townId: EstateTownId;
+  readonly townDefinition: TownDefinition;
   readonly revision: number;
   readonly serverTime: number;
   readonly ownerId: string;
@@ -481,6 +520,7 @@ export type FarmingRuleErrorCode =
   | "FARMING_LEVEL_REQUIRED"
   | "FARMING_DOG_MAX_LEVEL"
   | "FARMING_CANNOT_VISIT_SELF"
+  | "FARMING_TOWN_MISMATCH"
   | "FARMING_DAILY_HELP_LIMIT"
   | "FARMING_DAILY_STEAL_LIMIT"
   | "FARMING_ALREADY_ATTEMPTED"
@@ -496,9 +536,12 @@ export class FarmingRuleError extends Error {
   }
 }
 
-function cropCounts(initial = 0): FarmingCropCounts {
+function cropCounts(
+  initial = 0,
+  townId: EstateTownId = "greenvale",
+): FarmingCropCounts {
   return Object.fromEntries(
-    FARMING_CROP_IDS.map((cropId) => [cropId, initial]),
+    farmingCropIds(townId).map((cropId) => [cropId, initial]),
   ) as FarmingCropCounts;
 }
 
@@ -570,9 +613,12 @@ function levelForExperience(experience: number): number {
   return Math.min(level, FARMING_LEVEL_EXPERIENCE.length);
 }
 
-function isCropId(value: unknown): value is FarmingCropId {
+function isCropId(
+  value: unknown,
+  townId: EstateTownId = "greenvale",
+): value is FarmingCropId {
   return typeof value === "string" &&
-    (FARMING_CROP_IDS as readonly string[]).includes(value);
+    (farmingCropIds(townId) as readonly string[]).includes(value);
 }
 
 function validQuantity(value: number): boolean {
@@ -582,14 +628,15 @@ function validQuantity(value: number): boolean {
 function marketForDay(
   seed: string,
   key: string,
+  townId: EstateTownId,
   previous?: Record<FarmingCropId, FarmingMarketQuote>,
 ): Record<FarmingCropId, FarmingMarketQuote> {
-  return Object.fromEntries(FARMING_CROP_IDS.map((cropId) => {
-    const crop = FARMING_CROPS[cropId];
+  return Object.fromEntries(farmingCropIds(townId).map((cropId) => {
+    const crop = ALL_FARMING_CROPS[cropId];
     const range = crop.maximumPrice - crop.minimumPrice + 1;
     const price = crop.minimumPrice +
       hashText(`${seed}:${key}:${cropId}`) % range;
-    const previousPrice = previous?.[cropId].price ?? crop.basePrice;
+    const previousPrice = previous?.[cropId]?.price ?? crop.basePrice;
     return [cropId, {
       cropId,
       price,
@@ -664,7 +711,7 @@ function cropIssueAppeared(at: number | null, cleared: boolean, now: number): bo
 
 function plotYield(plot: FarmingPlotState, now: number): number {
   if (!plot.cropId) return 0;
-  let result = FARMING_CROPS[plot.cropId].yield;
+  let result = ALL_FARMING_CROPS[plot.cropId].yield;
   if (!plot.watered) result -= 1;
   if (cropIssueAppeared(plot.weedAt, plot.weedCleared, now)) result -= 1;
   if (cropIssueAppeared(plot.pestAt, plot.pestCleared, now)) result -= 1;
@@ -703,6 +750,7 @@ export function createFarmingGame(input: {
   readonly ownerName: string;
   readonly seed: string;
   readonly now: number;
+  readonly townId?: EstateTownId;
 }): FarmingGameState {
   assertTime(input.now);
   if (
@@ -716,12 +764,15 @@ export function createFarmingGame(input: {
     throw new Error("实时农场随机种子无效");
   }
   const key = dayKey(input.now);
-  const seeds = cropCounts();
-  seeds.wheat = 6;
-  seeds.carrot = 3;
+  const townId = input.townId ?? "greenvale";
+  const seeds = cropCounts(0, townId);
+  const starterCropIds = farmingCropIds(townId).slice(0, 2);
+  seeds[starterCropIds[0]!] = 6;
+  seeds[starterCropIds[1]!] = 3;
   return {
     kind: "farm",
     version: FARMING_STATE_VERSION,
+    townId,
     seed: input.seed,
     revision: 0,
     ownerId: input.ownerId,
@@ -734,15 +785,15 @@ export function createFarmingGame(input: {
     unlockedPlots: FARMING_STARTING_PLOTS,
     dogLevel: 0,
     seeds,
-    produce: cropCounts(),
-    mutations: cropCounts(),
-    discoveredCrops: ["wheat", "carrot"],
+    produce: cropCounts(0, townId),
+    mutations: cropCounts(0, townId),
+    discoveredCrops: [...starterCropIds],
     plots: Array.from(
       { length: FARMING_MAX_PLOTS },
       (_, index) => emptyPlot(index),
     ),
     marketDay: key,
-    market: marketForDay(input.seed, key),
+    market: marketForDay(input.seed, key, townId),
     marketEvent: {
       title: "清晨开市",
       summary: "今日农产品收购价已经发布，合理安排成熟时间与出售节奏。",
@@ -799,7 +850,7 @@ export function migrateLegacyFarmGame(
   for (const [index, legacyPlot] of legacyPlayer.plots.entries()) {
     if (!legacyPlot.cropId) continue;
     const cropId = legacyPlot.cropId as FarmingCropId;
-    const crop = FARMING_CROPS[cropId];
+    const crop = ALL_FARMING_CROPS[cropId];
     const legacyCrop = LEGACY_FARM_CROPS[legacyPlot.cropId];
     const progress = Math.max(
       0,
@@ -847,8 +898,12 @@ export function refreshFarmingGame(
   const effectiveNow = Math.max(now, game.updatedAt);
   const key = dayKey(effectiveNow);
   let changed = false;
+  if (!isEstateTownId(game.townId)) {
+    game.townId = "greenvale";
+    changed = true;
+  }
   if (game.marketDay !== key) {
-    game.market = marketForDay(game.seed, key, game.market);
+    game.market = marketForDay(game.seed, key, game.townId, game.market);
     game.marketDay = key;
     game.marketEvent = {
       title: "每日行情更新",
@@ -876,6 +931,9 @@ export function applyFarmingMarketDecision(
   now: number,
 ): FarmingGameState {
   assertTime(now);
+  const townId = farmingTownId(state);
+  const cropIds = farmingCropIds(townId);
+  const crops = farmingCrops(townId);
   if (
     typeof decision.title !== "string" ||
     decision.title.trim().length < 1 ||
@@ -886,9 +944,9 @@ export function applyFarmingMarketDecision(
     !["neutral", "surge", "crash", "volatile"].includes(decision.tone) ||
     !decision.prices ||
     typeof decision.prices !== "object" ||
-    !FARMING_CROP_IDS.every((cropId) => {
+    !cropIds.every((cropId) => {
       const price = decision.prices[cropId];
-      const crop = FARMING_CROPS[cropId];
+      const crop = crops[cropId];
       return Number.isSafeInteger(price) &&
         price >= crop.minimumPrice &&
         price <= crop.maximumPrice;
@@ -897,10 +955,12 @@ export function applyFarmingMarketDecision(
     throw new Error("实时农场市场导演决策无效");
   }
   const game = structuredClone(state);
+  game.townId = townId;
   const effectiveNow = Math.max(now, game.updatedAt);
-  for (const cropId of FARMING_CROP_IDS) {
+  for (const cropId of cropIds) {
     const quote = game.market[cropId];
     const price = decision.prices[cropId];
+    if (!quote) throw new Error("实时农场市场报价缺失");
     quote.price = price;
     quote.trend = price === quote.previousPrice ? 0 : price > quote.previousPrice ? 1 : -1;
   }
@@ -934,15 +994,16 @@ export function applyFarmingAction(
   let game = refreshFarmingGame(state, now);
   game = structuredClone(game);
   const effectiveNow = Math.max(now, game.updatedAt);
+  const crops = farmingCrops(game.townId);
 
   if (action.type === "farming_buy_seed") {
-    if (!isCropId(action.cropId)) {
+    if (!isCropId(action.cropId, game.townId)) {
       throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
     }
     if (!validQuantity(action.quantity)) {
       throw new FarmingRuleError("FARMING_INVALID_QUANTITY", "购买数量需为 1 至 99");
     }
-    const crop = FARMING_CROPS[action.cropId];
+    const crop = crops[action.cropId];
     if (game.level < crop.unlockLevel) {
       throw new FarmingRuleError(
         "FARMING_CROP_LOCKED",
@@ -965,10 +1026,10 @@ export function applyFarmingAction(
       `购入 ${action.quantity} 袋${crop.name}种子，支出 ${cost} 金币。`,
     );
   } else if (action.type === "farming_plant") {
-    if (!isCropId(action.cropId)) {
+    if (!isCropId(action.cropId, game.townId)) {
       throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
     }
-    const crop = FARMING_CROPS[action.cropId];
+    const crop = crops[action.cropId];
     if (game.level < crop.unlockLevel) {
       throw new FarmingRuleError("FARMING_CROP_LOCKED", "该作物尚未解锁");
     }
@@ -1044,7 +1105,7 @@ export function applyFarmingAction(
     if (effectiveNow < plot.maturesAt) {
       throw new FarmingRuleError("FARMING_NOT_READY", "作物尚未成熟");
     }
-    const crop = FARMING_CROPS[plot.cropId];
+    const crop = crops[plot.cropId];
     const totalYield = plotYield(plot, effectiveNow);
     const ownerYield = Math.max(0, totalYield - plot.stolen);
     game.produce[crop.id] += ownerYield;
@@ -1075,7 +1136,7 @@ export function applyFarmingAction(
     if (!plot.cropId) {
       throw new FarmingRuleError("FARMING_PLOT_EMPTY", "田地当前为空");
     }
-    const crop = FARMING_CROPS[plot.cropId];
+    const crop = crops[plot.cropId];
     resetPlot(plot);
     addLog(
       game,
@@ -1084,7 +1145,7 @@ export function applyFarmingAction(
       `铲除了 ${plot.index + 1} 号田的${crop.name}，本次种植未获得收成。`,
     );
   } else if (action.type === "farming_sell") {
-    if (!isCropId(action.cropId)) {
+    if (!isCropId(action.cropId, game.townId)) {
       throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
     }
     if (!validQuantity(action.quantity)) {
@@ -1102,10 +1163,10 @@ export function applyFarmingAction(
       game,
       effectiveNow,
       "economy",
-      `出售 ${action.quantity} 份${FARMING_CROPS[action.cropId].name}，收入 ${revenue} 金币。`,
+      `出售 ${action.quantity} 份${crops[action.cropId].name}，收入 ${revenue} 金币。`,
     );
   } else if (action.type === "farming_redeem_mutation") {
-    if (!isCropId(action.cropId)) {
+    if (!isCropId(action.cropId, game.townId)) {
       throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
     }
     if (!validQuantity(action.quantity)) {
@@ -1114,7 +1175,7 @@ export function applyFarmingAction(
     if (game.mutations[action.cropId] < action.quantity) {
       throw new FarmingRuleError("FARMING_NOT_ENOUGH_MUTATIONS", "变异作物数量不足");
     }
-    const crop = FARMING_CROPS[action.cropId];
+    const crop = crops[action.cropId];
     const coinReward = game.market[action.cropId].price * 5 * action.quantity;
     const experienceReward = crop.harvestExperience * action.quantity;
     game.mutations[action.cropId] -= action.quantity;
@@ -1220,11 +1281,18 @@ export function applyFarmingVisitAction(
   if (ownerState.ownerId === visitorState.ownerId) {
     throw new FarmingRuleError("FARMING_CANNOT_VISIT_SELF", "不能访问自己的农场");
   }
+  if (farmingTownId(ownerState) !== farmingTownId(visitorState)) {
+    throw new FarmingRuleError(
+      "FARMING_TOWN_MISMATCH",
+      "只能访问同一城镇的农场",
+    );
+  }
   let owner = refreshFarmingGame(ownerState, now);
   let visitor = refreshFarmingGame(visitorState, now);
   owner = structuredClone(owner);
   visitor = structuredClone(visitor);
   const effectiveNow = Math.max(now, owner.updatedAt, visitor.updatedAt);
+  const crops = farmingCrops(owner.townId);
   const plot = requirePlot(owner, action.plotIndex);
 
   let outcome: FarmingVisitResult["outcome"];
@@ -1306,13 +1374,13 @@ export function applyFarmingVisitAction(
         owner,
         effectiveNow,
         "social",
-        `${visitor.ownerName} 从 ${plot.index + 1} 号田摘走 1 份${FARMING_CROPS[plot.cropId].name}。`,
+        `${visitor.ownerName} 从 ${plot.index + 1} 号田摘走 1 份${crops[plot.cropId].name}。`,
       );
       addLog(
         visitor,
         effectiveNow,
         "social",
-        `从 ${owner.ownerName} 的 ${plot.index + 1} 号田摘到 1 份${FARMING_CROPS[plot.cropId].name}。`,
+        `从 ${owner.ownerName} 的 ${plot.index + 1} 号田摘到 1 份${crops[plot.cropId].name}。`,
       );
       outcome = "stolen";
     }
@@ -1365,6 +1433,8 @@ export function getFarmingGameView(
   return {
     kind: "farm",
     version: FARMING_STATE_VERSION,
+    townId: game.townId,
+    townDefinition: structuredClone(getTownDefinition(game.townId)),
     revision: game.revision,
     serverTime: effectiveNow,
     ownerId: game.ownerId,
@@ -1378,7 +1448,7 @@ export function getFarmingGameView(
     unlockedPlots: game.unlockedPlots,
     dogLevel: game.dogLevel,
     dogBlockChance: dogBlockChance(game.dogLevel),
-    crops: structuredClone(FARMING_CROPS),
+    crops: structuredClone(farmingCrops(game.townId)),
     inventory: isOwner
       ? {
           coins: game.coins,
@@ -1441,10 +1511,18 @@ function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
-function validCounts(value: unknown): value is FarmingCropCounts {
+function validCounts(
+  value: unknown,
+  townId: EstateTownId,
+): value is FarmingCropCounts {
+  const townCropIds = farmingCropIds(townId);
+  const allowedIds = new Set(townCropIds as readonly string[]);
   return isRecord(value) &&
-    Object.keys(value).length === FARMING_CROP_IDS.length &&
-    FARMING_CROP_IDS.every((cropId) => isNonNegativeInteger(value[cropId]));
+    Object.keys(value).length === townCropIds.length &&
+    Object.keys(value).every((cropId) => allowedIds.has(cropId)) &&
+    townCropIds.every((cropId) =>
+      isNonNegativeInteger(value[cropId])
+    );
 }
 
 export function assertRestorableFarmingGameState(
@@ -1457,6 +1535,10 @@ export function assertRestorableFarmingGameState(
   ) {
     throw new Error("实时农场存档版本无效");
   }
+  if (value.townId !== undefined && !isEstateTownId(value.townId)) {
+    throw new Error("实时农场城镇无效");
+  }
+  const townId = isEstateTownId(value.townId) ? value.townId : "greenvale";
   if (
     typeof value.seed !== "string" ||
     value.seed.length < 1 ||
@@ -1480,11 +1562,11 @@ export function assertRestorableFarmingGameState(
     !Number.isSafeInteger(value.dogLevel) ||
     Number(value.dogLevel) < 0 ||
     Number(value.dogLevel) > FARMING_DOG_UPGRADES.length ||
-    !validCounts(value.seeds) ||
-    !validCounts(value.produce) ||
-    !validCounts(value.mutations) ||
+    !validCounts(value.seeds, townId) ||
+    !validCounts(value.produce, townId) ||
+    !validCounts(value.mutations, townId) ||
     !Array.isArray(value.discoveredCrops) ||
-    value.discoveredCrops.some((cropId) => !isCropId(cropId)) ||
+    value.discoveredCrops.some((cropId) => !isCropId(cropId, townId)) ||
     new Set(value.discoveredCrops).size !== value.discoveredCrops.length
   ) {
     throw new Error("实时农场主状态无效");
@@ -1500,7 +1582,7 @@ export function assertRestorableFarmingGameState(
       !isRecord(plot) ||
       plot.index !== index ||
       !isNonNegativeInteger(plot.cycle) ||
-      (plot.cropId !== null && !isCropId(plot.cropId)) ||
+      (plot.cropId !== null && !isCropId(plot.cropId, townId)) ||
       typeof plot.watered !== "boolean" ||
       typeof plot.weedCleared !== "boolean" ||
       typeof plot.pestCleared !== "boolean" ||
@@ -1569,13 +1651,13 @@ export function assertRestorableFarmingGameState(
   if (
     typeof value.marketDay !== "string" ||
     !isRecord(value.market) ||
-    Object.keys(value.market).length !== FARMING_CROP_IDS.length
+    Object.keys(value.market).length !== farmingCropIds(townId).length
   ) {
     throw new Error("实时农场市场状态无效");
   }
-  for (const cropId of FARMING_CROP_IDS) {
+  for (const cropId of farmingCropIds(townId)) {
     const quote = value.market[cropId];
-    const crop = FARMING_CROPS[cropId];
+    const crop = ALL_FARMING_CROPS[cropId];
     if (
       !isRecord(quote) ||
       quote.cropId !== cropId ||

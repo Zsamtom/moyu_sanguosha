@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { FarmCropDefinition, FarmPlot, FarmSnapshot } from '../types';
 import {
+  farmPlotCardAction,
   farmPlotRuntime,
   farmPlotToolAction,
   optimisticFarmAction,
@@ -136,6 +138,31 @@ describe('FarmScreen plot toolbar', () => {
       { type: 'plant', cropId: 'wheat' },
       { ...emptyPlot, unlocked: false },
     )).toBeNull();
+  });
+
+  it('never executes a destructive shovel action from the whole plot card', () => {
+    const clearAction = farmPlotToolAction(
+      { type: 'shovel' },
+      { ...emptyPlot, cropId: 'wheat' },
+    );
+    const plantAction = farmPlotToolAction(
+      { type: 'plant', cropId: 'wheat' },
+      emptyPlot,
+    );
+
+    expect(farmPlotCardAction(clearAction, true)).toBeNull();
+    expect(farmPlotCardAction(plantAction, true)).toEqual(plantAction);
+    expect(farmPlotCardAction(plantAction, false)).toBeNull();
+  });
+
+  it('requires an explicit confirmation before clearing a planted plot', () => {
+    const source = readFileSync(
+      new URL('./FarmScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('<Popconfirm');
+    expect(source).toContain('确认铲除');
+    expect(source).toContain('作物、种子与本轮投入都不会返还');
   });
 
   it('shows a planted crop and reduced seed inventory before the server responds', () => {

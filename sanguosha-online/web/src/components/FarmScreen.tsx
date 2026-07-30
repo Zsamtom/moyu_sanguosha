@@ -1,6 +1,7 @@
 import {
   Button,
   InputNumber,
+  Popconfirm,
   Progress,
   Spin,
   Tag,
@@ -8,6 +9,10 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
+import {
+  isLatestRequest,
+  isRevisionVectorAtLeast,
+} from '../snapshotGuards';
 import type {
   FarmClientAction,
   FarmCropDefinition,
@@ -73,6 +78,13 @@ export function farmPlotToolAction(
         plotIndex: plot.index,
       }
     : null;
+}
+
+export function farmPlotCardAction(
+  action: FarmClientAction | null,
+  enabled: boolean,
+): FarmClientAction | null {
+  return enabled && action?.type === 'farming_plant' ? action : null;
 }
 
 export function optimisticFarmAction(
@@ -292,6 +304,10 @@ export function FarmScreen() {
   const [now, setNow] = useState(Date.now());
   const clockOffset = useRef(0);
   const actionInFlight = useRef(false);
+  const snapshotRef = useRef<FarmSnapshot>();
+  const neighborFarmRef = useRef<FarmGameView>();
+  const loadRequestSequence = useRef(0);
+  const neighborRequestSequence = useRef(0);
   const [selectedCrop, setSelectedCrop] = useState<FarmCropId>('wheat');
   const [toolMode, setToolMode] = useState<'plant' | 'shovel'>('plant');
   const [marketOpen, setMarketOpen] = useState(false);
@@ -299,21 +315,82 @@ export function FarmScreen() {
     Object.fromEntries(CROP_IDS.map((cropId) => [cropId, 1])) as Record<FarmCropId, number>,
   );
 
-  const load = async (quiet = false) => {
+  const commitSnapshot = (
+    next: FarmSnapshot,
+    force = false,
+  ): boolean => {
+    const current = snapshotRef.current;
+    if (
+      !force &&
+      !isRevisionVectorAtLeast(
+        [next.farm.revision],
+        current ? [current.farm.revision] : undefined,
+      )
+    ) {
+      return false;
+    }
+    snapshotRef.current = next;
+    setSnapshot(next);
+    clockOffset.current = next.farm.serverTime - Date.now();
+    setNow(next.farm.serverTime);
+    return true;
+  };
+
+  const commitNeighborFarm = (
+    next: FarmGameView | undefined,
+    requestId?: number,
+  ): boolean => {
+    if (
+      requestId !== undefined &&
+      !isLatestRequest(requestId, neighborRequestSequence.current)
+    ) {
+      return false;
+    }
+    const current = neighborFarmRef.current;
+    if (
+      next &&
+      current?.ownerId === next.ownerId &&
+      next.revision < current.revision
+    ) {
+      return false;
+    }
+    neighborFarmRef.current = next;
+    setNeighborFarm(next);
+    return true;
+  };
+
+  const clearNeighborFarm = () => {
+    neighborRequestSequence.current += 1;
+    commitNeighborFarm(undefined);
+  };
+
+  const load = async (quiet = false, allowDuringAction = false) => {
+    if (quiet && actionInFlight.current && !allowDuringAction) return;
+    const requestId = ++loadRequestSequence.current;
     if (!quiet) setLoading(true);
     try {
       const next = await api.getFarm();
-      setSnapshot(next);
-      clockOffset.current = next.farm.serverTime - Date.now();
-      setNow(next.farm.serverTime);
-      if (neighborFarm) {
+      if (
+        !isLatestRequest(requestId, loadRequestSequence.current) ||
+        (actionInFlight.current && !allowDuringAction) ||
+        !commitSnapshot(next)
+      ) {
+        return;
+      }
+      if (neighborFarmRef.current) {
         const summary = next.neighbors.find(
-          (candidate) => candidate.ownerId === neighborFarm.ownerId,
+          (candidate) => candidate.ownerId === neighborFarmRef.current?.ownerId,
         );
-        if (!summary) setNeighborFarm(undefined);
+        if (!summary) clearNeighborFarm();
       }
     } catch (error) {
-      if (!quiet) toast.error(errorMessage(error));
+      if (
+        !quiet &&
+        isLatestRequest(requestId, loadRequestSequence.current) &&
+        (allowDuringAction || !actionInFlight.current)
+      ) {
+        toast.error(errorMessage(error));
+      }
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -336,30 +413,32 @@ export function FarmScreen() {
     if (!neighborFarm) return;
     const ownerId = neighborFarm.ownerId;
     const refresh = window.setInterval(() => {
+      if (actionInFlight.current) return;
+      const requestId = ++neighborRequestSequence.current;
       void api.getFarmNeighbor(ownerId)
-        .then((farm) => setNeighborFarm(farm))
+        .then((farm) => commitNeighborFarm(farm, requestId))
         .catch(() => undefined);
     }, 30_000);
     return () => window.clearInterval(refresh);
   }, [neighborFarm?.ownerId]);
 
   const runAction = async (action: FarmClientAction) => {
-    if (!snapshot || actionInFlight.current) return;
-    const previous = snapshot;
+    const previous = snapshotRef.current;
+    if (!previous || actionInFlight.current) return;
     const expectedRevision = previous.farm.revision;
     actionInFlight.current = true;
+    loadRequestSequence.current += 1;
     setBusy(true);
     setPendingAction(action);
-    setSnapshot(optimisticFarmAction(previous, action, now));
+    commitSnapshot(optimisticFarmAction(previous, action, now));
+    let refreshAfterAction = false;
     try {
       const next = await api.applyFarmAction(expectedRevision, action);
-      setSnapshot((current) => ({
+      commitSnapshot({
         farm: next.farm,
-        neighbors: current?.neighbors ?? previous.neighbors,
+        neighbors: snapshotRef.current?.neighbors ?? previous.neighbors,
         marketDirectorAvailable: next.marketDirectorAvailable,
-      }));
-      clockOffset.current = next.farm.serverTime - Date.now();
-      setNow(next.farm.serverTime);
+      });
       if (action.type === 'farming_plant') {
         toast.success(
           `已在 ${action.plotIndex + 1} 号田播种${next.farm.crops[action.cropId].name}`,
@@ -373,12 +452,20 @@ export function FarmScreen() {
       }
     } catch (error) {
       if (error instanceof ApiError && error.code === 'FARM_REVISION_CONFLICT') {
-        await load();
+        refreshAfterAction = true;
       } else {
-        setSnapshot(previous);
+        commitSnapshot(previous, true);
       }
       toast.error(errorMessage(error));
     } finally {
+      if (!refreshAfterAction) {
+        actionInFlight.current = false;
+        setBusy(false);
+        setPendingAction(undefined);
+      }
+    }
+    if (refreshAfterAction) {
+      await load(true, true);
       actionInFlight.current = false;
       setBusy(false);
       setPendingAction(undefined);
@@ -386,38 +473,47 @@ export function FarmScreen() {
   };
 
   const openNeighbor = async (ownerId: string) => {
-    if (busy) return;
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    loadRequestSequence.current += 1;
+    const requestId = ++neighborRequestSequence.current;
     setBusy(true);
     try {
       const next = await api.getFarmNeighbor(ownerId);
-      setNeighborFarm(next);
-      clockOffset.current = next.serverTime - Date.now();
-      setNow(next.serverTime);
+      if (commitNeighborFarm(next, requestId)) {
+        clockOffset.current = next.serverTime - Date.now();
+        setNow(next.serverTime);
+      }
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   };
 
   const runVisitAction = async (action: FarmVisitClientAction) => {
-    if (!snapshot || !neighborFarm || busy) return;
+    const current = snapshotRef.current;
+    const currentNeighbor = neighborFarmRef.current;
+    if (!current || !currentNeighbor || actionInFlight.current) return;
+    actionInFlight.current = true;
+    loadRequestSequence.current += 1;
+    neighborRequestSequence.current += 1;
     setBusy(true);
+    let refreshAfterAction = false;
     try {
       const next = await api.applyFarmVisitAction(
-        neighborFarm.ownerId,
-        snapshot.farm.revision,
-        neighborFarm.revision,
+        currentNeighbor.ownerId,
+        current.farm.revision,
+        currentNeighbor.revision,
         action,
       );
-      setSnapshot({
+      commitSnapshot({
         farm: next.farm,
         neighbors: next.neighbors,
         marketDirectorAvailable: next.marketDirectorAvailable,
       });
-      setNeighborFarm(next.neighbor);
-      clockOffset.current = next.farm.serverTime - Date.now();
-      setNow(next.farm.serverTime);
+      commitNeighborFarm(next.neighbor);
       toast.success(
         next.outcome === 'helped'
           ? '已帮助农友照料作物'
@@ -432,17 +528,27 @@ export function FarmScreen() {
           error.code ?? '',
         )
       ) {
-        await load();
-        if (neighborFarm) {
-          try {
-            setNeighborFarm(await api.getFarmNeighbor(neighborFarm.ownerId));
-          } catch {
-            setNeighborFarm(undefined);
-          }
-        }
+        refreshAfterAction = true;
       }
       toast.error(errorMessage(error));
     } finally {
+      if (!refreshAfterAction) {
+        actionInFlight.current = false;
+        setBusy(false);
+      }
+    }
+    if (refreshAfterAction) {
+      await load(true, true);
+      const requestId = ++neighborRequestSequence.current;
+      try {
+        commitNeighborFarm(
+          await api.getFarmNeighbor(currentNeighbor.ownerId),
+          requestId,
+        );
+      } catch {
+        clearNeighborFarm();
+      }
+      actionInFlight.current = false;
       setBusy(false);
     }
   };
@@ -513,10 +619,17 @@ export function FarmScreen() {
         </span>
         <span>修订：{String(displayGame.revision).padStart(5, '0')}</span>
         {!isOwnerView && (
-          <Button size="small" onClick={() => setNeighborFarm(undefined)}>
+          <Button
+            size="small"
+            disabled={busy}
+            onClick={clearNeighborFarm}
+          >
             返回我的农场
           </Button>
         )}
+        <span role="status" aria-live="polite">
+          {busy ? '正在保存操作，其他经营按钮暂不可用' : '操作就绪'}
+        </span>
       </section>
 
       <section className="farm-metrics" aria-label="经营指标">
@@ -566,6 +679,7 @@ export function FarmScreen() {
                 <Button
                   key={cropId}
                   aria-pressed={toolMode === 'plant' && selectedCrop === cropId}
+                  disabled={busy}
                   size="small"
                   type={toolMode === 'plant' && selectedCrop === cropId ? 'primary' : 'default'}
                   onClick={() => {
@@ -584,6 +698,7 @@ export function FarmScreen() {
               <Button
                 danger
                 aria-pressed={toolMode === 'shovel'}
+                disabled={busy}
                 size="small"
                 type={toolMode === 'shovel' ? 'primary' : 'default'}
                 onClick={() => setToolMode('shovel')}
@@ -592,7 +707,7 @@ export function FarmScreen() {
               </Button>
               <span className="farm-tool-strip__hint">
                 {toolMode === 'shovel'
-                  ? '点击有作物的田块铲除'
+                  ? '点击田块内的铲除按钮并确认'
                   : `点击空田播种${ownGame.crops[selectedCrop].name}`}
               </span>
             </div>
@@ -612,11 +727,12 @@ export function FarmScreen() {
                 : null;
               const plotToolReady =
                 !busy &&
-                plotToolAction !== null &&
-                (
-                  plotToolAction.type !== 'farming_plant' ||
-                  inventory.seeds[plotToolAction.cropId] > 0
-                );
+                plotToolAction?.type === 'farming_plant' &&
+                inventory.seeds[plotToolAction.cropId] > 0;
+              const plotCardAction = farmPlotCardAction(
+                plotToolAction,
+                plotToolReady,
+              );
               const plotPending =
                 pendingAction !== undefined &&
                 'plotIndex' in pendingAction &&
@@ -638,17 +754,16 @@ export function FarmScreen() {
               return (
                 <article
                   className={`farm-plot${runtime.ready ? ' farm-plot--ready' : ''}${
-                    plotToolReady ? ' farm-plot--tool-ready' : ''
+                    plotCardAction ? ' farm-plot--tool-ready' : ''
                   }${plotPending ? ' farm-plot--pending' : ''
                   }`}
                   key={plot.index}
                   onClick={(event) => {
                     if (
-                      !plotToolReady ||
-                      !plotToolAction ||
+                      !plotCardAction ||
                       (event.target as HTMLElement).closest('button')
                     ) return;
-                    void runAction(plotToolAction);
+                    void runAction(plotCardAction);
                   }}
                 >
                   <header>
@@ -713,18 +828,26 @@ export function FarmScreen() {
                           <small className="farm-plot__tool-hint farm-plot__tool-hint--danger">
                             铲除后不会返还种子或获得收成
                           </small>
-                          <Button
-                            block
-                            danger
-                            size="small"
+                          <Popconfirm
+                            title={`确认铲除${crop.name}？`}
+                            description="作物、种子与本轮投入都不会返还。"
+                            okText="确认铲除"
+                            cancelText="取消"
                             disabled={busy}
-                            onClick={() => void runAction({
+                            onConfirm={() => void runAction({
                               type: 'farming_clear_plot',
                               plotIndex: plot.index,
                             })}
                           >
-                            铲除{crop.name}
-                          </Button>
+                            <Button
+                              block
+                              danger
+                              size="small"
+                              disabled={busy}
+                            >
+                              铲除{crop.name}
+                            </Button>
+                          </Popconfirm>
                         </>
                       )}
                       {crop && runtime.ready && (
@@ -934,6 +1057,15 @@ export function FarmScreen() {
                                 !unlocked ||
                                 inventory.coins < crop.seedCost * quantity
                               }
+                              title={
+                                busy
+                                  ? '正在保存另一项操作'
+                                  : !unlocked
+                                    ? `农场达到 LV ${crop.unlockLevel} 后开放`
+                                    : inventory.coins < crop.seedCost * quantity
+                                      ? `金币不足，需要 ${crop.seedCost * quantity}`
+                                      : undefined
+                              }
                               onClick={() => void runAction({
                                 type: 'farming_buy_seed',
                                 cropId,
@@ -946,6 +1078,13 @@ export function FarmScreen() {
                               size="small"
                               type="primary"
                               disabled={busy || inventory.produce[cropId] < quantity}
+                              title={
+                                busy
+                                  ? '正在保存另一项操作'
+                                  : inventory.produce[cropId] < quantity
+                                    ? `库存不足，当前有 ${inventory.produce[cropId]}`
+                                    : undefined
+                              }
                               onClick={() => void runAction({
                                 type: 'farming_sell',
                                 cropId,
@@ -1078,6 +1217,7 @@ export function FarmScreen() {
                     ? 'farm-neighbor farm-neighbor--active'
                     : 'farm-neighbor'
                 }
+                disabled={busy}
                 onClick={() => void openNeighbor(neighbor.ownerId)}
               >
                 <span>

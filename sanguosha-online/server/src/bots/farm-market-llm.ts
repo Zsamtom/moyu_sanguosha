@@ -1,6 +1,5 @@
 import {
-  FARMING_CROP_IDS,
-  FARMING_CROPS,
+  getFarmingCropDefinition,
   type FarmingCropId,
   type FarmingGameState,
   type FarmingMarketDecision,
@@ -18,11 +17,11 @@ export interface FarmMarketCompactState {
   readonly day: string;
   readonly level: number;
   readonly coins: number;
-  readonly seeds: Record<FarmingCropId, number>;
-  readonly produce: Record<FarmingCropId, number>;
-  readonly planted: Record<FarmingCropId, number>;
-  readonly prices: Record<FarmingCropId, number>;
-  readonly trends: Record<FarmingCropId, -1 | 0 | 1>;
+  readonly seeds: Partial<Record<FarmingCropId, number>>;
+  readonly produce: Partial<Record<FarmingCropId, number>>;
+  readonly planted: Partial<Record<FarmingCropId, number>>;
+  readonly prices: Partial<Record<FarmingCropId, number>>;
+  readonly trends: Partial<Record<FarmingCropId, -1 | 0 | 1>>;
   readonly recentOperations: readonly string[];
 }
 
@@ -32,7 +31,7 @@ export interface FarmMarketDecisionRequest {
 }
 
 function clampPrice(cropId: FarmingCropId, value: number): number {
-  const crop = FARMING_CROPS[cropId];
+  const crop = getFarmingCropDefinition(cropId);
   return Math.max(crop.minimumPrice, Math.min(crop.maximumPrice, Math.round(value)));
 }
 
@@ -40,7 +39,8 @@ function priceMap(
   state: FarmingGameState,
   changes: Partial<Record<FarmingCropId, number>> = {},
 ): Record<FarmingCropId, number> {
-  return Object.fromEntries(FARMING_CROP_IDS.map((cropId) => [
+  const cropIds = Object.keys(state.market) as FarmingCropId[];
+  return Object.fromEntries(cropIds.map((cropId) => [
     cropId,
     clampPrice(cropId, changes[cropId] ?? state.market[cropId].price),
   ])) as Record<FarmingCropId, number>;
@@ -70,40 +70,27 @@ export function createFarmMarketDecision(
   );
   const candidates: FarmingMarketDecision[] = [
     baseline,
-    scenario(game, "主粮集中采购", "粮站扩大收储，小麦与玉米报价进入高位区间。", "surge", {
-      wheat: FARMING_CROPS.wheat.maximumPrice,
-      corn: FARMING_CROPS.corn.maximumPrice,
-    }),
-    scenario(game, "鲜食订单增长", "餐饮渠道补充鲜食库存，胡萝卜、番茄与草莓需求增长。", "surge", {
-      carrot: FARMING_CROPS.carrot.maximumPrice,
-      tomato: FARMING_CROPS.tomato.maximumPrice,
-      strawberry: FARMING_CROPS.strawberry.maximumPrice,
-    }),
-    scenario(game, "节庆备货", "节庆采购提前启动，南瓜、西瓜与葡萄订单进入高位。", "surge", {
-      pumpkin: FARMING_CROPS.pumpkin.maximumPrice,
-      watermelon: FARMING_CROPS.watermelon.maximumPrice,
-      grape: FARMING_CROPS.grape.maximumPrice,
-    }),
-    scenario(game, "纺织订单增长", "纺织工坊扩大采购，棉花报价明显上扬。", "surge", {
-      cotton: FARMING_CROPS.cotton.maximumPrice,
-    }),
-    scenario(game, "主粮集中到货", "周边农场集中出货，小麦与玉米价格承压。", "crash", {
-      wheat: FARMING_CROPS.wheat.minimumPrice,
-      corn: FARMING_CROPS.corn.minimumPrice,
-    }),
-    scenario(game, "生鲜供应过剩", "生鲜作物集中成熟，番茄、草莓和蓝莓价格回落。", "crash", {
-      tomato: FARMING_CROPS.tomato.minimumPrice,
-      strawberry: FARMING_CROPS.strawberry.minimumPrice,
-      blueberry: FARMING_CROPS.blueberry.minimumPrice,
-    }),
-    scenario(game, "运输节点波动", "运输节点临时调整，主粮上涨而鲜食作物回落。", "volatile", {
-      wheat: FARMING_CROPS.wheat.maximumPrice,
-      corn: FARMING_CROPS.corn.maximumPrice,
-      tomato: FARMING_CROPS.tomato.minimumPrice,
-      strawberry: FARMING_CROPS.strawberry.minimumPrice,
-    }),
+    scenario(
+      game,
+      "合作社采购观察",
+      "合作社正在观察本镇库存结构；本轮价格仍完全沿用规则引擎报价。",
+      "surge",
+    ),
+    scenario(
+      game,
+      "鲜食渠道简报",
+      "餐饮渠道发布了需求简报；LLM只解释机会，不改动任何作物价格。",
+      "neutral",
+    ),
+    scenario(
+      game,
+      "跨镇物流提示",
+      "交通与天气可能改变经营重点，但本轮结算价格已经由规则系统冻结。",
+      "volatile",
+    ),
   ];
-  const planted = Object.fromEntries(FARMING_CROP_IDS.map((cropId) => [
+  const cropIds = Object.keys(game.market) as FarmingCropId[];
+  const planted = Object.fromEntries(cropIds.map((cropId) => [
     cropId,
     game.plots.filter((plot) => plot.cropId === cropId).length,
   ])) as Record<FarmingCropId, number>;
@@ -115,7 +102,7 @@ export function createFarmMarketDecision(
     produce: { ...game.produce },
     planted,
     prices: priceMap(game),
-    trends: Object.fromEntries(FARMING_CROP_IDS.map((cropId) => [
+    trends: Object.fromEntries(cropIds.map((cropId) => [
       cropId,
       game.market[cropId].trend,
     ])) as Record<FarmingCropId, -1 | 0 | 1>,
@@ -138,7 +125,7 @@ export function createFarmMarketDecision(
 type FetchLike = typeof fetch;
 
 const SYSTEM_PROMPT =
-  "你是长期社交农场的每日市场导演。根据农场等级、资产、库存、田地、当前报价和最近操作，在给定的合法行情方案中选择最能形成风险与机会平衡的一项。不要编造价格，不要输出解释。只返回 JSON，格式严格为 {\"i\":0}。";
+  "你是长期社交农场的每日市场解说员。价格已经由规则系统冻结，所有候选方案的数值完全相同；你只能选择最贴合当前库存与天气的展示文案。不得编造或修改价格。不要输出解释，只返回 JSON，格式严格为 {\"i\":0}。";
 
 function compactPrompt(
   input: BotDecisionInput<FarmMarketCompactState, FarmingMarketDecision>,

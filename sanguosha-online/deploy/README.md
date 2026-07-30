@@ -152,6 +152,33 @@ curl -fsS https://moyu.pdcat.cn/version
 
 Compose 会替换应用容器，不会删除 `sanguosha_db` volume。
 
+### Windows 本地一键部署
+
+项目已提供 PowerShell 发布脚本。默认部署到 `ubuntu@49.51.188.128`，使用
+`%USERPROFILE%\Downloads\tets.pem`，并验证 `https://moyu.pdcat.cn`：
+
+```powershell
+pnpm deploy:prod
+```
+
+第一次使用或只想检查 SSH、Docker、应用和数据库连通性时执行：
+
+```powershell
+pnpm deploy:prod:check
+```
+
+如密钥位于其他目录，可以直接调用脚本并覆盖参数：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy-production.ps1 `
+  -KeyPath "D:\keys\moyu.pem"
+```
+
+脚本会自动读取线上版本号、生成当天的下一个生产版本、执行本地构建、排除
+`.env` 和依赖目录、备份线上源码和 PostgreSQL、在独立目录构建镜像、切换
+服务并验证 HTTPS。新版本内部健康检查失败时会自动恢复上一个版本；发布备份
+和回滚目录会保留在服务器，临时密钥副本与压缩包会自动清理。
+
 ## 8. 回滚与恢复
 
 应用回滚：重新同步上一个 Git 提交对应的 `sanguosha-online/`，恢复相应 `APP_VERSION` 和 `BUILD_SHA`，再执行：

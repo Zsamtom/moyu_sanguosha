@@ -3,6 +3,17 @@ import type {
   RanchProductCounts,
   RanchProductId,
 } from "./ranch.js";
+import {
+  FROSTPEAK_DEPOSIT_IDS,
+  FROSTPEAK_MINE_DEPOSITS,
+} from "./towns/frostpeak.js";
+import { GREENVALE_DEPOSIT_IDS } from "./towns/greenvale.js";
+import {
+  getTownDefinition,
+  isEstateTownId,
+  type EstateTownId,
+  type TownDefinition,
+} from "./towns/registry.js";
 
 export const MINE_STATE_VERSION = 1 as const;
 export const MINE_REQUIRED_FARM_LEVEL = 1;
@@ -11,15 +22,13 @@ export const MINE_STARTING_SHAFTS = 2;
 export const MINE_MAX_SHAFTS = 6;
 export const MINE_MAX_LOGS = 80;
 
-export const MINE_DEPOSIT_IDS = [
-  "coal",
-  "iron",
-  "copper",
-  "silver",
-  "gold",
-  "crystal",
+/** @deprecated Greenvale-only compatibility catalog. Prefer a state's town catalog. */
+export const MINE_DEPOSIT_IDS = GREENVALE_DEPOSIT_IDS;
+export const ALL_MINE_DEPOSIT_IDS = [
+  ...GREENVALE_DEPOSIT_IDS,
+  ...FROSTPEAK_DEPOSIT_IDS,
 ] as const;
-export type MineDepositId = (typeof MINE_DEPOSIT_IDS)[number];
+export type MineDepositId = (typeof ALL_MINE_DEPOSIT_IDS)[number];
 export type MineOreCounts = Record<MineDepositId, number>;
 
 export interface MineDepositDefinition {
@@ -42,7 +51,10 @@ export interface MineDepositDefinition {
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
 
-export const MINE_DEPOSITS: Readonly<Record<MineDepositId, MineDepositDefinition>> = {
+export const MINE_DEPOSITS: Readonly<Record<
+  (typeof GREENVALE_DEPOSIT_IDS)[number],
+  MineDepositDefinition
+>> = {
   coal: {
     id: "coal",
     name: "煤层",
@@ -141,6 +153,32 @@ export const MINE_DEPOSITS: Readonly<Record<MineDepositId, MineDepositDefinition
   },
 };
 
+const ALL_MINE_DEPOSITS: Readonly<
+  Record<MineDepositId, MineDepositDefinition>
+> = {
+  ...MINE_DEPOSITS,
+  ...FROSTPEAK_MINE_DEPOSITS,
+} as Readonly<Record<MineDepositId, MineDepositDefinition>>;
+
+function mineDepositIds(townId: EstateTownId): readonly MineDepositId[] {
+  return getTownDefinition(townId).content.depositIds as readonly MineDepositId[];
+}
+
+function mineDeposits(
+  townId: EstateTownId,
+): Readonly<Record<MineDepositId, MineDepositDefinition>> {
+  return Object.fromEntries(
+    mineDepositIds(townId).map((depositId) => [
+      depositId,
+      ALL_MINE_DEPOSITS[depositId],
+    ]),
+  ) as Readonly<Record<MineDepositId, MineDepositDefinition>>;
+}
+
+function mineTownId(state: { readonly townId?: unknown }): EstateTownId {
+  return isEstateTownId(state.townId) ? state.townId : "greenvale";
+}
+
 export const MINE_LEVEL_EXPERIENCE = [
   0,
   55,
@@ -224,6 +262,7 @@ export interface MineLogEntry {
 export interface MineGameState {
   readonly kind: "mine";
   readonly version: typeof MINE_STATE_VERSION;
+  townId: EstateTownId;
   readonly seed: string;
   revision: number;
   readonly ownerId: string;
@@ -299,6 +338,8 @@ export interface MineShaftView extends MineShaftState {
 export interface MineGameView {
   readonly kind: "mine";
   readonly version: typeof MINE_STATE_VERSION;
+  readonly townId: EstateTownId;
+  readonly townDefinition: TownDefinition;
   readonly revision: number;
   readonly serverTime: number;
   readonly ownerId: string;
@@ -361,9 +402,12 @@ export class MineRuleError extends Error {
   }
 }
 
-function oreCounts(initial = 0): MineOreCounts {
+function oreCounts(
+  initial = 0,
+  townId: EstateTownId = "greenvale",
+): MineOreCounts {
   return Object.fromEntries(
-    MINE_DEPOSIT_IDS.map((depositId) => [depositId, initial]),
+    mineDepositIds(townId).map((depositId) => [depositId, initial]),
   ) as MineOreCounts;
 }
 
@@ -402,9 +446,12 @@ function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
-function isDepositId(value: unknown): value is MineDepositId {
+function isDepositId(
+  value: unknown,
+  townId: EstateTownId = "greenvale",
+): value is MineDepositId {
   return typeof value === "string" &&
-    (MINE_DEPOSIT_IDS as readonly string[]).includes(value);
+    (mineDepositIds(townId) as readonly string[]).includes(value);
 }
 
 function assertTime(now: number): void {
@@ -498,7 +545,7 @@ function shaftYield(
   now: number,
 ): number {
   if (!shaft.depositId) return 0;
-  const deposit = MINE_DEPOSITS[shaft.depositId];
+  const deposit = ALL_MINE_DEPOSITS[shaft.depositId];
   const base = Math.max(
     1,
     deposit.yield +
@@ -531,6 +578,7 @@ export function createMineGame(input: {
   readonly ownerName: string;
   readonly seed: string;
   readonly now: number;
+  readonly townId?: EstateTownId;
 }): MineGameState {
   assertTime(input.now);
   if (
@@ -543,9 +591,11 @@ export function createMineGame(input: {
   if (input.seed.length < 1 || input.seed.length > 128) {
     throw new Error("矿山随机种子无效");
   }
+  const townId = input.townId ?? "greenvale";
   return {
     kind: "mine",
     version: MINE_STATE_VERSION,
+    townId,
     seed: input.seed,
     revision: 0,
     ownerId: input.ownerId,
@@ -556,7 +606,7 @@ export function createMineGame(input: {
     level: 1,
     unlockedShafts: MINE_STARTING_SHAFTS,
     pickaxeLevel: 0,
-    ores: oreCounts(),
+    ores: oreCounts(0, townId),
     relics: 0,
     shafts: Array.from(
       { length: MINE_MAX_SHAFTS },
@@ -585,21 +635,23 @@ export function applyMineAction(
 ): MineActionResult {
   assertTime(now);
   const mine = structuredClone(state);
+  if (!isEstateTownId(mine.townId)) mine.townId = "greenvale";
   const economy = structuredClone(economyState);
   const effectiveNow = Math.max(now, mine.updatedAt);
+  const deposits = mineDeposits(mine.townId);
   requireUnlocked(economy);
   let farmChanged = false;
   let ranchChanged = false;
 
   if (action.type === "mine_start") {
-    if (!isDepositId(action.depositId)) {
+    if (!isDepositId(action.depositId, mine.townId)) {
       throw new MineRuleError("MINE_UNKNOWN_DEPOSIT", "矿脉不存在");
     }
     const shaft = requireShaft(mine, action.shaftIndex);
     if (shaft.depositId !== null) {
       throw new MineRuleError("MINE_SHAFT_BUSY", "这条矿井已有采掘队");
     }
-    const deposit = MINE_DEPOSITS[action.depositId];
+    const deposit = deposits[action.depositId];
     if (
       economy.farmLevel < deposit.requiredFarmLevel ||
       economy.ranchLevel < deposit.requiredRanchLevel ||
@@ -657,7 +709,7 @@ export function applyMineAction(
     if (!shaft.depositId) {
       throw new MineRuleError("MINE_SHAFT_IDLE", "矿井当前没有采掘任务");
     }
-    const deposit = MINE_DEPOSITS[shaft.depositId];
+    const deposit = deposits[shaft.depositId];
     Object.assign(shaft, emptyShaft(shaft.index, shaft.cycle));
     addLog(
       mine,
@@ -673,7 +725,7 @@ export function applyMineAction(
     if (!hasHazard(shaft, effectiveNow)) {
       throw new MineRuleError("MINE_CARE_NOT_NEEDED", "当前没有需要加固的风险点");
     }
-    const deposit = MINE_DEPOSITS[shaft.depositId];
+    const deposit = deposits[shaft.depositId];
     if (
       economy.ranchProducts[deposit.supportProductId] <
       deposit.supportAmount
@@ -702,7 +754,7 @@ export function applyMineAction(
     if (effectiveNow < shaft.completesAt) {
       throw new MineRuleError("MINE_NOT_READY", "采掘任务尚未完成");
     }
-    const deposit = MINE_DEPOSITS[shaft.depositId];
+    const deposit = deposits[shaft.depositId];
     const amount = shaftYield(mine, shaft, effectiveNow);
     mine.ores[deposit.id] += amount;
     mine.statistics.expeditionsCompleted += 1;
@@ -730,7 +782,7 @@ export function applyMineAction(
     );
     Object.assign(shaft, emptyShaft(shaft.index, shaft.cycle));
   } else if (action.type === "mine_sell") {
-    if (!isDepositId(action.depositId)) {
+    if (!isDepositId(action.depositId, mine.townId)) {
       throw new MineRuleError("MINE_UNKNOWN_DEPOSIT", "矿石不存在");
     }
     if (!validQuantity(action.quantity)) {
@@ -739,7 +791,7 @@ export function applyMineAction(
     if (mine.ores[action.depositId] < action.quantity) {
       throw new MineRuleError("MINE_NOT_ENOUGH_ORE", "矿石仓库库存不足");
     }
-    const deposit = MINE_DEPOSITS[action.depositId];
+    const deposit = deposits[action.depositId];
     const revenue = deposit.orePrice * action.quantity;
     mine.ores[action.depositId] -= action.quantity;
     economy.coins += revenue;
@@ -852,11 +904,14 @@ export function getMineGameView(
 ): MineGameView {
   assertTime(now);
   const effectiveNow = Math.max(now, state.updatedAt);
+  const townId = mineTownId(state);
   const currentThreshold = MINE_LEVEL_EXPERIENCE[state.level - 1] ?? 0;
   const nextThreshold = MINE_LEVEL_EXPERIENCE[state.level] ?? null;
   return {
     kind: "mine",
     version: MINE_STATE_VERSION,
+    townId,
+    townDefinition: structuredClone(getTownDefinition(townId)),
     revision: state.revision,
     serverTime: effectiveNow,
     ownerId: state.ownerId,
@@ -876,7 +931,7 @@ export function getMineGameView(
     unlockedShafts: state.unlockedShafts,
     pickaxeLevel: state.pickaxeLevel,
     pickaxeYieldBonus: pickaxeYieldBonus(state.pickaxeLevel),
-    deposits: structuredClone(MINE_DEPOSITS),
+    deposits: structuredClone(mineDeposits(townId)),
     economy: {
       coins: economy.coins,
       ranchProducts: structuredClone(economy.ranchProducts),
@@ -895,10 +950,18 @@ export function getMineGameView(
   };
 }
 
-function validOres(value: unknown): value is MineOreCounts {
+function validOres(
+  value: unknown,
+  townId: EstateTownId,
+): value is MineOreCounts {
+  const townDepositIds = mineDepositIds(townId);
+  const allowedIds = new Set(townDepositIds as readonly string[]);
   return isRecord(value) &&
-    Object.keys(value).length === MINE_DEPOSIT_IDS.length &&
-    MINE_DEPOSIT_IDS.every((depositId) => isNonNegativeInteger(value[depositId]));
+    Object.keys(value).length === townDepositIds.length &&
+    Object.keys(value).every((depositId) => allowedIds.has(depositId)) &&
+    townDepositIds.every((depositId) =>
+      isNonNegativeInteger(value[depositId])
+    );
 }
 
 export function assertRestorableMineGameState(
@@ -911,6 +974,10 @@ export function assertRestorableMineGameState(
   ) {
     throw new Error("矿山存档版本无效");
   }
+  if (value.townId !== undefined && !isEstateTownId(value.townId)) {
+    throw new Error("矿山城镇无效");
+  }
+  const townId = isEstateTownId(value.townId) ? value.townId : "greenvale";
   if (
     typeof value.seed !== "string" ||
     value.seed.length < 1 ||
@@ -933,7 +1000,7 @@ export function assertRestorableMineGameState(
     !Number.isSafeInteger(value.pickaxeLevel) ||
     Number(value.pickaxeLevel) < 0 ||
     Number(value.pickaxeLevel) > MINE_PICKAXE_UPGRADES.length ||
-    !validOres(value.ores) ||
+    !validOres(value.ores, townId) ||
     !isNonNegativeInteger(value.relics)
   ) {
     throw new Error("矿山主状态无效");
@@ -946,7 +1013,7 @@ export function assertRestorableMineGameState(
       !isRecord(shaft) ||
       shaft.index !== index ||
       !isNonNegativeInteger(shaft.cycle) ||
-      (shaft.depositId !== null && !isDepositId(shaft.depositId)) ||
+      (shaft.depositId !== null && !isDepositId(shaft.depositId, townId)) ||
       typeof shaft.reinforced !== "boolean" ||
       (
         shaft.productionModifierPercent !== undefined &&

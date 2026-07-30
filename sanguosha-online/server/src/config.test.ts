@@ -81,3 +81,34 @@ describe("optional Dou Dizhu LLM bot configuration", () => {
     })).toThrow(/configured together/);
   });
 });
+
+describe("optional town weather configuration", () => {
+  it("keeps QWeather disabled when credentials are absent", () => {
+    expect(loadConfig(requiredEnvironment).townWeather).toBeUndefined();
+  });
+
+  it("loads a dedicated QWeather API host and API key", () => {
+    expect(loadConfig({
+      ...requiredEnvironment,
+      QWEATHER_API_HOST: "https://abcxyz.qweatherapi.com/",
+      QWEATHER_API_KEY: "weather-secret",
+      QWEATHER_TIMEOUT_MS: "2500",
+    }).townWeather).toEqual({
+      apiHost: "https://abcxyz.qweatherapi.com/",
+      apiKey: "weather-secret",
+      timeoutMs: 2_500,
+    });
+  });
+
+  it("rejects partial or unsafe QWeather configuration", () => {
+    expect(() => loadConfig({
+      ...requiredEnvironment,
+      QWEATHER_API_HOST: "https://abcxyz.qweatherapi.com",
+    })).toThrow(/configured together/);
+    expect(() => loadConfig({
+      ...requiredEnvironment,
+      QWEATHER_API_HOST: "https://attacker.example/api",
+      QWEATHER_API_KEY: "weather-secret",
+    })).toThrow(/qweatherapi\.com/);
+  });
+});

@@ -9,6 +9,10 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
+import {
+  isLatestRequest,
+  isRevisionVectorAtLeast,
+} from '../snapshotGuards';
 import type {
   RanchAnimalDefinition,
   RanchAnimalId,
@@ -150,6 +154,10 @@ export function RanchScreen() {
   const [now, setNow] = useState(Date.now());
   const clockOffset = useRef(0);
   const actionInFlight = useRef(false);
+  const snapshotRef = useRef<RanchSnapshot>();
+  const neighborRanchRef = useRef<RanchGameView>();
+  const loadRequestSequence = useRef(0);
+  const neighborRequestSequence = useRef(0);
   const [selectedAnimal, setSelectedAnimal] = useState<RanchAnimalId>('chicken');
   const [movingPenIndex, setMovingPenIndex] = useState<number>();
   const [marketOpen, setMarketOpen] = useState(false);
@@ -157,21 +165,85 @@ export function RanchScreen() {
     Object.fromEntries(PRODUCT_IDS.map((productId) => [productId, 1])) as Record<RanchProductId, number>,
   );
 
-  const load = async (quiet = false) => {
+  const commitSnapshot = (next: RanchSnapshot): boolean => {
+    const current = snapshotRef.current;
+    if (
+      !isRevisionVectorAtLeast(
+        [next.ranch.farmRevision, next.ranch.revision],
+        current
+          ? [current.ranch.farmRevision, current.ranch.revision]
+          : undefined,
+      )
+    ) {
+      return false;
+    }
+    snapshotRef.current = next;
+    setSnapshot(next);
+    clockOffset.current = next.ranch.serverTime - Date.now();
+    setNow(next.ranch.serverTime);
+    return true;
+  };
+
+  const commitNeighborRanch = (
+    next: RanchGameView | undefined,
+    requestId?: number,
+  ): boolean => {
+    if (
+      requestId !== undefined &&
+      !isLatestRequest(requestId, neighborRequestSequence.current)
+    ) {
+      return false;
+    }
+    const current = neighborRanchRef.current;
+    if (
+      next &&
+      current?.ownerId === next.ownerId &&
+      !isRevisionVectorAtLeast(
+        [next.farmRevision, next.revision],
+        [current.farmRevision, current.revision],
+      )
+    ) {
+      return false;
+    }
+    neighborRanchRef.current = next;
+    setNeighborRanch(next);
+    return true;
+  };
+
+  const clearNeighborRanch = () => {
+    neighborRequestSequence.current += 1;
+    commitNeighborRanch(undefined);
+  };
+
+  const load = async (quiet = false, allowDuringAction = false) => {
+    if (quiet && actionInFlight.current && !allowDuringAction) return;
+    const requestId = ++loadRequestSequence.current;
     if (!quiet) setLoading(true);
     try {
       const next = await api.getRanch();
-      setSnapshot(next);
-      clockOffset.current = next.ranch.serverTime - Date.now();
-      setNow(next.ranch.serverTime);
       if (
-        neighborRanch &&
-        !next.neighbors.some((candidate) => candidate.ownerId === neighborRanch.ownerId)
+        !isLatestRequest(requestId, loadRequestSequence.current) ||
+        (actionInFlight.current && !allowDuringAction) ||
+        !commitSnapshot(next)
       ) {
-        setNeighborRanch(undefined);
+        return;
+      }
+      if (
+        neighborRanchRef.current &&
+        !next.neighbors.some(
+          (candidate) => candidate.ownerId === neighborRanchRef.current?.ownerId,
+        )
+      ) {
+        clearNeighborRanch();
       }
     } catch (error) {
-      if (!quiet) toast.error(errorMessage(error));
+      if (
+        !quiet &&
+        isLatestRequest(requestId, loadRequestSequence.current) &&
+        (allowDuringAction || !actionInFlight.current)
+      ) {
+        toast.error(errorMessage(error));
+      }
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -194,33 +266,36 @@ export function RanchScreen() {
     if (!neighborRanch) return;
     const ownerId = neighborRanch.ownerId;
     const refresh = window.setInterval(() => {
+      if (actionInFlight.current) return;
+      const requestId = ++neighborRequestSequence.current;
       void api.getRanchNeighbor(ownerId)
-        .then((ranch) => setNeighborRanch(ranch))
+        .then((ranch) => commitNeighborRanch(ranch, requestId))
         .catch(() => undefined);
     }, 30_000);
     return () => window.clearInterval(refresh);
   }, [neighborRanch?.ownerId]);
 
   const runAction = async (action: RanchClientAction) => {
-    if (!snapshot || actionInFlight.current) return;
+    const current = snapshotRef.current;
+    if (!current || actionInFlight.current) return;
     actionInFlight.current = true;
+    loadRequestSequence.current += 1;
     if (action.type !== 'ranch_move_animal') {
       setMovingPenIndex(undefined);
     }
     setBusy(true);
     setPendingAction(action);
+    let refreshAfterAction = false;
     try {
       const next = await api.applyRanchAction(
-        snapshot.ranch.farmRevision,
-        snapshot.ranch.revision,
+        current.ranch.farmRevision,
+        current.ranch.revision,
         action,
       );
-      setSnapshot((current) => ({
+      commitSnapshot({
         ranch: next.ranch,
-        neighbors: current?.neighbors ?? snapshot.neighbors,
-      }));
-      clockOffset.current = next.ranch.serverTime - Date.now();
-      setNow(next.ranch.serverTime);
+        neighbors: snapshotRef.current?.neighbors ?? current.neighbors,
+      });
       if (action.type === 'ranch_buy_animal') {
         toast.success(
           `已在 ${action.penIndex + 1} 号畜舍购入${next.ranch.animals[action.animalId].name}`,
@@ -240,10 +315,18 @@ export function RanchScreen() {
           error.code ?? '',
         )
       ) {
-        await load();
+        refreshAfterAction = true;
       }
       toast.error(errorMessage(error));
     } finally {
+      if (!refreshAfterAction) {
+        actionInFlight.current = false;
+        setBusy(false);
+        setPendingAction(undefined);
+      }
+    }
+    if (refreshAfterAction) {
+      await load(true, true);
       actionInFlight.current = false;
       setBusy(false);
       setPendingAction(undefined);
@@ -251,34 +334,43 @@ export function RanchScreen() {
   };
 
   const openNeighbor = async (ownerId: string) => {
-    if (busy) return;
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    loadRequestSequence.current += 1;
+    const requestId = ++neighborRequestSequence.current;
     setBusy(true);
     try {
       const next = await api.getRanchNeighbor(ownerId);
-      setNeighborRanch(next);
-      clockOffset.current = next.serverTime - Date.now();
-      setNow(next.serverTime);
+      if (commitNeighborRanch(next, requestId)) {
+        clockOffset.current = next.serverTime - Date.now();
+        setNow(next.serverTime);
+      }
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   };
 
   const runVisitAction = async (action: RanchVisitClientAction) => {
-    if (!snapshot || !neighborRanch || busy) return;
+    const current = snapshotRef.current;
+    const currentNeighbor = neighborRanchRef.current;
+    if (!current || !currentNeighbor || actionInFlight.current) return;
+    actionInFlight.current = true;
+    loadRequestSequence.current += 1;
+    neighborRequestSequence.current += 1;
     setBusy(true);
+    let refreshAfterAction = false;
     try {
       const next = await api.applyRanchVisitAction(
-        neighborRanch.ownerId,
-        snapshot.ranch.revision,
-        neighborRanch.revision,
+        currentNeighbor.ownerId,
+        current.ranch.revision,
+        currentNeighbor.revision,
         action,
       );
-      setSnapshot({ ranch: next.ranch, neighbors: next.neighbors });
-      setNeighborRanch(next.neighbor);
-      clockOffset.current = next.ranch.serverTime - Date.now();
-      setNow(next.ranch.serverTime);
+      commitSnapshot({ ranch: next.ranch, neighbors: next.neighbors });
+      commitNeighborRanch(next.neighbor);
       toast.success(
         next.outcome === 'helped'
           ? '已帮助农友清扫畜舍'
@@ -293,15 +385,27 @@ export function RanchScreen() {
           error.code ?? '',
         )
       ) {
-        await load();
-        try {
-          setNeighborRanch(await api.getRanchNeighbor(neighborRanch.ownerId));
-        } catch {
-          setNeighborRanch(undefined);
-        }
+        refreshAfterAction = true;
       }
       toast.error(errorMessage(error));
     } finally {
+      if (!refreshAfterAction) {
+        actionInFlight.current = false;
+        setBusy(false);
+      }
+    }
+    if (refreshAfterAction) {
+      await load(true, true);
+      const requestId = ++neighborRequestSequence.current;
+      try {
+        commitNeighborRanch(
+          await api.getRanchNeighbor(currentNeighbor.ownerId),
+          requestId,
+        );
+      } catch {
+        clearNeighborRanch();
+      }
+      actionInFlight.current = false;
       setBusy(false);
     }
   };
@@ -379,10 +483,17 @@ export function RanchScreen() {
           R{String(displayGame.revision).padStart(5, '0')}
         </span>
         {!isOwnerView && (
-          <Button size="small" onClick={() => setNeighborRanch(undefined)}>
+          <Button
+            size="small"
+            disabled={busy}
+            onClick={clearNeighborRanch}
+          >
             返回我的牧场
           </Button>
         )}
+        <span role="status" aria-live="polite">
+          {busy ? '正在保存操作，其他经营按钮暂不可用' : '操作就绪'}
+        </span>
       </section>
 
       <section className="farm-metrics" aria-label="牧场经营指标">
@@ -452,6 +563,7 @@ export function RanchScreen() {
                       <Button
                         key={animalId}
                         aria-pressed={selectedAnimal === animalId}
+                        disabled={busy}
                         size="small"
                         type={selectedAnimal === animalId ? 'primary' : 'default'}
                         onClick={() => {
@@ -470,6 +582,7 @@ export function RanchScreen() {
                     <Button
                       danger
                       size="small"
+                      disabled={busy}
                       onClick={() => setMovingPenIndex(undefined)}
                     >
                       取消移栏
@@ -599,6 +712,14 @@ export function RanchScreen() {
                               size="small"
                               type={canMoveHere ? 'primary' : 'default'}
                               disabled={!canBuyHere && !canMoveHere}
+                              title={
+                                busy
+                                  ? '正在保存另一项操作'
+                                  : !canMoveHere &&
+                                      economy.coins < selectedDefinition.purchaseCost
+                                    ? `金币不足，需要 ${selectedDefinition.purchaseCost}`
+                                    : undefined
+                              }
                               onClick={() => void runAction(canMoveHere
                                 ? {
                                     type: 'ranch_move_animal',
@@ -663,6 +784,7 @@ export function RanchScreen() {
                             >
                               投喂{FEED_NAMES[animal.feedCropId as keyof typeof FEED_NAMES] ?? animal.feedCropId}
                               ×{animal.feedAmount}
+                              （库存 {economy.produce[animal.feedCropId]}）
                             </Button>
                           )}
                           {animal && runtime.hasMess && (
@@ -801,6 +923,13 @@ export function RanchScreen() {
                               <Button
                                 size="small"
                                 disabled={busy || economy.products[animal.productId] < quantity}
+                                title={
+                                  busy
+                                    ? '正在保存另一项操作'
+                                    : economy.products[animal.productId] < quantity
+                                      ? `库存不足，当前有 ${economy.products[animal.productId]}`
+                                      : undefined
+                                }
                                 onClick={() => void runAction({
                                   type: 'ranch_sell',
                                   productId: animal.productId,

@@ -9,6 +9,10 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
+import {
+  isLatestRequest,
+  isRevisionVectorAtLeast,
+} from '../snapshotGuards';
 import type {
   MineClientAction,
   MineDepositDefinition,
@@ -141,21 +145,61 @@ export function MineScreen() {
   const [now, setNow] = useState(Date.now());
   const clockOffset = useRef(0);
   const actionInFlight = useRef(false);
+  const snapshotRef = useRef<MineSnapshot>();
+  const loadRequestSequence = useRef(0);
   const [selectedDeposit, setSelectedDeposit] = useState<MineDepositId>('coal');
   const [marketOpen, setMarketOpen] = useState(false);
   const [quantities, setQuantities] = useState<Record<MineDepositId, number>>(
     Object.fromEntries(DEPOSIT_IDS.map((depositId) => [depositId, 1])) as Record<MineDepositId, number>,
   );
 
-  const load = async (quiet = false) => {
+  const commitSnapshot = (next: MineSnapshot): boolean => {
+    const current = snapshotRef.current;
+    if (
+      !isRevisionVectorAtLeast(
+        [
+          next.mine.farmRevision,
+          next.mine.ranchRevision,
+          next.mine.revision,
+        ],
+        current
+          ? [
+              current.mine.farmRevision,
+              current.mine.ranchRevision,
+              current.mine.revision,
+            ]
+          : undefined,
+      )
+    ) {
+      return false;
+    }
+    snapshotRef.current = next;
+    setSnapshot(next);
+    clockOffset.current = next.mine.serverTime - Date.now();
+    setNow(next.mine.serverTime);
+    return true;
+  };
+
+  const load = async (quiet = false, allowDuringAction = false) => {
+    if (quiet && actionInFlight.current && !allowDuringAction) return;
+    const requestId = ++loadRequestSequence.current;
     if (!quiet) setLoading(true);
     try {
       const next = await api.getMine();
-      setSnapshot(next);
-      clockOffset.current = next.mine.serverTime - Date.now();
-      setNow(next.mine.serverTime);
+      if (
+        isLatestRequest(requestId, loadRequestSequence.current) &&
+        (allowDuringAction || !actionInFlight.current)
+      ) {
+        commitSnapshot(next);
+      }
     } catch (error) {
-      if (!quiet) toast.error(errorMessage(error));
+      if (
+        !quiet &&
+        isLatestRequest(requestId, loadRequestSequence.current) &&
+        (allowDuringAction || !actionInFlight.current)
+      ) {
+        toast.error(errorMessage(error));
+      }
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -175,21 +219,22 @@ export function MineScreen() {
   }, []);
 
   const runAction = async (action: MineClientAction) => {
-    if (!snapshot || actionInFlight.current) return;
+    const current = snapshotRef.current;
+    if (!current || actionInFlight.current) return;
     actionInFlight.current = true;
+    loadRequestSequence.current += 1;
     setBusy(true);
     setPendingAction(action);
+    let refreshAfterAction = false;
     try {
-      const game = snapshot.mine;
+      const game = current.mine;
       const next = await api.applyMineAction(
         game.farmRevision,
         game.ranchRevision,
         game.revision,
         action,
       );
-      setSnapshot(next);
-      clockOffset.current = next.mine.serverTime - Date.now();
-      setNow(next.mine.serverTime);
+      commitSnapshot(next);
       if (action.type === 'mine_start') {
         toast.success(
           `已在 ${action.shaftIndex + 1} 号矿井开采${next.mine.deposits[action.depositId].name}`,
@@ -206,10 +251,18 @@ export function MineScreen() {
           'MINE_REVISION_CONFLICT',
         ].includes(error.code ?? '')
       ) {
-        await load();
+        refreshAfterAction = true;
       }
       toast.error(errorMessage(error));
     } finally {
+      if (!refreshAfterAction) {
+        actionInFlight.current = false;
+        setBusy(false);
+        setPendingAction(undefined);
+      }
+    }
+    if (refreshAfterAction) {
+      await load(true, true);
       actionInFlight.current = false;
       setBusy(false);
       setPendingAction(undefined);
@@ -295,6 +348,9 @@ export function MineScreen() {
           R{String(game.ranchRevision).padStart(5, '0')} /
           M{String(game.revision).padStart(5, '0')}
         </span>
+        <span role="status" aria-live="polite">
+          {busy ? '正在保存操作，其他经营按钮暂不可用' : '操作就绪'}
+        </span>
       </section>
 
       <section className="farm-metrics" aria-label="矿山经营指标">
@@ -376,6 +432,7 @@ export function MineScreen() {
                     <Button
                       key={depositId}
                       aria-pressed={selectedDeposit === depositId}
+                      disabled={busy}
                       size="small"
                       type={selectedDeposit === depositId ? 'primary' : 'default'}
                       onClick={() => {
@@ -519,7 +576,9 @@ export function MineScreen() {
                               shaftIndex: shaft.index,
                             })}
                           >
-                            用{PRODUCT_NAMES[deposit.supportProductId]}×{deposit.supportAmount}加固
+                            用{PRODUCT_NAMES[deposit.supportProductId]}
+                            ×{deposit.supportAmount}加固
+                            （库存 {game.economy.ranchProducts[deposit.supportProductId]}）
                           </Button>
                         )}
                         {deposit && (
@@ -631,6 +690,13 @@ export function MineScreen() {
                             <Button
                               size="small"
                               disabled={busy || game.economy.ores[depositId] < quantity}
+                              title={
+                                busy
+                                  ? '正在保存另一项操作'
+                                  : game.economy.ores[depositId] < quantity
+                                    ? `库存不足，当前有 ${game.economy.ores[depositId]}`
+                                    : undefined
+                              }
                               onClick={() => void runAction({
                                 type: 'mine_sell',
                                 depositId,

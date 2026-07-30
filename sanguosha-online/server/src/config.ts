@@ -15,6 +15,22 @@ const optionalUrl = z.preprocess(
   z.string().trim().url().optional(),
 );
 
+const optionalQWeatherHost = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().url().refine((value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      url.hostname.endsWith(".qweatherapi.com") &&
+      url.port === "" &&
+      (url.pathname === "" || url.pathname === "/") &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.username === "" &&
+      url.password === "";
+  }, "QWEATHER_API_HOST must be a dedicated HTTPS *.qweatherapi.com origin")
+    .optional(),
+);
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3_000),
@@ -32,6 +48,9 @@ const environmentSchema = z.object({
   DOUDIZHU_LLM_MODEL: optionalTrimmedString,
   DOUDIZHU_LLM_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(10_000),
   DOUDIZHU_LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(8).max(4_000).default(4_000),
+  QWEATHER_API_HOST: optionalQWeatherHost,
+  QWEATHER_API_KEY: optionalTrimmedString,
+  QWEATHER_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3_000),
 }).superRefine((environment, context) => {
   const providerValues = [
     environment.DOUDIZHU_LLM_ENDPOINT,
@@ -42,6 +61,16 @@ const environmentSchema = z.object({
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "DOUDIZHU_LLM_ENDPOINT, DOUDIZHU_LLM_API_KEY and DOUDIZHU_LLM_MODEL must be configured together",
+    });
+  }
+  const qWeatherValues = [
+    environment.QWEATHER_API_HOST,
+    environment.QWEATHER_API_KEY,
+  ];
+  if (qWeatherValues.some(Boolean) && !qWeatherValues.every(Boolean)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "QWEATHER_API_HOST and QWEATHER_API_KEY must be configured together",
     });
   }
 });
@@ -67,6 +96,11 @@ export interface AppConfig {
     model: string;
     timeoutMs: number;
     maximumOutputTokens: number;
+  };
+  townWeather?: {
+    apiHost: string;
+    apiKey: string;
+    timeoutMs: number;
   };
 }
 
@@ -108,6 +142,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
             model: parsed.DOUDIZHU_LLM_MODEL,
             timeoutMs: parsed.DOUDIZHU_LLM_TIMEOUT_MS,
             maximumOutputTokens: parsed.DOUDIZHU_LLM_MAX_OUTPUT_TOKENS,
+          },
+        }
+      : {}),
+    ...(parsed.QWEATHER_API_HOST && parsed.QWEATHER_API_KEY
+      ? {
+          townWeather: {
+            apiHost: parsed.QWEATHER_API_HOST,
+            apiKey: parsed.QWEATHER_API_KEY,
+            timeoutMs: parsed.QWEATHER_TIMEOUT_MS,
           },
         }
       : {}),

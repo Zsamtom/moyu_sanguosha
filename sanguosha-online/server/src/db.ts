@@ -114,6 +114,32 @@ export async function migrateDatabase(pool: Pool): Promise<void> {
       reason TEXT NOT NULL,
       quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS estate_account_state (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      state JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS town_estate_state (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      town_id TEXT NOT NULL,
+      state JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, town_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS town_estate_state_town_updated_idx
+      ON town_estate_state (town_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS town_estate_state_quarantine (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      town_id TEXT NOT NULL,
+      state JSONB NOT NULL,
+      reason TEXT NOT NULL,
+      quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 }
 

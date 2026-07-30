@@ -2,14 +2,18 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   HOMESTEAD_CROP_FAMILY_IDS,
+  HOMESTEAD_FACILITY_IDS,
   HOMESTEAD_FEED_PROGRAM_IDS,
   HOMESTEAD_MINE_LAYER_IDS,
   HOMESTEAD_NPC_IDS,
   HOMESTEAD_NPC_TOPIC_IDS,
   HOMESTEAD_RESEARCH_NODE_IDS,
+  HOMESTEAD_RECIPE_IDS,
   HOMESTEAD_RESILIENCE_IDS,
   HOMESTEAD_SEASON_MILESTONE_IDS,
   HOMESTEAD_VALUE_ROUTE_IDS,
+  ESTATE_MERCHANT_ITEM_IDS,
+  ESTATE_TOWN_IDS,
 } from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
 import type {
@@ -18,27 +22,8 @@ import type {
 } from "../farm-service.js";
 import { currentUser } from "../middleware/auth.js";
 
-const facilityIdSchema = z.enum([
-  "mill",
-  "feed_factory",
-  "fertilizer_plant",
-  "kitchen",
-  "textile_mill",
-  "smelter",
-  "machine_shop",
-]);
-
-const recipeIdSchema = z.enum([
-  "mill_flour",
-  "mill_coarse_feed",
-  "feed_fortified",
-  "fertilizer_soil_conditioner",
-  "textile_work_clothes",
-  "smelt_iron_ingot",
-  "workshop_mining_kit",
-  "kitchen_festival_crate",
-  "workshop_greenhouse_parts",
-]);
+const facilityIdSchema = z.enum(HOMESTEAD_FACILITY_IDS);
+const recipeIdSchema = z.enum(HOMESTEAD_RECIPE_IDS);
 
 const actionSchema = z.discriminatedUnion("type", [
   z.object({
@@ -103,8 +88,20 @@ const actionSchema = z.discriminatedUnion("type", [
     sectorId: z.enum(["farm", "ranch", "mine"]),
   }).strict(),
   z.object({
+    type: z.literal("homestead_unlock_town"),
+    townId: z.enum(ESTATE_TOWN_IDS),
+  }).strict(),
+  z.object({
     type: z.literal("homestead_switch_town"),
-    townId: z.enum(["greenvale", "frostpeak"]),
+    townId: z.enum(ESTATE_TOWN_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_buy_merchant_item"),
+    itemId: z.enum(ESTATE_MERCHANT_ITEM_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_use_acceleration_card"),
+    facilityId: facilityIdSchema,
   }).strict(),
   z.object({
     type: z.literal("homestead_start_town_sector"),
@@ -141,6 +138,7 @@ export const homesteadActionEnvelopeSchema = z.object({
   expectedRanchRevision: z.number().int().nonnegative(),
   expectedMineRevision: z.number().int().nonnegative(),
   expectedHomesteadRevision: z.number().int().nonnegative(),
+  expectedAccountRevision: z.number().int().nonnegative(),
   action: actionSchema,
 }).strict();
 
@@ -161,6 +159,7 @@ export function createHomesteadRouter(farm: FarmService): Router {
       input.expectedRanchRevision,
       input.expectedMineRevision,
       input.expectedHomesteadRevision,
+      input.expectedAccountRevision,
       input.action as HomesteadClientAction,
     ));
   }));

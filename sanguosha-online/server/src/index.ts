@@ -18,6 +18,7 @@ import {
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
 import { createSessionMiddleware } from "./session.js";
+import { createTownWeatherService } from "./town-weather.js";
 import { ensureInitialAdmin, PostgresUserStore } from "./users.js";
 
 async function main(): Promise<void> {
@@ -46,9 +47,12 @@ async function main(): Promise<void> {
       config.doudizhuLlm,
     );
     await llmSettings.initialize();
+    const townWeather = createTownWeatherService(config.townWeather);
     const farm = new FarmService(
       new PostgresFarmStateStore(pool),
       botDecisions,
+      Date.now,
+      townWeather,
     );
     const rooms = new RoomService(
       90_000,

@@ -773,11 +773,15 @@
   .homestead-nav {
     width: min(100% - 24px, 1240px);
     margin-top: 10px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
   }
 
   .homestead-nav .ant-btn {
-    flex: 1;
-    min-width: 0;
+    min-width: 88px;
+    min-height: 40px;
+    height: auto;
+    flex: 0 0 auto;
   }
 
   .homestead-nav .homestead-nav__exit {
@@ -787,6 +791,18 @@
   .farm-tool-strip__hint {
     width: 100%;
     margin-left: 0;
+  }
+
+  .farm-tool-strip .ant-btn,
+  .farm-plot__actions .ant-btn,
+  .farm-row-actions .ant-btn,
+  .farm-neighbor {
+    min-height: 40px;
+    height: auto;
+  }
+
+  .farm-table .ant-input-number {
+    min-height: 38px;
   }
 
   .farm-upgrades article {
