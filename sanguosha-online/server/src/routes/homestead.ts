@@ -104,36 +104,13 @@ const actionSchema = z.discriminatedUnion("type", [
     facilityId: facilityIdSchema,
   }).strict(),
   z.object({
-    type: z.literal("homestead_start_town_sector"),
-    sectorId: z.enum(["farm", "ranch", "mine"]),
-  }).strict(),
-  z.object({
-    type: z.literal("homestead_collect_town_sector"),
-    sectorId: z.enum(["farm", "ranch", "mine"]),
-  }).strict(),
-  z.object({
-    type: z.literal("homestead_upgrade_town_sector"),
-    sectorId: z.enum(["farm", "ranch", "mine"]),
-  }).strict(),
-  z.object({
-    type: z.literal("homestead_sell_town_resource"),
-    resourceId: z.enum(["snow_potato", "yak_milk", "frost_crystal"]),
-    quantity: z.number().int().min(1).max(999),
-  }).strict(),
-  z.object({
-    type: z.literal("homestead_resolve_town_problem"),
-    problemId: z.string().min(1).max(80),
-  }).strict(),
-  z.object({
-    type: z.literal("homestead_restore_town_landmark"),
-  }).strict(),
-  z.object({
     type: z.literal("homestead_complete_value_route"),
     routeId: z.enum(HOMESTEAD_VALUE_ROUTE_IDS),
   }).strict(),
 ]);
 
 export const homesteadActionEnvelopeSchema = z.object({
+  townId: z.enum(ESTATE_TOWN_IDS),
   expectedFarmRevision: z.number().int().nonnegative(),
   expectedRanchRevision: z.number().int().nonnegative(),
   expectedMineRevision: z.number().int().nonnegative(),
@@ -161,6 +138,7 @@ export function createHomesteadRouter(farm: FarmService): Router {
       input.expectedHomesteadRevision,
       input.expectedAccountRevision,
       input.action as HomesteadClientAction,
+      input.townId,
     ));
   }));
 

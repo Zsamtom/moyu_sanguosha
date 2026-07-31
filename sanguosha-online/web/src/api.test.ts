@@ -238,6 +238,7 @@ describe('farm API', () => {
         cropId: 'wheat',
         quantity: 1,
       },
+      'greenvale',
     );
 
     expect(result).toEqual(payload);
@@ -246,6 +247,7 @@ describe('farm API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'greenvale',
           expectedRevision: 2,
           action: {
             type: 'farming_redeem_mutation',
@@ -277,6 +279,7 @@ describe('farm API', () => {
         care: 'water',
         plotIndex: 2,
       },
+      'greenvale',
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -284,6 +287,7 @@ describe('farm API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'greenvale',
           expectedRevision: 12,
           expectedNeighborRevision: 7,
           action: {
@@ -309,6 +313,7 @@ describe('ranch API', () => {
       14,
       6,
       { type: 'ranch_feed', penIndex: 1 },
+      'frostpeak',
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -316,6 +321,7 @@ describe('ranch API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'frostpeak',
           expectedFarmRevision: 14,
           expectedRanchRevision: 6,
           action: { type: 'ranch_feed', penIndex: 1 },
@@ -338,6 +344,7 @@ describe('ranch API', () => {
       9,
       12,
       { type: 'ranch_neighbor_collect', penIndex: 0 },
+      'frostpeak',
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -345,6 +352,7 @@ describe('ranch API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'frostpeak',
           expectedRanchRevision: 9,
           expectedNeighborRevision: 12,
           action: { type: 'ranch_neighbor_collect', penIndex: 0 },
@@ -366,6 +374,7 @@ describe('mine API', () => {
       9,
       4,
       { type: 'mine_start', depositId: 'iron', shaftIndex: 1 },
+      'greenvale',
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -373,6 +382,7 @@ describe('mine API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'greenvale',
           expectedFarmRevision: 18,
           expectedRanchRevision: 9,
           expectedMineRevision: 4,
@@ -396,6 +406,8 @@ describe('homestead API', () => {
     const snapshot = {
       homestead: {
         revision: 7,
+        accountRevision: 11,
+        activeTownId: 'frostpeak',
         revisions: {
           farm: 18,
           ranch: 9,
@@ -414,10 +426,12 @@ describe('homestead API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'frostpeak',
           expectedFarmRevision: 18,
           expectedRanchRevision: 9,
           expectedMineRevision: 4,
           expectedHomesteadRevision: 7,
+          expectedAccountRevision: 11,
           action: {
             type: 'homestead_start_job',
             recipeId: 'fertilizer_soil_conditioner',
@@ -437,10 +451,12 @@ describe('homestead API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
+          townId: 'frostpeak',
           expectedFarmRevision: 18,
           expectedRanchRevision: 9,
           expectedMineRevision: 4,
           expectedHomesteadRevision: 7,
+          expectedAccountRevision: 11,
           action: {
             type: 'homestead_talk_npc',
             npcId: 'agronomist_lin',

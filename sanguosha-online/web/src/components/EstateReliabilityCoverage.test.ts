@@ -17,6 +17,7 @@ describe('estate request reliability coverage', () => {
     expect(content).toContain('actionInFlight.current');
     expect(content).toContain('loadRequestSequence.current');
     expect(content).toContain('isLatestRequest');
-    expect(content).toContain('isRevisionVectorAtLeast');
+    expect(content).toContain('isTownRevisionVectorAtLeast');
+    expect(content).toContain('townChanged');
   });
 });

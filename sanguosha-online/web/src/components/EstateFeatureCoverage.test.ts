@@ -75,13 +75,10 @@ describe('three-sector interface capability coverage', () => {
       'homestead_claim_season_reward',
       'homestead_upgrade_resilience',
       'homestead_activate_emergency_boost',
+      'homestead_unlock_town',
       'homestead_switch_town',
-      'homestead_start_town_sector',
-      'homestead_collect_town_sector',
-      'homestead_upgrade_town_sector',
-      'homestead_sell_town_resource',
-      'homestead_resolve_town_problem',
-      'homestead_restore_town_landmark',
+      'homestead_buy_merchant_item',
+      'homestead_use_acceleration_card',
       'homestead_complete_value_route',
     ]);
   });

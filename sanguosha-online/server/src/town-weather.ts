@@ -4,7 +4,10 @@ const HOUR_MS = 60 * 60 * 1_000;
 
 export const TOWN_WEATHER_BUCKET_MS = 8 * HOUR_MS;
 export const TOWN_WEATHER_DEFAULT_TIMEOUT_MS = 3_000;
+export const TOWN_WEATHER_DEFAULT_ALERT_TIMEOUT_MS = 1_000;
 export const TOWN_WEATHER_LAST_KNOWN_GOOD_MS = 72 * HOUR_MS;
+export const TOWN_WEATHER_MAX_OBSERVATION_AGE_MS = 12 * HOUR_MS;
+export const TOWN_WEATHER_MAX_CLOCK_SKEW_MS = HOUR_MS;
 
 export const TOWN_WEATHER_TOWN_IDS = ["greenvale", "frostpeak"] as const;
 export type TownWeatherTownId = (typeof TOWN_WEATHER_TOWN_IDS)[number];
@@ -92,6 +95,7 @@ export interface TownWeatherProviderResult {
   readonly windSpeedKph: number;
   readonly visibilityKm: number;
   readonly alerts: readonly TownWeatherProviderAlert[];
+  readonly alertsAvailable?: boolean;
   readonly attributions: readonly string[];
 }
 
@@ -173,6 +177,7 @@ export interface TownWeatherSnapshot {
   readonly mechanicsEnabled: boolean;
   readonly weatherId: NormalizedTownWeatherId;
   readonly observation: NormalizedTownWeatherObservation;
+  readonly alertsAvailable: boolean;
   readonly disasters: readonly NormalizedTownWeatherDisaster[];
   readonly attributions: readonly string[];
   readonly fallbackReason: string | null;
@@ -262,15 +267,33 @@ function normalizedApiHost(value: string): string {
   return url.toString();
 }
 
+class TownWeatherTimeoutError extends Error {
+  constructor() {
+    super("Town weather provider timed out");
+    this.name = "TownWeatherTimeoutError";
+  }
+}
+
 export class QWeatherProvider implements TownWeatherProvider {
   private readonly apiHost: string;
+  private readonly currentTimeoutMs: number;
+  private readonly alertsTimeoutMs: number;
 
   constructor(
     config: QWeatherProviderConfig,
     private readonly fetcher: FetchLike = fetch,
+    totalTimeoutMs = TOWN_WEATHER_DEFAULT_TIMEOUT_MS,
   ) {
+    if (!Number.isFinite(totalTimeoutMs) || totalTimeoutMs < 1) {
+      throw new TypeError("QWeather total timeout must be a positive number");
+    }
     this.apiHost = normalizedApiHost(config.apiHost);
     this.apiKey = config.apiKey;
+    this.currentTimeoutMs = totalTimeoutMs;
+    this.alertsTimeoutMs = Math.min(
+      TOWN_WEATHER_DEFAULT_ALERT_TIMEOUT_MS,
+      Math.max(0, Math.floor(totalTimeoutMs / 2)),
+    );
   }
 
   private readonly apiKey: string;
@@ -291,12 +314,24 @@ export class QWeatherProvider implements TownWeatherProvider {
     alertsUrl.searchParams.set("localTime", "false");
     alertsUrl.searchParams.set("lang", "zh");
 
-    const [nowPayload, alertsPayload] = await Promise.all([
-      this.request(nowUrl, signal),
-      this.request(alertsUrl, signal),
+    const [nowResult, alertsResult] = await Promise.allSettled([
+      this.request(nowUrl, signal, this.currentTimeoutMs),
+      this.request(alertsUrl, signal, this.alertsTimeoutMs),
     ]);
-    const current = qWeatherNowSchema.parse(nowPayload);
-    const warnings = qWeatherAlertsSchema.parse(alertsPayload);
+    if (nowResult.status === "rejected") throw nowResult.reason;
+    const current = qWeatherNowSchema.parse(nowResult.value);
+    let alertsAvailable = alertsResult.status === "fulfilled";
+    let warnings: z.infer<typeof qWeatherAlertsSchema> = {
+      alerts: [],
+    };
+    if (alertsResult.status === "fulfilled") {
+      const parsed = qWeatherAlertsSchema.safeParse(alertsResult.value);
+      if (parsed.success) {
+        warnings = parsed.data;
+      } else {
+        alertsAvailable = false;
+      }
+    }
     const observedAt = parsedTimestamp(current.now.obsTime);
     if (observedAt === null) {
       throw new Error("QWeather returned an invalid observation timestamp");
@@ -337,11 +372,46 @@ export class QWeatherProvider implements TownWeatherProvider {
       windSpeedKph: current.now.windSpeed,
       visibilityKm: current.now.vis,
       alerts,
+      alertsAvailable,
       attributions: [...attributions],
     };
   }
 
-  private async request(url: URL, signal: AbortSignal): Promise<unknown> {
+  private async request(
+    url: URL,
+    parentSignal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const controller = new AbortController();
+    const abortFromParent = () => controller.abort();
+    if (parentSignal.aborted) {
+      abortFromParent();
+    } else {
+      parentSignal.addEventListener("abort", abortFromParent, { once: true });
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new TownWeatherTimeoutError());
+      }, timeoutMs);
+      timeout.unref?.();
+    });
+    try {
+      return await Promise.race([
+        this.requestJson(url, controller.signal),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      parentSignal.removeEventListener("abort", abortFromParent);
+    }
+  }
+
+  private async requestJson(
+    url: URL,
+    signal: AbortSignal,
+  ): Promise<unknown> {
     const response = await this.fetcher(url, {
       method: "GET",
       headers: {
@@ -446,6 +516,7 @@ function severityForAlert(alert: TownWeatherProviderAlert): 1 | 2 | 3 {
 
 function validateProviderResult(
   result: TownWeatherProviderResult,
+  now: number,
 ): TownWeatherProviderResult {
   if (
     !result ||
@@ -467,9 +538,19 @@ function validateProviderResult(
     !Number.isFinite(result.visibilityKm) ||
     result.visibilityKm < 0 ||
     !Array.isArray(result.alerts) ||
+    (
+      result.alertsAvailable !== undefined &&
+      typeof result.alertsAvailable !== "boolean"
+    ) ||
     !Array.isArray(result.attributions)
   ) {
     throw new Error("Weather provider returned an invalid payload");
+  }
+  if (
+    result.observedAt < now - TOWN_WEATHER_MAX_OBSERVATION_AGE_MS ||
+    result.observedAt > now + TOWN_WEATHER_MAX_CLOCK_SKEW_MS
+  ) {
+    throw new Error("Weather provider returned a stale observation");
   }
   return structuredClone(result);
 }
@@ -521,33 +602,52 @@ function normalizedDisasters(
   result: TownWeatherProviderResult,
   anchor: TownWeatherAnchor,
   rules: TownWeatherRules,
-  effectiveAt: number,
 ): NormalizedTownWeatherDisaster[] {
-  return result.alerts
-    .filter((alert) => alert.expiresAt === null || alert.expiresAt > effectiveAt)
+  const normalized = result.alerts
+    .filter((alert) => alert.messageType?.toLocaleLowerCase() !== "cancel")
     .map((alert) => {
-    const rule = rules.resolveDisaster(alert, anchor);
-    return {
-      providerAlertId: alert.id,
-      eventCode: alert.eventCode,
-      eventName: alert.eventName,
-      headline: alert.headline,
-      description: alert.description,
-      instruction: alert.instruction,
-      senderName: alert.senderName,
-      messageType: alert.messageType,
-      severity: severityForAlert(alert),
-      certainty: alert.certainty,
-      urgency: alert.urgency,
-      colorCode: alert.colorCode,
-      issuedAt: alert.issuedAt,
-      effectiveAt: alert.effectiveAt,
-      expiresAt: alert.expiresAt,
-      mechanicId: rule?.mechanicId ?? null,
-      mechanicLabel: rule?.label ?? null,
-      affectsGameplay: rule !== null,
-    };
+      const rule = rules.resolveDisaster(alert, anchor);
+      return {
+        providerAlertId: alert.id,
+        eventCode: alert.eventCode,
+        eventName: alert.eventName,
+        headline: alert.headline,
+        description: alert.description,
+        instruction: alert.instruction,
+        senderName: alert.senderName,
+        messageType: alert.messageType,
+        severity: severityForAlert(alert),
+        certainty: alert.certainty,
+        urgency: alert.urgency,
+        colorCode: alert.colorCode,
+        issuedAt: alert.issuedAt,
+        effectiveAt: alert.effectiveAt,
+        expiresAt: alert.expiresAt,
+        mechanicId: rule?.mechanicId ?? null,
+        mechanicLabel: rule?.label ?? null,
+        affectsGameplay: rule !== null,
+      };
     });
+  const priority = (
+    left: NormalizedTownWeatherDisaster,
+    right: NormalizedTownWeatherDisaster,
+  ): number =>
+    right.severity - left.severity ||
+    (right.issuedAt ?? -1) - (left.issuedAt ?? -1) ||
+    (right.effectiveAt ?? -1) - (left.effectiveAt ?? -1) ||
+    (right.expiresAt ?? -1) - (left.expiresAt ?? -1) ||
+    left.providerAlertId.localeCompare(right.providerAlertId);
+  const byProviderAlertId = new Map<
+    string,
+    NormalizedTownWeatherDisaster
+  >();
+  for (const disaster of normalized) {
+    const existing = byProviderAlertId.get(disaster.providerAlertId);
+    if (!existing || priority(disaster, existing) < 0) {
+      byProviderAlertId.set(disaster.providerAlertId, disaster);
+    }
+  }
+  return [...byProviderAlertId.values()].sort(priority);
 }
 
 function providerSnapshot(input: {
@@ -570,7 +670,7 @@ function providerSnapshot(input: {
     provider: result.provider,
     source,
     stale: source === "last_known_good",
-    mechanicsEnabled: true,
+    mechanicsEnabled: source === "qweather",
     weatherId: rules.resolveWeatherId(result, anchor),
     observation: {
       conditionCode: result.conditionCode,
@@ -583,9 +683,30 @@ function providerSnapshot(input: {
       windSpeedKph: result.windSpeedKph,
       visibilityKm: result.visibilityKm,
     },
-    disasters: normalizedDisasters(result, anchor, rules, validFrom),
+    alertsAvailable: result.alertsAvailable !== false,
+    disasters: normalizedDisasters(result, anchor, rules),
     attributions: [...result.attributions],
     fallbackReason: input.fallbackReason ?? null,
+  };
+}
+
+function snapshotAt(
+  snapshot: TownWeatherSnapshot,
+  now: number,
+): TownWeatherSnapshot {
+  const currentDisasters = snapshot.disasters
+    .filter((hazard) =>
+      (hazard.effectiveAt === null || hazard.effectiveAt <= now) &&
+      (hazard.expiresAt === null || hazard.expiresAt > now)
+    )
+    .map((hazard) => ({
+      ...hazard,
+      affectsGameplay:
+        snapshot.mechanicsEnabled && hazard.affectsGameplay,
+    }));
+  return {
+    ...structuredClone(snapshot),
+    disasters: currentDisasters,
   };
 }
 
@@ -621,6 +742,7 @@ function deterministicFallback(
       windSpeedKph: null,
       visibilityKm: null,
     },
+    alertsAvailable: false,
     disasters: [],
     attributions: [],
     fallbackReason: reason,
@@ -630,13 +752,6 @@ function deterministicFallback(
 function fallbackReason(error: unknown): string {
   if (error instanceof TownWeatherTimeoutError) return "provider_timeout";
   return "provider_error";
-}
-
-class TownWeatherTimeoutError extends Error {
-  constructor() {
-    super("Town weather provider timed out");
-    this.name = "TownWeatherTimeoutError";
-  }
 }
 
 export class TownWeatherService {
@@ -694,10 +809,10 @@ export class TownWeatherService {
     const validFrom = townWeatherBucketStart(now, anchor.utcOffsetMinutes);
     const key = bucketKey(townId, validFrom);
     const cached = this.cache.get(key);
-    if (cached) return structuredClone(cached);
+    if (cached) return snapshotAt(cached, now);
 
     const running = this.inFlight.get(key);
-    if (running) return structuredClone(await running);
+    if (running) return snapshotAt(await running, now);
 
     const operation = this.resolveSnapshot(anchor, validFrom, now);
     this.inFlight.set(key, operation);
@@ -705,7 +820,7 @@ export class TownWeatherService {
       const snapshot = await operation;
       this.cache.set(key, snapshot);
       this.prune(now);
-      return structuredClone(snapshot);
+      return snapshotAt(snapshot, now);
     } finally {
       if (this.inFlight.get(key) === operation) this.inFlight.delete(key);
     }
@@ -738,6 +853,7 @@ export class TownWeatherService {
     try {
       const result = validateProviderResult(
         await this.fetchWithTimeout(anchor),
+        now,
       );
       this.lastKnownGood.set(anchor.townId, {
         result: structuredClone(result),
@@ -818,7 +934,11 @@ export function createTownWeatherService(
     ...serviceOptions,
     ...(config
       ? {
-          provider: new QWeatherProvider(config, fetcher),
+          provider: new QWeatherProvider(
+            config,
+            fetcher,
+            config.timeoutMs ?? TOWN_WEATHER_DEFAULT_TIMEOUT_MS,
+          ),
           timeoutMs: config.timeoutMs,
         }
       : {}),

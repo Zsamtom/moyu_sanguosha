@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { RanchAnimalDefinition, RanchPen } from '../types';
-import { ranchPenRuntime } from './RanchScreen';
+import type {
+  RanchAnimalDefinition,
+  RanchClientAction,
+  RanchGameView,
+  RanchPen,
+  RanchSnapshot,
+} from '../types';
+import {
+  canCommitRanchSnapshot,
+  ranchAnimalCatalogIds,
+  ranchAnimalName,
+  ranchFeedName,
+  ranchPenRuntime,
+} from './RanchScreen';
 
 const animal: RanchAnimalDefinition = {
   id: 'chicken',
@@ -13,6 +25,7 @@ const animal: RanchAnimalDefinition = {
   resalePrice: 40,
   feedCropId: 'wheat',
   feedAmount: 1,
+  careCost: 5,
   productionSeconds: 600,
   yield: 3,
   productPrice: 18,
@@ -71,5 +84,86 @@ describe('RanchScreen real-time pen projection', () => {
       animal,
       601_000,
     ).estimatedYield).toBe(5);
+  });
+});
+
+describe('RanchScreen town-scoped snapshot guard', () => {
+  const snapshot = (
+    townId: RanchGameView['townId'],
+    farmRevision: number,
+    ranchRevision: number,
+  ) => ({
+    ranch: { townId, farmRevision, revision: ranchRevision },
+  }) as unknown as RanchSnapshot;
+
+  it('accepts either town at lower revisions and rejects same-town rollback', () => {
+    expect(canCommitRanchSnapshot(
+      snapshot('frostpeak', 1, 0),
+      snapshot('greenvale', 52, 28),
+    )).toBe(true);
+    expect(canCommitRanchSnapshot(
+      snapshot('greenvale', 2, 1),
+      snapshot('frostpeak', 37, 16),
+    )).toBe(true);
+    expect(canCommitRanchSnapshot(
+      snapshot('greenvale', 51, 29),
+      snapshot('greenvale', 52, 28),
+    )).toBe(false);
+  });
+});
+
+describe('RanchScreen town catalog', () => {
+  const snowChicken: RanchAnimalDefinition = {
+    ...animal,
+    id: 'snow_chicken',
+    name: '雪羽鸡',
+    productId: 'snow_egg',
+    productName: '雪羽蛋',
+    feedCropId: 'frost_barley',
+  };
+  const yak: RanchAnimalDefinition = {
+    ...animal,
+    id: 'yak',
+    name: '牦牛',
+    productId: 'yak_milk',
+    productName: '牦牛奶',
+    feedCropId: 'highland_bean',
+  };
+  const frostpeak = {
+    townDefinition: {
+      content: {
+        animalIds: ['yak', 'snow_chicken'],
+      },
+    },
+    animals: {
+      snow_chicken: snowChicken,
+      yak,
+    },
+  } as unknown as RanchGameView;
+
+  it('uses the Frostpeak animal catalog and feed labels from the active view', () => {
+    expect(ranchAnimalCatalogIds(frostpeak)).toEqual([
+      'yak',
+      'snow_chicken',
+    ]);
+    expect(ranchAnimalName(frostpeak, 'yak')).toBe('牦牛');
+    expect(ranchFeedName('frost_barley')).toBe('霜麦');
+    expect(ranchAnimalName(
+      { animals: {} } as unknown as RanchGameView,
+      'cashmere_goat',
+    )).toBe('Cashmere Goat');
+  });
+
+  it('accepts a Frostpeak purchase action without translating it to Greenvale', () => {
+    const action: RanchClientAction = {
+      type: 'ranch_buy_animal',
+      animalId: 'yak',
+      penIndex: 2,
+    };
+    expect(action).toEqual({
+      type: 'ranch_buy_animal',
+      animalId: 'yak',
+      penIndex: 2,
+    });
   });
 });

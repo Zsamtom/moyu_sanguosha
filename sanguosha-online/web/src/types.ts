@@ -7,6 +7,47 @@ import {
 } from './gameCards';
 import { activeSkillDescriptions, generalSkillNames } from './interactionRules';
 
+export type EstateTownId = 'greenvale' | 'frostpeak';
+
+export interface TownDefinition {
+  id: EstateTownId;
+  contentVersion: number;
+  rulesetId: 'standard_three_sector_v1';
+  name: string;
+  subtitle: string;
+  climate: string;
+  description: string;
+  landmarkName: string;
+  specialties: string[];
+  unlockRequirements: {
+    sourceTownId: EstateTownId | null;
+    minimumFarmLevel: number;
+    minimumRanchLevel: number;
+    minimumMineLevel: number;
+    minimumReputation: number;
+    requiredResearchIds: string[];
+    coinCost: number;
+  };
+  travel: {
+    terminalName: string;
+    defaultMode: 'local' | 'rail' | 'ship' | 'caravan';
+  };
+  weatherAnchor: {
+    cityName: string;
+    countryCode: string;
+    latitude: number;
+    longitude: number;
+    timeZone: string;
+    refreshIntervalSeconds: number;
+  };
+  content: {
+    cropIds: string[];
+    animalIds: string[];
+    productIds: string[];
+    depositIds: string[];
+  };
+}
+
 export type FarmCropId =
   | 'wheat'
   | 'carrot'
@@ -19,7 +60,19 @@ export type FarmCropId =
   | 'grape'
   | 'blueberry'
   | 'cotton'
-  | 'dragonfruit';
+  | 'dragonfruit'
+  | 'frost_barley'
+  | 'snow_potato'
+  | 'ice_turnip'
+  | 'highland_bean'
+  | 'cloudberry'
+  | 'alpine_herb'
+  | 'ice_lettuce'
+  | 'juniper_berry'
+  | 'blue_rose'
+  | 'silver_flax'
+  | 'winter_melon'
+  | 'aurora_fruit';
 
 export interface FarmCropDefinition {
   id: FarmCropId;
@@ -62,9 +115,9 @@ export interface FarmPlot {
 
 export interface FarmInventory {
   coins: number;
-  seeds: Record<FarmCropId, number>;
-  produce: Record<FarmCropId, number>;
-  mutations: Record<FarmCropId, number>;
+  seeds: Partial<Record<FarmCropId, number>>;
+  produce: Partial<Record<FarmCropId, number>>;
+  mutations: Partial<Record<FarmCropId, number>>;
 }
 
 export interface FarmMarketQuote {
@@ -77,6 +130,8 @@ export interface FarmMarketQuote {
 export interface FarmGameView {
   kind: 'farm';
   version: 2;
+  townId: EstateTownId;
+  townDefinition: TownDefinition;
   revision: number;
   serverTime: number;
   ownerId: string;
@@ -90,11 +145,11 @@ export interface FarmGameView {
   unlockedPlots: number;
   dogLevel: number;
   dogBlockChance: number;
-  crops: Record<FarmCropId, FarmCropDefinition>;
+  crops: Partial<Record<FarmCropId, FarmCropDefinition>>;
   inventory: FarmInventory | null;
   discoveredCrops: FarmCropId[];
   plots: FarmPlot[];
-  market: Record<FarmCropId, FarmMarketQuote>;
+  market: Partial<Record<FarmCropId, FarmMarketQuote>>;
   marketEvent: {
     title: string;
     summary: string;
@@ -186,7 +241,13 @@ export type RanchAnimalId =
   | 'rabbit'
   | 'sheep'
   | 'cow'
-  | 'goat';
+  | 'goat'
+  | 'snow_chicken'
+  | 'ptarmigan'
+  | 'angora_rabbit'
+  | 'highland_sheep'
+  | 'yak'
+  | 'cashmere_goat';
 
 export type RanchProductId =
   | 'egg'
@@ -194,7 +255,13 @@ export type RanchProductId =
   | 'rabbit_fur'
   | 'wool'
   | 'milk'
-  | 'goat_milk';
+  | 'goat_milk'
+  | 'snow_egg'
+  | 'ptarmigan_egg'
+  | 'angora_fur'
+  | 'highland_wool'
+  | 'yak_milk'
+  | 'cashmere';
 
 export interface RanchAnimalDefinition {
   id: RanchAnimalId;
@@ -207,6 +274,7 @@ export interface RanchAnimalDefinition {
   resalePrice: number;
   feedCropId: FarmCropId;
   feedAmount: number;
+  careCost: number;
   productionSeconds: number;
   yield: number;
   productPrice: number;
@@ -238,6 +306,8 @@ export interface RanchPen {
 export interface RanchGameView {
   kind: 'ranch';
   version: 1;
+  townId: EstateTownId;
+  townDefinition: TownDefinition;
   revision: number;
   serverTime: number;
   ownerId: string;
@@ -255,11 +325,11 @@ export interface RanchGameView {
   currentLevelExperience: number;
   nextLevelExperience: number | null;
   unlockedPens: number;
-  animals: Record<RanchAnimalId, RanchAnimalDefinition>;
+  animals: Partial<Record<RanchAnimalId, RanchAnimalDefinition>>;
   economy: {
     coins: number;
-    produce: Record<FarmCropId, number>;
-    products: Record<RanchProductId, number>;
+    produce: Partial<Record<FarmCropId, number>>;
+    products: Partial<Record<RanchProductId, number>>;
   } | null;
   pens: RanchPen[];
   nextExpansion: {
@@ -339,7 +409,13 @@ export type MineDepositId =
   | 'copper'
   | 'silver'
   | 'gold'
-  | 'crystal';
+  | 'crystal'
+  | 'lignite'
+  | 'magnetite'
+  | 'tin'
+  | 'frost_silver'
+  | 'glacier_gold'
+  | 'frost_crystal';
 
 export interface MineDepositDefinition {
   id: MineDepositId;
@@ -379,6 +455,8 @@ export interface MineShaft {
 export interface MineGameView {
   kind: 'mine';
   version: 1;
+  townId: EstateTownId;
+  townDefinition: TownDefinition;
   revision: number;
   serverTime: number;
   ownerId: string;
@@ -397,11 +475,11 @@ export interface MineGameView {
   unlockedShafts: number;
   pickaxeLevel: number;
   pickaxeYieldBonus: number;
-  deposits: Record<MineDepositId, MineDepositDefinition>;
+  deposits: Partial<Record<MineDepositId, MineDepositDefinition>>;
   economy: {
     coins: number;
-    ranchProducts: Record<RanchProductId, number>;
-    ores: Record<MineDepositId, number>;
+    ranchProducts: Partial<Record<RanchProductId, number>>;
+    ores: Partial<Record<MineDepositId, number>>;
     relics: number;
   };
   shafts: MineShaft[];
@@ -468,7 +546,8 @@ export type HomesteadGoodId =
   | 'iron_ingot'
   | 'mining_kit'
   | 'festival_crate'
-  | 'greenhouse_parts';
+  | 'greenhouse_parts'
+  | (string & {});
 
 export type HomesteadRecipeId =
   | 'mill_flour'
@@ -479,7 +558,8 @@ export type HomesteadRecipeId =
   | 'smelt_iron_ingot'
   | 'workshop_mining_kit'
   | 'kitchen_festival_crate'
-  | 'workshop_greenhouse_parts';
+  | 'workshop_greenhouse_parts'
+  | (string & {});
 
 export type HomesteadResearchNodeId =
   | 'soil_science'
@@ -519,7 +599,7 @@ export type HomesteadResilienceId =
   | 'weather_station'
   | 'drainage'
   | 'shelter';
-export type HomesteadTownId = 'greenvale' | 'frostpeak';
+export type HomesteadTownId = EstateTownId;
 export type HomesteadTownSectorId = 'farm' | 'ranch' | 'mine';
 export type HomesteadTownResourceId =
   | 'snow_potato'
@@ -534,7 +614,13 @@ export type HomesteadValueRouteId =
   | 'dairy_bakery_supply'
   | 'thermal_textiles'
   | 'utility_alloy'
-  | 'jeweler_commission';
+  | 'jeweler_commission'
+  | (string & {});
+
+export type EstateMerchantItemId =
+  | 'priority_dispatch'
+  | 'rail_pass'
+  | 'merchant_banner';
 
 export interface HomesteadResourceView {
   source: 'farm' | 'ranch' | 'mine' | 'goods';
@@ -552,6 +638,7 @@ export interface HomesteadFacilityView {
     startedAt: number;
     completesAt: number;
     outputQuantity: number;
+    accelerated?: boolean;
   } | null;
   level: number;
   definition: {
@@ -578,6 +665,7 @@ export interface HomesteadRecipeView {
   name: string;
   facilityId: HomesteadFacilityId;
   durationSeconds: number;
+  coinCost: number;
   inputs: Array<{
     source: 'farm' | 'ranch' | 'mine' | 'goods';
     itemId: string;
@@ -614,7 +702,9 @@ export interface HomesteadOrderView {
     researchReward: number;
   };
   requirements: HomesteadResourceView[];
+  logisticsCost: 2;
   canComplete: boolean;
+  disabledReason: string | null;
 }
 
 export interface HomesteadWorldEventView {
@@ -641,9 +731,12 @@ export interface HomesteadWorldEventView {
       coinReward: number;
       reputationReward: number;
       researchReward: number;
+      resolvesHazard?: boolean;
       costsView: HomesteadResourceView[];
       canChoose: boolean;
       missingCoins: number;
+      missingReputation: number;
+      temporaryAlreadyUsed: boolean;
     }>;
   };
 }
@@ -651,6 +744,29 @@ export interface HomesteadWorldEventView {
 export interface HomesteadWeatherView {
   weatherId: HomesteadWeatherId;
   dayKey: string;
+  source?: 'live' | 'last_known_good' | 'fallback' | 'rules';
+  observedAt?: number;
+  validUntil?: number;
+  anchorCity?: string;
+  temperatureC?: number | null;
+  humidityPercent?: number | null;
+  precipitationMm?: number | null;
+  windKph?: number | null;
+  conditionText?: string;
+  stale?: boolean;
+  mechanicsEnabled?: boolean;
+  alertsAvailable?: boolean;
+  fallbackReason?: string | null;
+  providerAttributions?: string[];
+  liveHazards?: Array<{
+    id: string;
+    name: string;
+    headline: string;
+    severity: number;
+    affectsGameplay: boolean;
+    mechanicId?: HomesteadDisasterView['eventId'] | null;
+    expiresAt: number | null;
+  }>;
   definition: {
     id: HomesteadWeatherId;
     name: string;
@@ -667,13 +783,25 @@ export interface HomesteadWeatherView {
 }
 
 export interface HomesteadDisasterView {
-  eventId: 'mountain_seepage' | 'cold_snap';
+  eventId:
+    | 'mountain_seepage'
+    | 'cold_snap'
+    | 'heatwave'
+    | 'windstorm'
+    | 'hail'
+    | 'drought';
+  contentEventId?: string;
+  providerAlertId?: string;
   startedDayKey: string;
   remainingDays: number;
   unresolvedDays: number;
   severity: number;
   mitigated: boolean;
   resolution: string | null;
+  reputationPenaltyPaid?: number;
+  temporaryOptionId?: string | null;
+  nextReputationLoss: number;
+  reputationPenaltyContinues: boolean;
 }
 
 export interface HomesteadProductionRuleView {
@@ -899,6 +1027,18 @@ export interface HomesteadTownEstateView {
     status: 'available' | 'planned';
   };
   active: boolean;
+  unlocked: boolean;
+  canUnlock: boolean;
+  unlockCoinCost: number;
+  unlockMissing: string[];
+  travel: {
+    routeName: string;
+    mode: 'rail' | 'ship' | 'caravan';
+    baseFare: number;
+    payableFare: number;
+    canTravel: boolean;
+    reason: string | null;
+  } | null;
   reputation: number;
   landmarkStage: number;
   landmarkComplete: boolean;
@@ -979,6 +1119,50 @@ export interface HomesteadTownEstateView {
   } | null;
 }
 
+export interface HomesteadMerchantItemView {
+  id: EstateMerchantItemId;
+  name: string;
+  description: string;
+  coinPrice: number;
+  requiredRenown: number;
+  inventoryLimit: number;
+  weeklyPurchaseLimit: number;
+  category: 'utility' | 'information' | 'resilience' | 'cosmetic';
+  numericEffect:
+    | {
+        kind: 'facility_acceleration';
+        percent: 10;
+        maximumSeconds: number;
+      }
+    | { kind: 'travel_discount'; percent: 50 }
+    | { kind: 'cosmetic' };
+  owned: number;
+  purchasedThisWeek: number;
+  canBuy: boolean;
+  disabledReason: string | null;
+  recommended: boolean;
+}
+
+export interface PlannedTownPreview {
+  id: 'tidal_harbor' | 'redrock';
+  name: string;
+  subtitle: string;
+  climate: string;
+  description: string;
+  plannedSpecialties: string[];
+}
+
+export interface EstateTravelLogEntry {
+  id: string;
+  at: number;
+  fromTownId: EstateTownId;
+  toTownId: EstateTownId;
+  routeId: string;
+  baseFare: number;
+  paidFare: number;
+  usedRailPass: boolean;
+}
+
 export interface HomesteadValueRouteView {
   id: HomesteadValueRouteId;
   title: string;
@@ -990,8 +1174,10 @@ export interface HomesteadValueRouteView {
   reputationReward: number;
   researchReward: number;
   requirementsView: HomesteadResourceView[];
+  logisticsCost: 1 | 2;
   completedToday: boolean;
   canComplete: boolean;
+  disabledReason: string | null;
 }
 
 export interface HomesteadGameView {
@@ -1005,9 +1191,22 @@ export interface HomesteadGameView {
   merchantRenown: number;
   researchPoints: number;
   coins: number;
+  accountRevision: number;
   activeTownId: HomesteadTownId;
   towns: HomesteadTownEstateView[];
+  plannedTowns: Record<'tidal_harbor' | 'redrock', PlannedTownPreview>;
+  logistics: {
+    dayKey: string;
+    used: number;
+    capacity: number;
+  };
+  travelLogs: EstateTravelLogEntry[];
+  merchantShop: {
+    recommendationSource: 'rules' | 'llm';
+    items: HomesteadMerchantItemView[];
+  };
   valueRoutes: HomesteadValueRouteView[];
+  activeGoodIds: HomesteadGoodId[];
   goods: Record<HomesteadGoodId, number>;
   facilities: HomesteadFacilityView[];
   recipes: HomesteadRecipeView[];
@@ -1100,26 +1299,16 @@ export type HomesteadClientAction =
       type: 'homestead_activate_emergency_boost';
       sectorId: 'farm' | 'ranch' | 'mine';
     }
+  | { type: 'homestead_unlock_town'; townId: HomesteadTownId }
   | { type: 'homestead_switch_town'; townId: HomesteadTownId }
   | {
-      type: 'homestead_start_town_sector';
-      sectorId: HomesteadTownSectorId;
+      type: 'homestead_buy_merchant_item';
+      itemId: EstateMerchantItemId;
     }
   | {
-      type: 'homestead_collect_town_sector';
-      sectorId: HomesteadTownSectorId;
+      type: 'homestead_use_acceleration_card';
+      facilityId: HomesteadFacilityId;
     }
-  | {
-      type: 'homestead_upgrade_town_sector';
-      sectorId: HomesteadTownSectorId;
-    }
-  | {
-      type: 'homestead_sell_town_resource';
-      resourceId: HomesteadTownResourceId;
-      quantity: number;
-    }
-  | { type: 'homestead_resolve_town_problem'; problemId: string }
-  | { type: 'homestead_restore_town_landmark' }
   | {
       type: 'homestead_complete_value_route';
       routeId: HomesteadValueRouteId;

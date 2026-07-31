@@ -1,3 +1,5 @@
+import type { EstateMerchantItemId } from "@sanguosha/shared";
+
 export type BotGameKind =
   | "sanguosha"
   | "gouji"
@@ -37,6 +39,11 @@ export interface BotDecisionResult {
     readonly narrative?: string;
     readonly recommendation?: string;
     readonly npcLine?: string;
+    /**
+     * Display-only merchant recommendation selected from a server-provided
+     * whitelist. It never purchases or applies the item.
+     */
+    readonly merchantRecommendationId?: EstateMerchantItemId;
   };
 }
 

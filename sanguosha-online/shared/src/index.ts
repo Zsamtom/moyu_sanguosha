@@ -9,6 +9,7 @@ export * from "./farming.js";
 export * from "./ranch.js";
 export * from "./mine.js";
 export * from "./homestead.js";
+export * from "./homestead-frostpeak.js";
 export * from "./homestead-longterm.js";
 export * from "./estate-account.js";
 export * from "./towns/greenvale.js";

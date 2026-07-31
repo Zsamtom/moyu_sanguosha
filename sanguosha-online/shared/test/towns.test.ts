@@ -42,7 +42,7 @@ describe("modular estate town catalog", () => {
     const inbound = getTownRoute("frostpeak", "greenvale");
     expect(outbound).toMatchObject({
       mode: "rail",
-      coinFare: 45,
+      coinFare: 120,
     });
     expect(inbound).toEqual(outbound);
     expect(getTownRoute("greenvale", "greenvale")).toBeNull();
@@ -169,6 +169,18 @@ describe("modular estate town catalog", () => {
         animal.feedCropId as (typeof FROSTPEAK_CROP_IDS)[number],
       )
     )).toBe(true);
+    for (const animal of Object.values(FROSTPEAK_RANCH_ANIMALS)) {
+      const feedValue =
+        FROSTPEAK_FARM_CROPS[
+          animal.feedCropId as keyof typeof FROSTPEAK_FARM_CROPS
+        ].basePrice * animal.feedAmount;
+      const netCycleValue =
+        animal.productPrice * animal.yield -
+        feedValue -
+        animal.careCost;
+      expect(animal.purchaseCost / netCycleValue)
+        .toBeGreaterThanOrEqual(6);
+    }
     expect(Object.values(FROSTPEAK_MINE_DEPOSITS).every((deposit) =>
       deposit.expeditionCost > 0 && deposit.rationAmount > 0 &&
       deposit.supportAmount > 0 && deposit.durationSeconds > 0 &&

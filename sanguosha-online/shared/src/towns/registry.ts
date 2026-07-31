@@ -31,7 +31,7 @@ export const TOWN_ROUTES: readonly TownRouteDefinition[] = [
     toTownId: "frostpeak",
     mode: "rail",
     name: "河谷—霜岭山地铁路",
-    coinFare: 45,
+    coinFare: 120,
     durationSeconds: 0,
   },
 ];

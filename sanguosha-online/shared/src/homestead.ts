@@ -29,6 +29,19 @@ import {
 } from "./towns/registry.js";
 import { PLANNED_TOWN_PREVIEWS } from "./towns/planned.js";
 import {
+  FROSTPEAK_HOMESTEAD_GOOD_CATALOG,
+  FROSTPEAK_HOMESTEAD_GOOD_IDS,
+  FROSTPEAK_HOMESTEAD_ORDER_TEMPLATE_CATALOG,
+  FROSTPEAK_HOMESTEAD_ORDER_TEMPLATE_IDS,
+  FROSTPEAK_HOMESTEAD_RECIPE_CATALOG,
+  FROSTPEAK_HOMESTEAD_RECIPE_IDS,
+  FROSTPEAK_HOMESTEAD_SUBSTITUTIONS,
+  FROSTPEAK_HOMESTEAD_VALUE_ROUTE_CATALOG,
+  FROSTPEAK_HOMESTEAD_VALUE_ROUTE_IDS,
+  FROSTPEAK_HOMESTEAD_WORLD_EVENT_CATALOG,
+  FROSTPEAK_HOMESTEAD_WORLD_EVENT_IDS,
+} from "./homestead-frostpeak.js";
+import {
   HOMESTEAD_ANIMAL_TRAIT_IDS,
   HOMESTEAD_ANIMAL_TRAIT_NAMES,
   HOMESTEAD_CROP_FAMILIES,
@@ -308,7 +321,7 @@ export const HOMESTEAD_FACILITY_IDS = [
 
 export type HomesteadFacilityId = (typeof HOMESTEAD_FACILITY_IDS)[number];
 
-export const HOMESTEAD_GOOD_IDS = [
+export const GREENVALE_HOMESTEAD_GOOD_IDS = [
   "flour",
   "coarse_feed",
   "fortified_feed",
@@ -318,6 +331,11 @@ export const HOMESTEAD_GOOD_IDS = [
   "mining_kit",
   "festival_crate",
   "greenhouse_parts",
+] as const;
+
+export const HOMESTEAD_GOOD_IDS = [
+  ...GREENVALE_HOMESTEAD_GOOD_IDS,
+  ...FROSTPEAK_HOMESTEAD_GOOD_IDS,
 ] as const;
 
 export type HomesteadGoodId = (typeof HOMESTEAD_GOOD_IDS)[number];
@@ -399,7 +417,7 @@ export const HOMESTEAD_FACILITIES: Readonly<
   },
 };
 
-export const HOMESTEAD_RECIPE_IDS = [
+export const GREENVALE_HOMESTEAD_RECIPE_IDS = [
   "mill_flour",
   "mill_coarse_feed",
   "feed_fortified",
@@ -411,13 +429,20 @@ export const HOMESTEAD_RECIPE_IDS = [
   "workshop_greenhouse_parts",
 ] as const;
 
+export const HOMESTEAD_RECIPE_IDS = [
+  ...GREENVALE_HOMESTEAD_RECIPE_IDS,
+  ...FROSTPEAK_HOMESTEAD_RECIPE_IDS,
+] as const;
+
 export type HomesteadRecipeId = (typeof HOMESTEAD_RECIPE_IDS)[number];
 
 export interface HomesteadRecipeDefinition {
   readonly id: HomesteadRecipeId;
+  readonly townId?: HomesteadTownId;
   readonly name: string;
   readonly facilityId: HomesteadFacilityId;
   readonly durationSeconds: number;
+  readonly coinCost: number;
   readonly inputs: readonly HomesteadResource[];
   readonly output: {
     readonly itemId: HomesteadGoodId;
@@ -425,14 +450,13 @@ export interface HomesteadRecipeDefinition {
   };
 }
 
-export const HOMESTEAD_RECIPES: Readonly<
-  Record<HomesteadRecipeId, HomesteadRecipeDefinition>
-> = {
+export const HOMESTEAD_RECIPES = {
   mill_flour: {
     id: "mill_flour",
     name: "研磨面粉",
     facilityId: "mill",
     durationSeconds: 10 * MINUTE,
+    coinCost: 2,
     inputs: [{ source: "farm", itemId: "wheat", quantity: 3 }],
     output: { itemId: "flour", quantity: 2 },
   },
@@ -441,6 +465,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "混合粗饲料",
     facilityId: "mill",
     durationSeconds: 15 * MINUTE,
+    coinCost: 3,
     inputs: [
       { source: "farm", itemId: "wheat", quantity: 2 },
       { source: "farm", itemId: "corn", quantity: 1 },
@@ -452,6 +477,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "矿物强化饲料",
     facilityId: "feed_factory",
     durationSeconds: 30 * MINUTE,
+    coinCost: 6,
     inputs: [
       { source: "goods", itemId: "coarse_feed", quantity: 2 },
       { source: "ranch", itemId: "egg", quantity: 1 },
@@ -464,6 +490,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "复合土壤改良剂",
     facilityId: "fertilizer_plant",
     durationSeconds: 45 * MINUTE,
+    coinCost: 8,
     inputs: [
       { source: "farm", itemId: "pumpkin", quantity: 1 },
       { source: "ranch", itemId: "egg", quantity: 1 },
@@ -476,6 +503,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "缝制耐寒工作服",
     facilityId: "textile_mill",
     durationSeconds: 60 * MINUTE,
+    coinCost: 16,
     inputs: [
       { source: "farm", itemId: "cotton", quantity: 2 },
       { source: "ranch", itemId: "wool", quantity: 1 },
@@ -488,6 +516,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "冶炼铁锭",
     facilityId: "smelter",
     durationSeconds: 90 * MINUTE,
+    coinCost: 18,
     inputs: [
       { source: "mine", itemId: "iron", quantity: 3 },
       { source: "mine", itemId: "coal", quantity: 1 },
@@ -499,6 +528,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "制作矿工防护套装",
     facilityId: "machine_shop",
     durationSeconds: 2 * 60 * MINUTE,
+    coinCost: 36,
     inputs: [
       { source: "farm", itemId: "cotton", quantity: 1 },
       { source: "ranch", itemId: "rabbit_fur", quantity: 1 },
@@ -511,6 +541,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "准备庆典食品箱",
     facilityId: "kitchen",
     durationSeconds: 75 * MINUTE,
+    coinCost: 24,
     inputs: [
       { source: "goods", itemId: "flour", quantity: 1 },
       { source: "ranch", itemId: "egg", quantity: 2 },
@@ -524,6 +555,7 @@ export const HOMESTEAD_RECIPES: Readonly<
     name: "组装温室构件",
     facilityId: "machine_shop",
     durationSeconds: 3 * 60 * MINUTE,
+    coinCost: 48,
     inputs: [
       { source: "farm", itemId: "cotton", quantity: 2 },
       { source: "ranch", itemId: "wool", quantity: 1 },
@@ -531,9 +563,12 @@ export const HOMESTEAD_RECIPES: Readonly<
     ],
     output: { itemId: "greenhouse_parts", quantity: 1 },
   },
-};
+  ...FROSTPEAK_HOMESTEAD_RECIPE_CATALOG,
+} as unknown as Readonly<
+  Record<HomesteadRecipeId, HomesteadRecipeDefinition>
+>;
 
-export const HOMESTEAD_ORDER_TEMPLATE_IDS = [
+export const GREENVALE_HOMESTEAD_ORDER_TEMPLATE_IDS = [
   "bakery_breakfast",
   "winter_uniforms",
   "miners_supply",
@@ -542,11 +577,17 @@ export const HOMESTEAD_ORDER_TEMPLATE_IDS = [
   "festival_banquet",
 ] as const;
 
+export const HOMESTEAD_ORDER_TEMPLATE_IDS = [
+  ...GREENVALE_HOMESTEAD_ORDER_TEMPLATE_IDS,
+  ...FROSTPEAK_HOMESTEAD_ORDER_TEMPLATE_IDS,
+] as const;
+
 export type HomesteadOrderTemplateId =
   (typeof HOMESTEAD_ORDER_TEMPLATE_IDS)[number];
 
 export interface HomesteadOrderTemplate {
   readonly id: HomesteadOrderTemplateId;
+  readonly townId?: HomesteadTownId;
   readonly title: string;
   readonly description: string;
   readonly requirements: readonly HomesteadResource[];
@@ -555,9 +596,7 @@ export interface HomesteadOrderTemplate {
   readonly researchReward: number;
 }
 
-export const HOMESTEAD_ORDER_TEMPLATES: Readonly<
-  Record<HomesteadOrderTemplateId, HomesteadOrderTemplate>
-> = {
+export const HOMESTEAD_ORDER_TEMPLATES = {
   bakery_breakfast: {
     id: "bakery_breakfast",
     title: "车站早餐供应",
@@ -634,9 +673,12 @@ export const HOMESTEAD_ORDER_TEMPLATES: Readonly<
     reputationReward: 45,
     researchReward: 12,
   },
-};
+  ...FROSTPEAK_HOMESTEAD_ORDER_TEMPLATE_CATALOG,
+} as unknown as Readonly<
+  Record<HomesteadOrderTemplateId, HomesteadOrderTemplate>
+>;
 
-export const HOMESTEAD_VALUE_ROUTE_IDS = [
+export const GREENVALE_HOMESTEAD_VALUE_ROUTE_IDS = [
   "valley_sauce_batch",
   "berry_preserves",
   "oil_and_melon_crate",
@@ -646,6 +688,11 @@ export const HOMESTEAD_VALUE_ROUTE_IDS = [
   "thermal_textiles",
   "utility_alloy",
   "jeweler_commission",
+] as const;
+
+export const HOMESTEAD_VALUE_ROUTE_IDS = [
+  ...GREENVALE_HOMESTEAD_VALUE_ROUTE_IDS,
+  ...FROSTPEAK_HOMESTEAD_VALUE_ROUTE_IDS,
 ] as const;
 
 export type HomesteadValueRouteId =
@@ -658,6 +705,7 @@ export type HomesteadValueRouteKind =
 
 export interface HomesteadValueRouteDefinition {
   readonly id: HomesteadValueRouteId;
+  readonly townId?: HomesteadTownId;
   readonly title: string;
   readonly description: string;
   readonly kind: HomesteadValueRouteKind;
@@ -673,9 +721,7 @@ export interface HomesteadValueRouteDefinition {
  * at least one route here or in the permanent recipe/order catalog. These
  * repeatable, once-per-day projects make the coverage visible and auditable.
  */
-export const HOMESTEAD_VALUE_ROUTES: Readonly<
-  Record<HomesteadValueRouteId, HomesteadValueRouteDefinition>
-> = {
+export const HOMESTEAD_VALUE_ROUTES = {
   valley_sauce_batch: {
     id: "valley_sauce_batch",
     title: "河谷调味酱批次",
@@ -808,13 +854,25 @@ export const HOMESTEAD_VALUE_ROUTES: Readonly<
     reputationReward: 6,
     researchReward: 2,
   },
-};
+  ...FROSTPEAK_HOMESTEAD_VALUE_ROUTE_CATALOG,
+} as unknown as Readonly<
+  Record<HomesteadValueRouteId, HomesteadValueRouteDefinition>
+>;
 
-export const HOMESTEAD_WORLD_EVENT_IDS = [
+export const GREENVALE_HOMESTEAD_WORLD_EVENT_IDS = [
   "steady_weather",
   "harvest_festival",
   "mountain_seepage",
   "cold_snap",
+  "heatwave",
+  "windstorm",
+  "hail",
+  "drought",
+] as const;
+
+export const HOMESTEAD_WORLD_EVENT_IDS = [
+  ...GREENVALE_HOMESTEAD_WORLD_EVENT_IDS,
+  ...FROSTPEAK_HOMESTEAD_WORLD_EVENT_IDS,
 ] as const;
 
 export type HomesteadWorldEventId =
@@ -939,19 +997,35 @@ export interface HomesteadWorldEventOption {
   readonly coinReward: number;
   readonly reputationReward: number;
   readonly researchReward: number;
+  readonly resolvesHazard?: boolean;
 }
 
 export interface HomesteadWorldEventDefinition {
   readonly id: HomesteadWorldEventId;
+  readonly townId?: HomesteadTownId;
   readonly title: string;
   readonly summary: string;
   readonly tone: "calm" | "opportunity" | "risk";
+  readonly category?:
+    | "routine"
+    | "weather"
+    | "disaster"
+    | "opportunity";
+  readonly weatherSignals?: readonly string[];
+  readonly hazard?: {
+    readonly id: string;
+    readonly affectedSectors: readonly (
+      HomesteadSectorId | "logistics"
+    )[];
+    readonly persistentUntilResolved: boolean;
+    readonly yieldPercent: number;
+    readonly durationPercent: number;
+    readonly description: string;
+  };
   readonly options: readonly HomesteadWorldEventOption[];
 }
 
-export const HOMESTEAD_WORLD_EVENTS: Readonly<
-  Record<HomesteadWorldEventId, HomesteadWorldEventDefinition>
-> = {
+export const HOMESTEAD_WORLD_EVENTS = {
   steady_weather: {
     id: "steady_weather",
     title: "三业协作周",
@@ -1007,11 +1081,11 @@ export const HOMESTEAD_WORLD_EVENTS: Readonly<
       {
         id: "open_market_stall",
         label: "开设庄园摊位",
-        description: "缴纳摊位费，换取稳定收益和少量声望。",
+        description: "占用公共会场经营高利润摊位，会损失少量当地声望。",
         costs: [],
         coinCost: 60,
-        coinReward: 150,
-        reputationReward: 6,
+        coinReward: 260,
+        reputationReward: -3,
         researchReward: 0,
       },
     ],
@@ -1082,7 +1156,134 @@ export const HOMESTEAD_WORLD_EVENTS: Readonly<
       },
     ],
   },
-};
+  heatwave: {
+    id: "heatwave",
+    title: "高温红色预警",
+    summary: "连续高温正在压制作物与牧群状态，需要安排降温和错峰生产。",
+    tone: "risk",
+    options: [
+      {
+        id: "open_cooling_stations",
+        label: "开放三业降温站",
+        description: "投入乳品与燃料维持循环水和通风设备。",
+        costs: [
+          { source: "ranch", itemId: "milk", quantity: 2 },
+          { source: "mine", itemId: "coal", quantity: 2 },
+        ],
+        coinCost: 0,
+        coinReward: 80,
+        reputationReward: 14,
+        researchReward: 4,
+      },
+      {
+        id: "stagger_work_shifts",
+        label: "实行错峰作业",
+        description: "支付临时调度费用，避免继续透支生产状态。",
+        costs: [],
+        coinCost: 100,
+        coinReward: 0,
+        reputationReward: 7,
+        researchReward: 1,
+      },
+    ],
+  },
+  windstorm: {
+    id: "windstorm",
+    title: "强风预警",
+    summary: "强风威胁棚舍、果园和露天运输，三业需要共同加固。",
+    tone: "risk",
+    options: [
+      {
+        id: "reinforce_shelters",
+        label: "加固棚舍与果架",
+        description: "使用温室构件和工作服组织抢修。",
+        costs: [
+          { source: "goods", itemId: "greenhouse_parts", quantity: 1 },
+          { source: "goods", itemId: "work_clothes", quantity: 1 },
+        ],
+        coinCost: 0,
+        coinReward: 100,
+        reputationReward: 15,
+        researchReward: 4,
+      },
+      {
+        id: "suspend_exposed_work",
+        label: "暂停露天作业",
+        description: "承担停工和安置费用，换取较低风险。",
+        costs: [],
+        coinCost: 120,
+        coinReward: 0,
+        reputationReward: 8,
+        researchReward: 1,
+      },
+    ],
+  },
+  hail: {
+    id: "hail",
+    title: "冰雹预警",
+    summary: "冰雹可能损伤作物和棚舍，当前窗口需要紧急覆盖。",
+    tone: "risk",
+    options: [
+      {
+        id: "deploy_hail_covers",
+        label: "铺设防雹覆盖",
+        description: "投入温室构件和土壤改良剂保护田块。",
+        costs: [
+          { source: "goods", itemId: "greenhouse_parts", quantity: 1 },
+          { source: "goods", itemId: "soil_conditioner", quantity: 1 },
+        ],
+        coinCost: 0,
+        coinReward: 70,
+        reputationReward: 13,
+        researchReward: 4,
+      },
+      {
+        id: "hire_emergency_crews",
+        label: "雇佣应急覆盖队",
+        description: "支付费用快速完成覆盖，不额外消耗库存。",
+        costs: [],
+        coinCost: 110,
+        coinReward: 0,
+        reputationReward: 6,
+        researchReward: 1,
+      },
+    ],
+  },
+  drought: {
+    id: "drought",
+    title: "阶段性干旱预警",
+    summary: "降水持续不足，农田和牧场用水需要重新分配。",
+    tone: "risk",
+    options: [
+      {
+        id: "reuse_process_water",
+        label: "启用加工回用水",
+        description: "投入改良剂和燃料运行临时净化与输水设备。",
+        costs: [
+          { source: "goods", itemId: "soil_conditioner", quantity: 1 },
+          { source: "mine", itemId: "coal", quantity: 2 },
+        ],
+        coinCost: 0,
+        coinReward: 90,
+        reputationReward: 14,
+        researchReward: 5,
+      },
+      {
+        id: "purchase_water_quota",
+        label: "购买应急水配额",
+        description: "支付较高费用保住本周期基本生产。",
+        costs: [],
+        coinCost: 140,
+        coinReward: 0,
+        reputationReward: 7,
+        researchReward: 1,
+      },
+    ],
+  },
+  ...FROSTPEAK_HOMESTEAD_WORLD_EVENT_CATALOG,
+} as unknown as Readonly<
+  Record<HomesteadWorldEventId, HomesteadWorldEventDefinition>
+>;
 
 export interface HomesteadProductionJob {
   readonly recipeId: HomesteadRecipeId;
@@ -1132,6 +1333,8 @@ export interface HomesteadWeatherState {
   readonly conditionText?: string;
   readonly stale?: boolean;
   readonly mechanicsEnabled?: boolean;
+  readonly alertsAvailable?: boolean;
+  readonly fallbackReason?: string | null;
   readonly providerAttributions?: readonly string[];
   readonly liveHazards?: readonly {
     readonly id: string;
@@ -1139,18 +1342,32 @@ export interface HomesteadWeatherState {
     readonly headline: string;
     readonly severity: number;
     readonly affectsGameplay: boolean;
+    readonly mechanicId?: HomesteadDisasterState["eventId"] | null;
     readonly expiresAt: number | null;
   }[];
 }
 
+export const HOMESTEAD_DISASTER_MECHANIC_IDS = [
+  "mountain_seepage",
+  "cold_snap",
+  "heatwave",
+  "windstorm",
+  "hail",
+  "drought",
+] as const;
+
 export interface HomesteadDisasterState {
-  readonly eventId: "mountain_seepage" | "cold_snap";
+  readonly eventId: (typeof HOMESTEAD_DISASTER_MECHANIC_IDS)[number];
+  readonly contentEventId?: HomesteadWorldEventId;
+  readonly providerAlertId?: string;
   readonly startedDayKey: string;
   remainingDays: number;
   unresolvedDays: number;
   severity: number;
   mitigated: boolean;
   resolution: string | null;
+  reputationPenaltyPaid?: number;
+  temporaryOptionId?: string | null;
 }
 
 export type HomesteadResilienceState = Record<HomesteadResilienceId, number>;
@@ -1365,6 +1582,7 @@ export interface HomesteadGameState {
   disaster: HomesteadDisasterState | null;
   resilience: HomesteadResilienceState;
   emergencyBoosts: HomesteadEmergencyBoostState;
+  handledWeatherAlertIds: string[];
   statistics: HomesteadStatistics;
   logs: HomesteadLogEntry[];
   research: HomesteadResearchState;
@@ -1532,11 +1750,14 @@ export interface HomesteadFacilityView extends HomesteadFacilityState {
   readonly ready: boolean;
   readonly progress: number;
   readonly canBuild: boolean;
+  readonly canAccelerate: boolean;
+  readonly accelerationDisabledReason: string | null;
   readonly maximumLevel: number;
   readonly nextUpgrade: {
     readonly level: number;
     readonly coinCost: number;
     readonly ironIngotCost: number;
+    readonly requiredGoodId: HomesteadGoodId;
     readonly requiredResearch: HomesteadResearchNodeId;
     readonly canUpgrade: boolean;
   } | null;
@@ -1545,7 +1766,9 @@ export interface HomesteadFacilityView extends HomesteadFacilityState {
 export interface HomesteadOrderView extends HomesteadOrderState {
   readonly template: HomesteadOrderTemplate;
   readonly requirements: readonly HomesteadResourceView[];
+  readonly logisticsCost: 2;
   readonly canComplete: boolean;
+  readonly disabledReason: string | null;
 }
 
 export interface HomesteadResearchView {
@@ -1566,6 +1789,7 @@ export interface HomesteadFeedProgramView {
   readonly canRun: boolean;
   readonly lockedByResearch: boolean;
   readonly hasResources: boolean;
+  readonly requiredGoodId: HomesteadGoodId | null;
 }
 
 export interface HomesteadMineLayerView {
@@ -1575,6 +1799,7 @@ export interface HomesteadMineLayerView {
   readonly lockedByResearch: boolean;
   readonly lockedByProtection: boolean;
   readonly hasResources: boolean;
+  readonly requiredKitGoodId: HomesteadGoodId;
 }
 
 export interface HomesteadNpcView extends HomesteadNpcMemory {
@@ -1599,6 +1824,7 @@ export interface HomesteadResilienceView {
     readonly coinCost: number;
     readonly researchCost: number;
     readonly ironIngotCost: number;
+    readonly requiredGoodId: HomesteadGoodId;
     readonly canUpgrade: boolean;
   } | null;
 }
@@ -1607,6 +1833,7 @@ export interface HomesteadEmergencyOperationView
   extends HomesteadEmergencyOperationDefinition {
   readonly activated: boolean;
   readonly costsView: readonly HomesteadResourceView[];
+  readonly logisticsCost: 1;
   readonly canActivate: boolean;
 }
 
@@ -1683,8 +1910,10 @@ export interface HomesteadMerchantItemView
 export interface HomesteadValueRouteView
   extends HomesteadValueRouteDefinition {
   readonly requirementsView: readonly HomesteadResourceView[];
+  readonly logisticsCost: 1 | 2;
   readonly completedToday: boolean;
   readonly canComplete: boolean;
+  readonly disabledReason: string | null;
 }
 
 export interface HomesteadGameView {
@@ -1708,6 +1937,7 @@ export interface HomesteadGameView {
     readonly recommendationSource: "rules" | "llm";
     readonly items: readonly HomesteadMerchantItemView[];
   };
+  readonly activeGoodIds: readonly HomesteadGoodId[];
   readonly valueRoutes: readonly HomesteadValueRouteView[];
   readonly goods: HomesteadGoodCounts;
   readonly facilities: readonly HomesteadFacilityView[];
@@ -1719,6 +1949,8 @@ export interface HomesteadGameView {
         readonly costsView: readonly HomesteadResourceView[];
         readonly canChoose: boolean;
         readonly missingCoins: number;
+        readonly missingReputation: number;
+        readonly temporaryAlreadyUsed: boolean;
       })[];
     };
   };
@@ -1726,7 +1958,10 @@ export interface HomesteadGameView {
     readonly definition: HomesteadWeatherDefinition;
     readonly tomorrow: HomesteadWeatherDefinition | null;
   };
-  readonly disaster: HomesteadDisasterState | null;
+  readonly disaster: (HomesteadDisasterState & {
+    readonly nextReputationLoss: number;
+    readonly reputationPenaltyContinues: boolean;
+  }) | null;
   readonly productionRules: HomesteadProductionRules;
   readonly resilience: readonly HomesteadResilienceView[];
   readonly emergencyOperations: readonly HomesteadEmergencyOperationView[];
@@ -1743,6 +1978,8 @@ export interface HomesteadGameView {
       readonly coinCost: number;
       readonly ironIngotCost: number;
       readonly miningKitCost: number;
+      readonly alloyGoodId: HomesteadGoodId;
+      readonly miningKitGoodId: HomesteadGoodId;
       readonly canUpgrade: boolean;
     } | null;
   };
@@ -1771,6 +2008,7 @@ export type HomesteadRuleErrorCode =
   | "HOMESTEAD_JOB_NOT_FOUND"
   | "HOMESTEAD_JOB_NOT_READY"
   | "HOMESTEAD_NOT_ENOUGH_COINS"
+  | "HOMESTEAD_NOT_ENOUGH_REPUTATION"
   | "HOMESTEAD_NOT_ENOUGH_RESOURCES"
   | "HOMESTEAD_ORDER_NOT_FOUND"
   | "HOMESTEAD_ORDER_COMPLETED"
@@ -1956,8 +2194,15 @@ export function getHomesteadProductionRules(
   state: HomesteadGameState,
 ): HomesteadProductionRules {
   const weatherDefinition = HOMESTEAD_WEATHER[state.weather.weatherId];
-  const weather = state.weather.mechanicsEnabled === false
-    ? {
+  const weatherMechanicsEnabled =
+    (
+      state.weather.source === "live" ||
+      state.weather.source === "rules"
+    ) &&
+    state.weather.mechanicsEnabled === true;
+  const weather = weatherMechanicsEnabled
+    ? weatherDefinition
+    : {
         ...weatherDefinition,
         name: `${weatherDefinition.name}·数据回退`,
         farmYieldPercent: 0,
@@ -1966,8 +2211,7 @@ export function getHomesteadProductionRules(
         ranchDurationPercent: 0,
         mineYieldPercent: 0,
         mineDurationPercent: 0,
-      }
-    : weatherDefinition;
+      };
   const stationLevel = state.resilience.weather_station;
   let farmYield = state.specializations.farm.yieldBonusPercent +
     reduceWeatherPenalty(weather.farmYieldPercent, stationLevel);
@@ -1992,19 +2236,94 @@ export function getHomesteadProductionRules(
   const mineSources = [weather.name];
   if (state.disaster && !state.disaster.mitigated) {
     const severity = state.disaster.severity;
-    if (state.disaster.eventId === "mountain_seepage") {
-      const scale = Math.max(0.25, 1 - state.resilience.drainage * 0.25);
-      mineYield -= Math.round(12 * severity * scale);
-      mineDuration += Math.round(15 * severity * scale);
-      mineSources.push(`矿山渗水·${severity}级`);
-    } else {
-      const scale = Math.max(0.25, 1 - state.resilience.shelter * 0.25);
-      farmYield -= Math.round(12 * severity * scale);
-      farmDuration += Math.round(12 * severity * scale);
-      ranchYield -= Math.round(10 * severity * scale);
-      ranchDuration += Math.round(10 * severity * scale);
-      farmSources.push(`突发寒潮·${severity}级`);
-      ranchSources.push(`突发寒潮·${severity}级`);
+    const shelterScale = Math.max(
+      0.25,
+      1 - state.resilience.shelter * 0.25,
+    );
+    const forecastScale = Math.max(
+      0.4,
+      1 - state.resilience.weather_station * 0.2,
+    );
+    const contentEvent = HOMESTEAD_WORLD_EVENTS[
+      state.disaster.contentEventId ?? state.disaster.eventId
+    ];
+    const customHazard = contentEvent.hazard;
+    if (customHazard) {
+      const hazardScale = Math.min(2, 1 + (severity - 1) * 0.5);
+      for (const sectorId of customHazard.affectedSectors) {
+        const yieldDelta = Math.round(
+          customHazard.yieldPercent * hazardScale,
+        );
+        const durationDelta = Math.round(
+          customHazard.durationPercent * hazardScale,
+        );
+        if (sectorId === "farm") {
+          farmYield += yieldDelta;
+          farmDuration += durationDelta;
+          farmSources.push(`${contentEvent.title}·${severity}级`);
+        } else if (sectorId === "ranch") {
+          ranchYield += yieldDelta;
+          ranchDuration += durationDelta;
+          ranchSources.push(`${contentEvent.title}·${severity}级`);
+        } else if (sectorId === "mine") {
+          mineYield += yieldDelta;
+          mineDuration += durationDelta;
+          mineSources.push(`${contentEvent.title}·${severity}级`);
+        }
+      }
+    } else switch (state.disaster.eventId) {
+      case "mountain_seepage": {
+        const scale = Math.max(0.25, 1 - state.resilience.drainage * 0.25);
+        mineYield -= Math.round(12 * severity * scale);
+        mineDuration += Math.round(15 * severity * scale);
+        mineSources.push(`矿山渗水·${severity}级`);
+        break;
+      }
+      case "cold_snap":
+        farmYield -= Math.round(12 * severity * shelterScale);
+        farmDuration += Math.round(12 * severity * shelterScale);
+        ranchYield -= Math.round(10 * severity * shelterScale);
+        ranchDuration += Math.round(10 * severity * shelterScale);
+        farmSources.push(`突发寒潮·${severity}级`);
+        ranchSources.push(`突发寒潮·${severity}级`);
+        break;
+      case "heatwave": {
+        const scale = Math.min(shelterScale, forecastScale);
+        farmYield -= Math.round(8 * severity * scale);
+        farmDuration += Math.round(8 * severity * scale);
+        ranchYield -= Math.round(9 * severity * scale);
+        ranchDuration += Math.round(8 * severity * scale);
+        farmSources.push(`高温预警·${severity}级`);
+        ranchSources.push(`高温预警·${severity}级`);
+        break;
+      }
+      case "windstorm":
+        farmYield -= Math.round(10 * severity * shelterScale);
+        farmDuration += Math.round(8 * severity * shelterScale);
+        ranchYield -= Math.round(5 * severity * shelterScale);
+        ranchDuration += Math.round(6 * severity * shelterScale);
+        mineDuration += Math.round(4 * severity * forecastScale);
+        farmSources.push(`强风预警·${severity}级`);
+        ranchSources.push(`强风预警·${severity}级`);
+        mineSources.push(`强风运输受阻·${severity}级`);
+        break;
+      case "hail": {
+        const scale = Math.min(shelterScale, forecastScale);
+        farmYield -= Math.round(15 * severity * scale);
+        farmDuration += Math.round(10 * severity * scale);
+        ranchYield -= Math.round(5 * severity * shelterScale);
+        farmSources.push(`冰雹预警·${severity}级`);
+        ranchSources.push(`冰雹预警·${severity}级`);
+        break;
+      }
+      case "drought":
+        farmYield -= Math.round(12 * severity * forecastScale);
+        farmDuration += Math.round(12 * severity * forecastScale);
+        ranchYield -= Math.round(6 * severity * shelterScale);
+        ranchDuration += Math.round(5 * severity * shelterScale);
+        farmSources.push(`干旱预警·${severity}级`);
+        ranchSources.push(`干旱预警·${severity}级`);
+        break;
     }
   }
   if (state.disaster) {
@@ -2027,6 +2346,31 @@ export function getHomesteadProductionRules(
       mineSources.push(HOMESTEAD_EMERGENCY_OPERATIONS.mine.name);
     }
   }
+  const animalTraits = new Set(
+    state.specializations.ranch.discoveredTraits,
+  );
+  if (animalTraits.has("productive")) {
+    ranchSources.push("高产特质");
+  }
+  if (animalTraits.has("steady")) {
+    ranchDuration -= 4;
+    ranchSources.push("性情稳定：工期 -4%");
+  }
+  if (animalTraits.has("resilient")) {
+    if (ranchYield < 0) ranchYield = Math.min(0, ranchYield + 6);
+    if (ranchDuration > 0) {
+      ranchDuration = Math.max(0, ranchDuration - 6);
+    }
+    ranchSources.push("强健特质：抵消恶劣环境");
+  }
+  if (animalTraits.has("fertile")) {
+    ranchYield += 3;
+    ranchSources.push("繁育力：产出 +3%");
+  }
+  if (animalTraits.has("rare_coat")) {
+    ranchYield += 2;
+    ranchSources.push("稀有毛色：产出 +2%");
+  }
   return {
     farm: {
       yieldPercent: clamp(farmYield, -60, 60),
@@ -2044,6 +2388,16 @@ export function getHomesteadProductionRules(
       label: mineSources.join(" + "),
     },
   };
+}
+
+export function isHomesteadLogisticsBlocked(
+  state: HomesteadGameState,
+): boolean {
+  if (!state.disaster || state.disaster.mitigated) return false;
+  const event = HOMESTEAD_WORLD_EVENTS[
+    state.disaster.contentEventId ?? state.disaster.eventId
+  ];
+  return event.hazard?.affectedSectors.includes("logistics") ?? false;
 }
 
 const HOMESTEAD_SEASON_DURATION_MS = 56 * 24 * 60 * 60 * 1_000;
@@ -2177,28 +2531,8 @@ function ruleAdvice(
   economy: HomesteadLinkedEconomy | null,
   now: number,
 ): HomesteadAdviceState {
-  if (game.townNetwork.activeTownId === "frostpeak") {
-    const town = game.townNetwork.towns.frostpeak;
-    const currentProblem = HOMESTEAD_FROSTPEAK_PROBLEMS.find(
-      ({ id }) => !town.resolvedProblemIds.includes(id),
-    );
-    const nextResource = town.inventory.snow_potato < 6
-      ? "先让冻土农场持续培育雪薯"
-      : town.inventory.yak_milk < 4
-      ? "把雪薯送入牦牛牧场形成耐寒乳品"
-      : "让霜晶矿场保持勘采并为地标预留矿物";
-    return {
-      dayKey: game.dayKey,
-      source: "rules",
-      headline: currentProblem?.title ?? "山地热力站进入最终复建阶段",
-      narrative: currentProblem?.description ??
-        "霜岭镇的三业闭环已经稳定，下一步是完成公共地标并建立长期商路。",
-      recommendation: nextResource,
-      npcId: "engineer_qiao",
-      npcLine: "高寒地区没有多余的生产环节，每一份物资都要接上下一段链条。",
-      generatedAt: now,
-    };
-  }
+  const activeTownId = game.townId ?? game.townNetwork.activeTownId;
+  const frostpeak = activeTownId === "frostpeak";
   const farm = game.specializations.farm;
   const ranch = game.specializations.ranch;
   const mine = game.specializations.mine;
@@ -2208,7 +2542,9 @@ function ruleAdvice(
       source: "rules",
       headline: "土壤健康正在成为瓶颈",
       narrative: "连续经营让部分田块的恢复速度落后于牧场和矿山。",
-      recommendation: "切换作物科属，并在解锁土壤科学后投入一份土壤改良剂。",
+      recommendation: frostpeak
+        ? "切换霜岭作物科属，并在解锁土壤科学后投入一份温床营养基。"
+        : "切换作物科属，并在解锁土壤科学后投入一份土壤改良剂。",
       npcId: "agronomist_lin",
       npcLine: "土地不会突然失去力量，它会提前给出信号。",
       generatedAt: now,
@@ -2220,7 +2556,9 @@ function ruleAdvice(
       source: "rules",
       headline: "先恢复牧群健康",
       narrative: "牧群健康低于稳定生产区间，继续追求高产会放大波动。",
-      recommendation: "完成动物营养研究，使用均衡或矿物强化饲料。",
+      recommendation: frostpeak
+        ? "完成动物营养研究，使用霜麦粉或高原营养饲料。"
+        : "完成动物营养研究，使用均衡或矿物强化饲料。",
       npcId: "veterinarian_su",
       npcLine: "健康是产量的上限，也是稀有特质能够保留下来的前提。",
       generatedAt: now,
@@ -2232,7 +2570,9 @@ function ruleAdvice(
       source: "rules",
       headline: "勘探进度已经超过防护能力",
       narrative: "浅层资料已经足够，下一步需要先建设可靠的防护体系。",
-      recommendation: "准备铁锭和矿工防护套装，将矿山防护提升到一级。",
+      recommendation: frostpeak
+        ? "准备耐寒合金锭和保温矿务套装，将矿山防护提升到一级。"
+        : "准备铁锭和矿工防护套装，将矿山防护提升到一级。",
       npcId: "engineer_qiao",
       npcLine: "深度从来不是荣誉，安全返回才是。",
       generatedAt: now,
@@ -2251,7 +2591,9 @@ function ruleAdvice(
       ? "三业库存仍处于紧平衡，任何单一原料短缺都会让加工队列停摆。"
       : "当前三业储备能够支撑多步加工，庄园进入结构升级窗口。",
     recommendation: stock < 12
-      ? "保持三个板块都在生产，并优先加工粗饲料、铁锭和土壤改良剂。"
+      ? frostpeak
+        ? "保持三个板块都在生产，并优先加工霜麦粉、耐寒合金和温床营养基。"
+        : "保持三个板块都在生产，并优先加工粗饲料、铁锭和土壤改良剂。"
       : "选择一个研究分支推进，同时为下一档赛季里程碑保留订单资源。",
     npcId: "agronomist_lin",
     npcLine: "稳定不是停在原地，而是每条链都留有余量。",
@@ -2262,6 +2604,21 @@ function ruleAdvice(
 function ensureLongTermState(game: HomesteadGameState, now: number): boolean {
   let changed = false;
   const raw = game as HomesteadGameState & Record<string, unknown>;
+  const localTownId =
+    game.townId ??
+    game.townNetwork?.activeTownId ??
+    "greenvale";
+  if (game.townId !== localTownId) {
+    (game as HomesteadGameState & { townId: HomesteadTownId }).townId =
+      localTownId;
+    changed = true;
+  }
+  for (const goodId of HOMESTEAD_GOOD_IDS) {
+    if (!Number.isSafeInteger(game.goods?.[goodId])) {
+      game.goods[goodId] = 0;
+      changed = true;
+    }
+  }
   if (!raw.research || typeof raw.research !== "object") {
     game.research = { unlocked: [] };
     changed = true;
@@ -2309,9 +2666,50 @@ function ensureLongTermState(game: HomesteadGameState, now: number): boolean {
     game.weather = weatherForDay(game.seed, game.dayKey);
     changed = true;
   }
+  if (
+    !Array.isArray(game.orders) ||
+    game.orders.some((order) => {
+      const template = HOMESTEAD_ORDER_TEMPLATES[order.templateId];
+      return !template || contentTownId(template) !== localTownId;
+    })
+  ) {
+    game.orders = ordersForDay(game.seed, game.dayKey, localTownId);
+    changed = true;
+  }
+  const currentEventDefinition =
+    HOMESTEAD_WORLD_EVENTS[game.worldEvent.eventId];
+  if (
+    !currentEventDefinition ||
+    contentTownId(currentEventDefinition) !== localTownId
+  ) {
+    game.worldEvent = game.disaster
+      ? eventForDisaster(game.disaster, game.dayKey)
+      : eventForDay(game.seed, game.dayKey, localTownId);
+    changed = true;
+  }
   if (!("disaster" in raw)) {
     game.disaster = null;
     changed = true;
+  }
+  if (game.disaster) {
+    if (
+      !Number.isSafeInteger(game.disaster.reputationPenaltyPaid) ||
+      (game.disaster.reputationPenaltyPaid ?? -1) < 0 ||
+      (game.disaster.reputationPenaltyPaid ?? 13) > 12
+    ) {
+      game.disaster.reputationPenaltyPaid = 0;
+      changed = true;
+    }
+    if (
+      game.disaster.temporaryOptionId !== null &&
+      (
+        typeof game.disaster.temporaryOptionId !== "string" ||
+        game.disaster.temporaryOptionId.length === 0
+      )
+    ) {
+      game.disaster.temporaryOptionId = null;
+      changed = true;
+    }
   }
   if (!raw.resilience || typeof raw.resilience !== "object") {
     game.resilience = createResilience();
@@ -2331,6 +2729,27 @@ function ensureLongTermState(game: HomesteadGameState, now: number): boolean {
   if (!raw.emergencyBoosts || typeof raw.emergencyBoosts !== "object") {
     game.emergencyBoosts = createEmergencyBoosts();
     changed = true;
+  }
+  if (!Array.isArray(raw.handledWeatherAlertIds)) {
+    game.handledWeatherAlertIds = [];
+    changed = true;
+  } else {
+    const normalizedAlertIds = [...new Set(
+      raw.handledWeatherAlertIds
+        .filter((alertId): alertId is string =>
+          typeof alertId === "string" && alertId.length > 0
+        )
+        .slice(-64),
+    )];
+    if (
+      normalizedAlertIds.length !== raw.handledWeatherAlertIds.length ||
+      normalizedAlertIds.some(
+        (alertId, index) => alertId !== raw.handledWeatherAlertIds[index],
+      )
+    ) {
+      game.handledWeatherAlertIds = normalizedAlertIds;
+      changed = true;
+    }
   }
   if (
     !Number.isSafeInteger(game.worldEvent.durationDays) ||
@@ -2373,6 +2792,24 @@ function ensureLongTermState(game: HomesteadGameState, now: number): boolean {
         ...facility.job,
         outputQuantity: recipe.output.quantity,
       };
+      changed = true;
+    }
+    if (
+      facility.job &&
+      contentTownId(HOMESTEAD_RECIPES[facility.job.recipeId]) !== localTownId
+    ) {
+      const replacementId = homesteadRecipeIdsForTown(localTownId).find(
+        (recipeId) =>
+          HOMESTEAD_RECIPES[recipeId].facilityId === facility.id,
+      );
+      facility.job = replacementId
+        ? {
+            ...facility.job,
+            recipeId: replacementId,
+            outputQuantity:
+              HOMESTEAD_RECIPES[replacementId].output.quantity,
+          }
+        : null;
       changed = true;
     }
     if (
@@ -2428,11 +2865,113 @@ function selectDailyIds<T extends string>(
     .slice(0, Math.min(count, ids.length));
 }
 
-function ordersForDay(seed: string, key: string): HomesteadOrderState[] {
+function contentTownId(
+  definition: { readonly townId?: HomesteadTownId },
+): HomesteadTownId {
+  return definition.townId ?? "greenvale";
+}
+
+type GreenvaleHomesteadGoodId =
+  (typeof GREENVALE_HOMESTEAD_GOOD_IDS)[number];
+
+function localGoodId(
+  townId: HomesteadTownId,
+  greenvaleId: GreenvaleHomesteadGoodId,
+): HomesteadGoodId {
+  return townId === "frostpeak"
+    ? FROSTPEAK_HOMESTEAD_SUBSTITUTIONS[greenvaleId]
+    : greenvaleId;
+}
+
+function localizeResource(
+  townId: HomesteadTownId,
+  resource: HomesteadResource,
+): HomesteadResource {
+  if (
+    townId === "frostpeak" &&
+    resource.source === "goods" &&
+    GREENVALE_HOMESTEAD_GOOD_IDS.includes(
+      resource.itemId as GreenvaleHomesteadGoodId,
+    )
+  ) {
+    return {
+      ...resource,
+      itemId: localGoodId(
+        townId,
+        resource.itemId as GreenvaleHomesteadGoodId,
+      ),
+    };
+  }
+  return resource;
+}
+
+const FROSTPEAK_CROP_FAMILY_REWARDS: Readonly<
+  Record<HomesteadCropFamily, FarmingCropId>
+> = {
+  grain: "frost_barley",
+  root: "snow_potato",
+  orchard: "cloudberry",
+  fiber: "silver_flax",
+};
+
+const FROSTPEAK_MINE_LAYER_REWARDS: Readonly<
+  Record<HomesteadMineLayerId, MineDepositId>
+> = {
+  shallow: "lignite",
+  middle: "magnetite",
+  deep: "frost_silver",
+  ancient: "frost_crystal",
+};
+
+export function homesteadGoodIdsForTown(
+  townId: HomesteadTownId,
+): readonly HomesteadGoodId[] {
+  return townId === "frostpeak"
+    ? FROSTPEAK_HOMESTEAD_GOOD_IDS
+    : GREENVALE_HOMESTEAD_GOOD_IDS;
+}
+
+export function homesteadRecipeIdsForTown(
+  townId: HomesteadTownId,
+): readonly HomesteadRecipeId[] {
+  return HOMESTEAD_RECIPE_IDS.filter(
+    (id) => contentTownId(HOMESTEAD_RECIPES[id]) === townId,
+  );
+}
+
+export function homesteadOrderTemplateIdsForTown(
+  townId: HomesteadTownId,
+): readonly HomesteadOrderTemplateId[] {
+  return HOMESTEAD_ORDER_TEMPLATE_IDS.filter(
+    (id) => contentTownId(HOMESTEAD_ORDER_TEMPLATES[id]) === townId,
+  );
+}
+
+export function homesteadValueRouteIdsForTown(
+  townId: HomesteadTownId,
+): readonly HomesteadValueRouteId[] {
+  return HOMESTEAD_VALUE_ROUTE_IDS.filter(
+    (id) => contentTownId(HOMESTEAD_VALUE_ROUTES[id]) === townId,
+  );
+}
+
+export function homesteadWorldEventIdsForTown(
+  townId: HomesteadTownId,
+): readonly HomesteadWorldEventId[] {
+  return HOMESTEAD_WORLD_EVENT_IDS.filter(
+    (id) => contentTownId(HOMESTEAD_WORLD_EVENTS[id]) === townId,
+  );
+}
+
+function ordersForDay(
+  seed: string,
+  key: string,
+  townId: HomesteadTownId,
+): HomesteadOrderState[] {
   return selectDailyIds(
-    HOMESTEAD_ORDER_TEMPLATE_IDS,
+    homesteadOrderTemplateIdsForTown(townId),
     HOMESTEAD_DAILY_ORDER_COUNT,
-    `${seed}:orders:${key}`,
+    `${seed}:${townId}:orders:${key}`,
   ).map((templateId, index) => ({
     id: `${key}:${index}:${templateId}`,
     templateId,
@@ -2441,10 +2980,17 @@ function ordersForDay(seed: string, key: string): HomesteadOrderState[] {
   }));
 }
 
-function eventForDay(seed: string, key: string): HomesteadWorldEventState {
-  const eventIds = ["steady_weather", "harvest_festival"] as const;
+function eventForDay(
+  seed: string,
+  key: string,
+  townId: HomesteadTownId,
+): HomesteadWorldEventState {
+  const eventIds = townId === "frostpeak"
+    ? (["frost_clear_shift", "frost_aurora_market",
+      "frost_geothermal_vent", "frost_ptarmigan_migration"] as const)
+    : (["steady_weather", "harvest_festival"] as const);
   const eventId = eventIds[
-    hashText(`${seed}:event:${key}`) % eventIds.length
+    hashText(`${seed}:${townId}:event:${key}`) % eventIds.length
   ]!;
   const definition = HOMESTEAD_WORLD_EVENTS[eventId];
   return {
@@ -2464,9 +3010,10 @@ function eventForDisaster(
   disaster: HomesteadDisasterState,
   key: string,
 ): HomesteadWorldEventState {
-  const definition = HOMESTEAD_WORLD_EVENTS[disaster.eventId];
+  const eventId = disaster.contentEventId ?? disaster.eventId;
+  const definition = HOMESTEAD_WORLD_EVENTS[eventId];
   return {
-    eventId: disaster.eventId,
+    eventId,
     dayKey: key,
     selectedOptionId: disaster.mitigated ? disaster.resolution : null,
     narrative: disaster.mitigated
@@ -2477,24 +3024,6 @@ function eventForDisaster(
     durationDays: disaster.remainingDays,
     unresolvedDays: disaster.unresolvedDays,
     severity: disaster.severity,
-  };
-}
-
-function maybeCreateDisaster(
-  seed: string,
-  key: string,
-): HomesteadDisasterState | null {
-  const roll = hashText(`${seed}:disaster:${key}`) % 100;
-  if (roll >= 16) return null;
-  const eventId = roll % 2 === 0 ? "mountain_seepage" : "cold_snap";
-  return {
-    eventId,
-    startedDayKey: key,
-    remainingDays: 3,
-    unresolvedDays: 0,
-    severity: 1,
-    mitigated: false,
-    resolution: null,
   };
 }
 
@@ -2619,12 +3148,13 @@ export function createHomesteadGame(input: {
     researchPoints: 0,
     goods: goodCounts(),
     facilities: createFacilities(),
-    orders: ordersForDay(input.seed, key),
-    worldEvent: eventForDay(input.seed, key),
+    orders: ordersForDay(input.seed, key, townId),
+    worldEvent: eventForDay(input.seed, key, townId),
     weather: weatherForDay(input.seed, key),
     disaster: null,
     resilience: createResilience(),
     emergencyBoosts: createEmergencyBoosts(),
+    handledWeatherAlertIds: [],
     statistics: {
       jobsStarted: 0,
       jobsCollected: 0,
@@ -2654,6 +3184,19 @@ export function createHomesteadGame(input: {
   };
 }
 
+function rememberHandledWeatherAlert(
+  game: HomesteadGameState,
+  providerAlertId: string | undefined,
+): void {
+  if (!providerAlertId || game.handledWeatherAlertIds.includes(providerAlertId)) {
+    return;
+  }
+  game.handledWeatherAlertIds = [
+    ...game.handledWeatherAlertIds,
+    providerAlertId,
+  ].slice(-64);
+}
+
 export function refreshHomesteadGame(
   state: HomesteadGameState,
   now: number,
@@ -2665,7 +3208,11 @@ export function refreshHomesteadGame(
     if (migrated) finishMutation(game, now);
     return game;
   }
-  const elapsedDays = Math.max(1, dayNumber(key) - dayNumber(game.dayKey));
+  const elapsedDays = dayNumber(key) - dayNumber(game.dayKey);
+  if (elapsedDays <= 0) {
+    if (migrated) finishMutation(game, now);
+    return game;
+  }
   game.specializations.farm.soilHealth = clamp(
     game.specializations.farm.soilHealth - 2 * elapsedDays,
     0,
@@ -2693,60 +3240,121 @@ export function refreshHomesteadGame(
     30,
   );
   if (game.disaster) {
+    const activeDisasterEvent = HOMESTEAD_WORLD_EVENTS[
+      game.disaster.contentEventId ?? game.disaster.eventId
+    ];
+    const persistentUntilResolved =
+      !game.disaster.mitigated &&
+      activeDisasterEvent.hazard?.persistentUntilResolved === true;
+    const activeDays = game.disaster.mitigated
+      ? 0
+      : persistentUntilResolved
+        ? elapsedDays
+        : Math.min(elapsedDays, game.disaster.remainingDays);
     game.disaster.remainingDays -= elapsedDays;
-    if (!game.disaster.mitigated) {
-      game.disaster.unresolvedDays += elapsedDays;
-      game.disaster.severity = clamp(
-        1 + Math.floor(game.disaster.unresolvedDays / 2),
+    let reputationLoss = 0;
+    for (let day = 0; day < activeDays; day += 1) {
+      game.disaster.unresolvedDays += 1;
+      game.disaster.severity = Math.max(
+        game.disaster.severity,
+        clamp(
+          1 + Math.floor(game.disaster.unresolvedDays / 2),
+          1,
+          3,
+        ),
+      );
+      const remainingPenalty = Math.max(
+        0,
+        12 - (game.disaster.reputationPenaltyPaid ?? 0),
+      );
+      const dailyLoss = Math.min(
+        game.reputation,
+        remainingPenalty,
+        game.disaster.severity * 2,
+      );
+      game.reputation -= dailyLoss;
+      game.disaster.reputationPenaltyPaid =
+        (game.disaster.reputationPenaltyPaid ?? 0) + dailyLoss;
+      reputationLoss += dailyLoss;
+    }
+    if (reputationLoss > 0) {
+      addLog(
+        game,
+        "community",
+        `已发生的灾害连续 ${activeDays} 个生效日未处理，当地声望下降 ${reputationLoss}（本次灾害累计已扣 ${game.disaster.reputationPenaltyPaid}/12）。`,
+        now,
+      );
+    }
+    if (persistentUntilResolved) {
+      game.disaster.remainingDays = Math.max(
         1,
-        3,
+        game.disaster.remainingDays,
       );
     }
     if (game.disaster.remainingDays <= 0) {
       if (!game.disaster.mitigated) {
-        if (game.disaster.eventId === "mountain_seepage") {
+        const disasterEvent = HOMESTEAD_WORLD_EVENTS[
+          game.disaster.contentEventId ?? game.disaster.eventId
+        ];
+        const affectedSectors =
+          disasterEvent.hazard?.affectedSectors ??
+          (
+            game.disaster.eventId === "mountain_seepage"
+              ? ["mine"]
+              : ["farm", "ranch"]
+          );
+        if (affectedSectors.includes("mine")) {
           game.specializations.mine.protectionLevel = Math.max(
             0,
             game.specializations.mine.protectionLevel - 1,
           );
-          addLog(
-            game,
-            "mine",
-            "矿山渗水未及时处理，灾后检修使防护等级下降 1 级。",
-            now,
-          );
-        } else {
+        }
+        if (affectedSectors.includes("farm")) {
           game.specializations.farm.soilHealth = clamp(
             game.specializations.farm.soilHealth - 8,
             0,
             100,
           );
+        }
+        if (affectedSectors.includes("ranch")) {
           game.specializations.ranch.herdHealth = clamp(
             game.specializations.ranch.herdHealth - 8,
             0,
             100,
           );
-          addLog(
-            game,
-            "event",
-            "寒潮未及时处理，土壤与牧群健康在灾后各下降 8 点。",
-            now,
-          );
         }
+        addLog(
+          game,
+          "event",
+          `${disasterEvent.title}未及时处理，受影响板块进入灾后检修。`,
+          now,
+        );
       }
+      rememberHandledWeatherAlert(
+        game,
+        game.disaster.providerAlertId,
+      );
       game.disaster = null;
       game.emergencyBoosts = createEmergencyBoosts();
     }
   }
-  if (!game.disaster) {
-    game.disaster = maybeCreateDisaster(game.seed, key);
-  }
+  // Persistent disasters are created only from a trusted live-weather alert.
+  // Rule-generated daily events continue below, but fallback or stale weather
+  // can never invent a production penalty or reputation loss.
   game.dayKey = key;
   game.weather = weatherForDay(game.seed, key);
-  game.orders = ordersForDay(game.seed, key);
+  game.orders = ordersForDay(
+    game.seed,
+    key,
+    game.townId ?? game.townNetwork.activeTownId,
+  );
   game.worldEvent = game.disaster
     ? eventForDisaster(game.disaster, key)
-    : eventForDay(game.seed, key);
+    : eventForDay(
+      game.seed,
+      key,
+      game.townId ?? game.townNetwork.activeTownId,
+    );
   game.advice = ruleAdvice(game, null, now);
   addLog(
     game,
@@ -2767,6 +3375,7 @@ export function applyHomesteadWorldEventDecision(
     readonly narrative?: string;
     readonly recommendation?: string;
     readonly npcLine?: string;
+    readonly merchantRecommendationId?: EstateMerchantItemId;
   },
 ): HomesteadGameState {
   if (!HOMESTEAD_WORLD_EVENTS[eventId]) {
@@ -2777,7 +3386,10 @@ export function applyHomesteadWorldEventDecision(
   }
   const game = structuredClone(state);
   ensureLongTermState(game, now);
-  const effectiveEventId = game.disaster?.eventId ?? eventId;
+  const effectiveEventId =
+    game.disaster?.contentEventId ??
+    game.disaster?.eventId ??
+    game.worldEvent.eventId;
   const definition = HOMESTEAD_WORLD_EVENTS[effectiveEventId];
   game.worldEvent = {
     eventId: effectiveEventId,
@@ -2794,18 +3406,11 @@ export function applyHomesteadWorldEventDecision(
     severity: game.disaster?.severity ??
       (definition.tone === "risk" ? 1 : 0),
   };
-  if (definition.tone === "risk" && !game.disaster) {
-    game.disaster = {
-      eventId: effectiveEventId as HomesteadDisasterState["eventId"],
-      startedDayKey: game.dayKey,
-      remainingDays: 3,
-      unresolvedDays: 0,
-      severity: 1,
-      mitigated: false,
-      resolution: null,
-    };
-  }
-  if (content?.recommendation?.trim() || content?.npcLine?.trim()) {
+  if (
+    content?.recommendation?.trim() ||
+    content?.npcLine?.trim() ||
+    content?.merchantRecommendationId
+  ) {
     game.advice = {
       dayKey: game.dayKey,
       source,
@@ -2819,6 +3424,12 @@ export function applyHomesteadWorldEventDecision(
         content.npcLine?.trim() ||
         "规则给出了边界，选择仍然属于庄主。",
       generatedAt: now,
+      ...(content.merchantRecommendationId
+        ? {
+            merchantRecommendationId:
+              content.merchantRecommendationId,
+          }
+        : {}),
     };
   }
   addLog(
@@ -2886,7 +3497,61 @@ function updateAdviceAfterAction(
   economy: HomesteadLinkedEconomy,
   now: number,
 ): void {
-  game.advice = ruleAdvice(game, economy, now);
+  if (
+    game.advice.source === "rules" ||
+    game.advice.dayKey !== game.dayKey
+  ) {
+    game.advice = ruleAdvice(game, economy, now);
+  }
+}
+
+function awardMerchantRenownMilestones(
+  game: HomesteadGameState,
+  now: number,
+): void {
+  const milestones = [
+    {
+      id: "renown:orders:10",
+      reached: game.statistics.ordersCompleted >= 10,
+      reward: 1,
+      label: "稳定履约",
+    },
+    {
+      id: "renown:orders:30",
+      reached: game.statistics.ordersCompleted >= 30,
+      reward: 2,
+      label: "区域供应商",
+    },
+    {
+      id: "renown:orders:75",
+      reached: game.statistics.ordersCompleted >= 75,
+      reward: 3,
+      label: "跨镇骨干商户",
+    },
+    {
+      id: "renown:events:10",
+      reached: game.statistics.eventsResolved >= 10,
+      reward: 1,
+      label: "社区协作者",
+    },
+    {
+      id: "renown:events:30",
+      reached: game.statistics.eventsResolved >= 30,
+      reward: 2,
+      label: "公共事务伙伴",
+    },
+  ] as const;
+  for (const milestone of milestones) {
+    if (!milestone.reached) continue;
+    if (!unlockCollection(game, milestone.id, now)) continue;
+    game.townNetwork.merchantRenown += milestone.reward;
+    addLog(
+      game,
+      "community",
+      `达成“${milestone.label}”，商会名望 +${milestone.reward}。`,
+      now,
+    );
+  }
 }
 
 function frostpeakTown(game: HomesteadGameState): HomesteadTownEstateState {
@@ -2938,6 +3603,7 @@ export function applyHomesteadAction(
   const effectiveNow = Math.max(now, state.updatedAt);
   const game = refreshHomesteadGame(state, effectiveNow);
   const economy = cloneEconomy(linkedEconomy);
+  const localTownId = game.townId ?? game.townNetwork.activeTownId;
   let farmChanged = false;
   let ranchChanged = false;
   let mineChanged = false;
@@ -3163,17 +3829,24 @@ export function applyHomesteadAction(
       effectiveNow,
     );
   } else if (action.type === "homestead_complete_value_route") {
-    if (game.townNetwork.activeTownId !== "greenvale") {
-      throw new HomesteadRuleError(
-        "HOMESTEAD_SPECIALIZATION_LOCKED",
-        "青禾镇增值项目只能在青禾镇经营中心办理",
-      );
-    }
     const route = HOMESTEAD_VALUE_ROUTES[action.routeId];
     if (!route) {
       throw new HomesteadRuleError(
         "HOMESTEAD_INVALID_ACTION",
         "未知的增值项目",
+      );
+    }
+    const activeTownId = game.townId ?? game.townNetwork.activeTownId;
+    if (contentTownId(route) !== activeTownId) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_SPECIALIZATION_LOCKED",
+        "该增值项目不属于当前城镇",
+      );
+    }
+    if (isHomesteadLogisticsBlocked(game)) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_SPECIALIZATION_LOCKED",
+        "当前持续灾害阻断了城镇物流，请先处理事件",
       );
     }
     if (game.valueRouteDayKeys[action.routeId] === game.dayKey) {
@@ -3187,6 +3860,7 @@ export function applyHomesteadAction(
     ranchChanged = ranchChanged || consumed.ranchChanged;
     mineChanged = mineChanged || consumed.mineChanged;
     economy.coins += route.coinReward;
+    economy.farmRevision += 1;
     farmChanged = true;
     game.reputation += route.reputationReward;
     game.researchPoints += route.researchReward;
@@ -3243,6 +3917,13 @@ export function applyHomesteadAction(
         "未知的加工配方",
       );
     }
+    const activeTownId = game.townId ?? game.townNetwork.activeTownId;
+    if (contentTownId(recipe) !== activeTownId) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_INVALID_ACTION",
+        "该加工配方不属于当前城镇",
+      );
+    }
     const facility = game.facilities.find(
       (candidate) => candidate.id === recipe.facilityId,
     )!;
@@ -3258,18 +3939,27 @@ export function applyHomesteadAction(
         "设施正在生产",
       );
     }
+    if (economy.coins < recipe.coinCost) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_NOT_ENOUGH_COINS",
+        "加工所需运营资金不足",
+      );
+    }
     const changed = consumeResources(game, economy, recipe.inputs);
     farmChanged ||= changed.farmChanged;
     ranchChanged ||= changed.ranchChanged;
     mineChanged ||= changed.mineChanged;
+    economy.coins -= recipe.coinCost;
+    economy.farmRevision += 1;
+    farmChanged = true;
     const speedMultiplier =
       1 +
       Math.max(0, facility.level - 1) * 0.2 +
       (hasResearch(game, "automation") ? 0.1 : 0);
-    const outputQuantity =
-      recipe.output.quantity +
-      Math.max(0, facility.level - 1) +
-      (hasResearch(game, "automation") ? 1 : 0);
+    // Facility upgrades improve throughput, not the material conversion
+    // ratio. Keeping batch output fixed prevents mature facilities from
+    // turning otherwise bounded recipes into exponential coin generators.
+    const outputQuantity = recipe.output.quantity;
     facility.job = {
       recipeId: recipe.id,
       startedAt: effectiveNow,
@@ -3312,6 +4002,12 @@ export function applyHomesteadAction(
       effectiveNow,
     );
   } else if (action.type === "homestead_complete_order") {
+    if (isHomesteadLogisticsBlocked(game)) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_SPECIALIZATION_LOCKED",
+        "当前持续灾害阻断了城镇物流，请先处理事件",
+      );
+    }
     const order = game.orders.find(
       (candidate) => candidate.id === action.orderId,
     );
@@ -3328,6 +4024,13 @@ export function applyHomesteadAction(
       );
     }
     const template = HOMESTEAD_ORDER_TEMPLATES[order.templateId];
+    const activeTownId = game.townId ?? game.townNetwork.activeTownId;
+    if (contentTownId(template) !== activeTownId) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_ORDER_NOT_FOUND",
+        "该联合订单不属于当前城镇",
+      );
+    }
     const changed = consumeResources(game, economy, template.requirements);
     farmChanged ||= changed.farmChanged;
     ranchChanged ||= changed.ranchChanged;
@@ -3358,10 +4061,37 @@ export function applyHomesteadAction(
         "事件选项不存在",
       );
     }
+    const activeDisaster =
+      game.disaster &&
+        (
+          game.disaster.contentEventId ??
+          game.disaster.eventId
+        ) === game.worldEvent.eventId
+        ? game.disaster
+        : null;
+    const isTemporaryDisasterOption =
+      activeDisaster !== null &&
+      option.resolvesHazard === false;
+    if (
+      isTemporaryDisasterOption &&
+      activeDisaster.temporaryOptionId
+    ) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_EVENT_ALREADY_RESOLVED",
+        "本次灾害已经执行过临时方案，请选择彻底处置方案",
+      );
+    }
     if (economy.coins < option.coinCost) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_COINS",
         "金币不足",
+      );
+    }
+    const reputationCost = Math.max(0, -option.reputationReward);
+    if (game.reputation < reputationCost) {
+      throw new HomesteadRuleError(
+        "HOMESTEAD_NOT_ENOUGH_REPUTATION",
+        `当地声望不足，还差 ${reputationCost - game.reputation}`,
       );
     }
     const changed = consumeResources(game, economy, option.costs);
@@ -3375,17 +4105,24 @@ export function applyHomesteadAction(
     }
     game.reputation += option.reputationReward;
     game.researchPoints += option.researchReward;
-    game.statistics.eventsResolved += 1;
-    addSeasonScore(game, 4, "community");
+    if (!isTemporaryDisasterOption) {
+      game.statistics.eventsResolved += 1;
+      addSeasonScore(game, 4, "community");
+    }
     game.worldEvent.selectedOptionId = option.id;
-    if (
-      game.disaster &&
-      game.disaster.eventId === game.worldEvent.eventId
-    ) {
-      game.disaster.mitigated = true;
-      game.disaster.resolution = option.id;
+    if (activeDisaster) {
+      if (option.resolvesHazard !== false) {
+        activeDisaster.mitigated = true;
+        activeDisaster.resolution = option.id;
+        rememberHandledWeatherAlert(
+          game,
+          activeDisaster.providerAlertId,
+        );
+      } else {
+        activeDisaster.temporaryOptionId = option.id;
+      }
       if (
-        game.disaster.eventId === "mountain_seepage" &&
+        activeDisaster.eventId === "mountain_seepage" &&
         option.id === "channel_water"
       ) {
         game.specializations.farm.soilHealth = clamp(
@@ -3395,7 +4132,7 @@ export function applyHomesteadAction(
         );
       }
       if (
-        game.disaster.eventId === "cold_snap" &&
+        activeDisaster.eventId === "cold_snap" &&
         option.id === "protect_homestead"
       ) {
         game.specializations.farm.soilHealth = clamp(
@@ -3413,7 +4150,11 @@ export function applyHomesteadAction(
     addLog(
       game,
       "event",
-      `${event.title}：选择了“${option.label}”。`,
+      `${event.title}：选择了“${option.label}”。${
+        isTemporaryDisasterOption
+          ? "临时方案已执行，灾害仍在持续。"
+          : ""
+      }`,
       effectiveNow,
     );
   } else if (action.type === "homestead_unlock_research") {
@@ -3484,16 +4225,17 @@ export function applyHomesteadAction(
         "金币不足",
       );
     }
-    if (game.goods.iron_ingot < upgrade.ironIngotCost) {
+    const upgradeGoodId = localGoodId(localTownId, "iron_ingot");
+    if (game.goods[upgradeGoodId] < upgrade.ironIngotCost) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_RESOURCES",
-        "铁锭不足",
+        "本地设施升级合金不足",
       );
     }
     economy.coins -= upgrade.coinCost;
     economy.farmRevision += 1;
     farmChanged = true;
-    game.goods.iron_ingot -= upgrade.ironIngotCost;
+    game.goods[upgradeGoodId] -= upgrade.ironIngotCost;
     facility.level = upgrade.level;
     game.statistics.facilityUpgrades += 1;
     addSeasonScore(game, 5, "community");
@@ -3519,7 +4261,8 @@ export function applyHomesteadAction(
         "完成土壤科学研究后才能使用改良剂",
       );
     }
-    if (action.useFertilizer && game.goods.soil_conditioner < 1) {
+    const fertilizerGoodId = localGoodId(localTownId, "soil_conditioner");
+    if (action.useFertilizer && game.goods[fertilizerGoodId] < 1) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_RESOURCES",
         "土壤改良剂不足",
@@ -3528,7 +4271,7 @@ export function applyHomesteadAction(
     const rotating = farm.lastCropFamily !== null &&
       farm.lastCropFamily !== action.cropFamily;
     if (action.useFertilizer) {
-      game.goods.soil_conditioner -= 1;
+      game.goods[fertilizerGoodId] -= 1;
       farm.fertilizerApplications += 1;
     }
     const researchBonus = hasResearch(game, "crop_rotation") ? 4 : 0;
@@ -3545,7 +4288,10 @@ export function applyHomesteadAction(
       0,
       25,
     );
-    economy.farmProduce[definition.rewardCropId] +=
+    const rewardCropId = localTownId === "frostpeak"
+      ? FROSTPEAK_CROP_FAMILY_REWARDS[action.cropFamily]
+      : definition.rewardCropId;
+    economy.farmProduce[rewardCropId] +=
       definition.rewardQuantity +
       (hasResearch(game, "crop_rotation") && rotating ? 1 : 0) +
       (farm.yieldBonusPercent >= 10 ? 1 : 0);
@@ -3578,17 +4324,21 @@ export function applyHomesteadAction(
         "尚未完成饲料方案所需研究",
       );
     }
+    const feedGoodId = definition.goodCost
+      ? localGoodId(localTownId, definition.goodCost.itemId)
+      : null;
     if (
       definition.goodCost &&
-      game.goods[definition.goodCost.itemId] < definition.goodCost.quantity
+      feedGoodId &&
+      game.goods[feedGoodId] < definition.goodCost.quantity
     ) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_RESOURCES",
         "加工饲料不足",
       );
     }
-    if (definition.goodCost) {
-      game.goods[definition.goodCost.itemId] -= definition.goodCost.quantity;
+    if (definition.goodCost && feedGoodId) {
+      game.goods[feedGoodId] -= definition.goodCost.quantity;
     }
     const nutritionBonus = hasResearch(game, "animal_nutrition") ? 3 : 0;
     ranch.herdHealth = clamp(
@@ -3625,7 +4375,10 @@ export function applyHomesteadAction(
         unlockCollection(game, `ranch:${discovered}`, effectiveNow);
       }
     }
-    economy.ranchProducts.egg +=
+    const rewardProductId: RanchProductId = localTownId === "frostpeak"
+      ? "snow_egg"
+      : "egg";
+    economy.ranchProducts[rewardProductId] +=
       1 +
       (ranch.discoveredTraits.includes("productive") ? 1 : 0) +
       Math.floor(ranch.productBonusPercent / 15);
@@ -3652,10 +4405,12 @@ export function applyHomesteadAction(
     const coinCost = [0, 250, 600, 1_200][level]!;
     const ironIngotCost = [0, 1, 2, 3][level]!;
     const miningKitCost = level >= 2 ? 1 : 0;
+    const alloyGoodId = localGoodId(localTownId, "iron_ingot");
+    const kitGoodId = localGoodId(localTownId, "mining_kit");
     if (
       economy.coins < coinCost ||
-      game.goods.iron_ingot < ironIngotCost ||
-      game.goods.mining_kit < miningKitCost
+      game.goods[alloyGoodId] < ironIngotCost ||
+      game.goods[kitGoodId] < miningKitCost
     ) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_RESOURCES",
@@ -3665,8 +4420,8 @@ export function applyHomesteadAction(
     economy.coins -= coinCost;
     economy.farmRevision += 1;
     farmChanged = true;
-    game.goods.iron_ingot -= ironIngotCost;
-    game.goods.mining_kit -= miningKitCost;
+    game.goods[alloyGoodId] -= ironIngotCost;
+    game.goods[kitGoodId] -= miningKitCost;
     mine.protectionLevel = level;
     addSeasonScore(game, 5, "specializations");
     addLog(game, "mine", `矿山防护提升到 ${level} 级。`, effectiveNow);
@@ -3690,13 +4445,14 @@ export function applyHomesteadAction(
         "研究或矿山防护等级不足",
       );
     }
-    if (game.goods.mining_kit < definition.kitCost) {
+    const surveyKitId = localGoodId(localTownId, "mining_kit");
+    if (game.goods[surveyKitId] < definition.kitCost) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_RESOURCES",
         "矿工防护套装不足",
       );
     }
-    game.goods.mining_kit -= definition.kitCost;
+    game.goods[surveyKitId] -= definition.kitCost;
     const geologyBonus = hasResearch(game, "geology") ? 1 : 0;
     mine.surveyProgress += definition.progressReward + geologyBonus;
     mine.lastManagedDayKey = game.dayKey;
@@ -3708,7 +4464,10 @@ export function applyHomesteadAction(
       0,
       25,
     );
-    economy.mineOres[definition.rewardDepositId] +=
+    const rewardDepositId = localTownId === "frostpeak"
+      ? FROSTPEAK_MINE_LAYER_REWARDS[action.layerId]
+      : definition.rewardDepositId;
+    economy.mineOres[rewardDepositId] +=
       definition.rewardQuantity +
       (hasResearch(game, "deep_mining") && definition.id !== "shallow" ? 1 : 0) +
       (mine.oreBonusPercent >= 15 ? 1 : 0);
@@ -3719,7 +4478,7 @@ export function applyHomesteadAction(
     addLog(
       game,
       "mine",
-      `完成${definition.name}勘探，获得 ${definition.rewardQuantity} 份${definition.rewardDepositId}线索。`,
+      `完成${definition.name}勘探，获得 ${definition.rewardQuantity} 份${rewardDepositId}线索。`,
       effectiveNow,
     );
   } else if (action.type === "homestead_talk_npc") {
@@ -3800,8 +4559,15 @@ export function applyHomesteadAction(
     farmChanged = true;
     game.researchPoints += milestone.researchReward;
     if (milestone.goodReward) {
-      game.goods[milestone.goodReward.itemId] +=
+      const rewardGoodId = localGoodId(
+        localTownId,
+        milestone.goodReward.itemId,
+      );
+      game.goods[rewardGoodId] +=
         milestone.goodReward.quantity;
+    }
+    if (milestone.id === "gold") {
+      game.townNetwork.merchantRenown += 2;
     }
     game.season.claimedMilestones.push(milestone.id);
     game.statistics.seasonRewardsClaimed += 1;
@@ -3829,10 +4595,11 @@ export function applyHomesteadAction(
         "韧性设施已经达到最高等级",
       );
     }
+    const resilienceGoodId = localGoodId(localTownId, "iron_ingot");
     if (
       economy.coins < upgrade.coinCost ||
       game.researchPoints < upgrade.researchCost ||
-      game.goods.iron_ingot < upgrade.ironIngotCost
+      game.goods[resilienceGoodId] < upgrade.ironIngotCost
     ) {
       throw new HomesteadRuleError(
         "HOMESTEAD_NOT_ENOUGH_RESOURCES",
@@ -3843,7 +4610,7 @@ export function applyHomesteadAction(
     economy.farmRevision += 1;
     farmChanged = true;
     game.researchPoints -= upgrade.researchCost;
-    game.goods.iron_ingot -= upgrade.ironIngotCost;
+    game.goods[resilienceGoodId] -= upgrade.ironIngotCost;
     game.resilience[action.resilienceId] = upgrade.level;
     addSeasonScore(game, 6, "community");
     addLog(
@@ -3872,7 +4639,10 @@ export function applyHomesteadAction(
         "本次灾害已经启动过该板块的应急增产",
       );
     }
-    const changed = consumeResources(game, economy, operation.costs);
+    const localizedCosts = operation.costs.map((resource) =>
+      localizeResource(localTownId, resource)
+    );
+    const changed = consumeResources(game, economy, localizedCosts);
     farmChanged ||= changed.farmChanged;
     ranchChanged ||= changed.ranchChanged;
     mineChanged ||= changed.mineChanged;
@@ -3896,6 +4666,7 @@ export function applyHomesteadAction(
   }
   if (ranchChanged) economy.ranchRevision += 1;
   if (mineChanged) economy.mineRevision += 1;
+  awardMerchantRenownMilestones(game, effectiveNow);
   updateAdviceAfterAction(game, economy, effectiveNow);
   finishMutation(game, effectiveNow);
   return {
@@ -3935,6 +4706,7 @@ function townEstateView(
   const payableFare = route
     ? hasRailPass ? Math.ceil(route.coinFare * 0.5) : route.coinFare
     : 0;
+  const logisticsBlocked = isHomesteadLogisticsBlocked(game);
   return {
     definition: HOMESTEAD_TOWNS[townId],
     active,
@@ -3950,9 +4722,12 @@ function townEstateView(
           payableFare,
           canTravel:
             unlock.unlocked &&
-            account.coins >= payableFare,
+            account.coins >= payableFare &&
+            !logisticsBlocked,
           reason: !unlock.unlocked
             ? "城镇尚未解锁"
+            : logisticsBlocked
+              ? "当前城镇交通受持续灾害影响"
             : account.coins < payableFare
               ? "交通费用所需金币不足"
               : null,
@@ -4072,6 +4847,43 @@ export function getHomesteadGameView(
     game.advice = ruleAdvice(game, economy, now);
   }
   const researchUnlocked = new Set(game.research.unlocked);
+  const logisticsRemaining = Math.max(
+    0,
+    account.logistics.capacity - account.logistics.used,
+  );
+  const logisticsBlocked = isHomesteadLogisticsBlocked(game);
+  const currentEventDisaster =
+    game.disaster &&
+      (
+        game.disaster.contentEventId ??
+        game.disaster.eventId
+      ) === game.worldEvent.eventId
+      ? game.disaster
+      : null;
+  const reputationPenaltyPaid =
+    game.disaster?.reputationPenaltyPaid ?? 0;
+  const reputationPenaltyContinues =
+    game.disaster !== null &&
+    !game.disaster.mitigated &&
+    reputationPenaltyPaid < 12;
+  const nextDisasterSeverity = game.disaster
+    ? Math.max(
+        game.disaster.severity,
+        clamp(
+          1 + Math.floor((game.disaster.unresolvedDays + 1) / 2),
+          1,
+          3,
+        ),
+      )
+    : 0;
+  const nextReputationLoss =
+    game.disaster && reputationPenaltyContinues
+      ? Math.min(
+          game.reputation,
+          12 - reputationPenaltyPaid,
+          nextDisasterSeverity * 2,
+        )
+      : 0;
   return {
     kind: "homestead",
     version: HOMESTEAD_STATE_VERSION,
@@ -4117,21 +4929,34 @@ export function getHomesteadGameView(
         };
       }),
     },
-    valueRoutes: HOMESTEAD_VALUE_ROUTE_IDS.map((routeId) => {
+    activeGoodIds: homesteadGoodIdsForTown(activeTownId),
+    valueRoutes: homesteadValueRouteIdsForTown(activeTownId).map((routeId) => {
       const route = HOMESTEAD_VALUE_ROUTES[routeId];
+      const logisticsCost = route.stage >= 3 ? 2 : 1;
       const requirementsView = route.requirements.map((resource) =>
         resourceView(game, economy, resource)
       );
       const completedToday =
         game.valueRouteDayKeys[routeId] === game.dayKey;
+      const missingResourceCount = requirementsView.filter(
+        (resource) => !resource.sufficient,
+      ).length;
+      const disabledReason = completedToday
+        ? "该增值项目今日已经完成"
+        : logisticsBlocked
+          ? "持续灾害正在阻断城镇物流，请先处理事件"
+          : logisticsRemaining < logisticsCost
+            ? `今日物流点不足（需要 ${logisticsCost}，剩余 ${logisticsRemaining}）`
+            : missingResourceCount > 0
+              ? `缺少 ${missingResourceCount} 类原料，红色库存标签列出了缺口`
+              : null;
       return {
         ...route,
         requirementsView,
+        logisticsCost,
         completedToday,
-        canComplete:
-          game.townNetwork.activeTownId === "greenvale" &&
-          !completedToday &&
-          requirementsView.every((resource) => resource.sufficient),
+        canComplete: disabledReason === null,
+        disabledReason,
       };
     }),
     goods: structuredClone(game.goods),
@@ -4149,8 +4974,9 @@ export function getHomesteadGameView(
               (now - facility.job.startedAt) /
                 Math.max(1, facility.job.completesAt - facility.job.startedAt),
             ),
-          );
+      );
       const upgrade = facility.built ? facilityUpgrade(facility) : null;
+      const upgradeGoodId = localGoodId(activeTownId, "iron_ingot");
       return {
         ...structuredClone(facility),
         definition,
@@ -4160,20 +4986,35 @@ export function getHomesteadGameView(
           !facility.built &&
           game.reputation >= definition.requiredReputation &&
           economy.coins >= definition.coinCost,
+        canAccelerate:
+          facility.job !== null &&
+          facility.job.completesAt > now &&
+          facility.job.accelerated !== true &&
+          account.merchantInventory.priority_dispatch > 0,
+        accelerationDisabledReason: facility.job === null
+          ? "该设施没有加工任务"
+          : facility.job.completesAt <= now
+            ? "任务已经完成"
+            : facility.job.accelerated
+              ? "每个任务最多使用一次"
+              : account.merchantInventory.priority_dispatch < 1
+                ? "未持有优先调度券"
+                : null,
         maximumLevel: HOMESTEAD_MAX_FACILITY_LEVEL,
         nextUpgrade: upgrade
           ? {
               ...upgrade,
+              requiredGoodId: upgradeGoodId,
               canUpgrade:
                 facility.job === null &&
                 economy.coins >= upgrade.coinCost &&
-                game.goods.iron_ingot >= upgrade.ironIngotCost &&
+                game.goods[upgradeGoodId] >= upgrade.ironIngotCost &&
                 researchUnlocked.has(upgrade.requiredResearch),
             }
           : null,
       };
     }),
-    recipes: HOMESTEAD_RECIPE_IDS.map((recipeId) => {
+    recipes: homesteadRecipeIdsForTown(activeTownId).map((recipeId) => {
       const recipe = HOMESTEAD_RECIPES[recipeId];
       const facility = game.facilities.find(
         (candidate) => candidate.id === recipe.facilityId,
@@ -4193,15 +5034,13 @@ export function getHomesteadGameView(
         canStart:
           facility.built &&
           facility.job === null &&
+          economy.coins >= recipe.coinCost &&
           inputsView.every((resource) => resource.sufficient),
         effectiveDurationSeconds: Math.max(
           60,
           Math.round(recipe.durationSeconds / speedMultiplier),
         ),
-        effectiveOutputQuantity:
-          recipe.output.quantity +
-          Math.max(0, facility.level - 1) +
-          (researchUnlocked.has("automation") ? 1 : 0),
+        effectiveOutputQuantity: recipe.output.quantity,
       };
     }),
     orders: game.orders.map((order) => {
@@ -4209,13 +5048,25 @@ export function getHomesteadGameView(
       const requirements = template.requirements.map((resource) =>
         resourceView(game, economy, resource)
       );
+      const missingResourceCount = requirements.filter(
+        (resource) => !resource.sufficient,
+      ).length;
+      const disabledReason = order.completed
+        ? "联合订单已经交付"
+        : logisticsBlocked
+          ? "持续灾害正在阻断城镇物流，请先处理事件"
+          : logisticsRemaining < 2
+            ? `今日物流点不足（需要 2，剩余 ${logisticsRemaining}）`
+            : missingResourceCount > 0
+              ? `缺少 ${missingResourceCount} 类物资，红色库存标签列出了缺口`
+              : null;
       return {
         ...order,
         template,
         requirements,
-        canComplete:
-          !order.completed &&
-          requirements.every((resource) => resource.sufficient),
+        logisticsCost: 2,
+        canComplete: disabledReason === null,
+        disabledReason,
       };
     }),
     worldEvent: {
@@ -4229,14 +5080,25 @@ export function getHomesteadGameView(
             const costsView = option.costs.map((resource) =>
               resourceView(game, economy, resource)
             );
+            const missingReputation = Math.max(
+              0,
+              -option.reputationReward - game.reputation,
+            );
+            const temporaryAlreadyUsed =
+              option.resolvesHazard === false &&
+              Boolean(currentEventDisaster?.temporaryOptionId);
             return {
               ...option,
               costsView,
               canChoose:
                 game.worldEvent.selectedOptionId === null &&
                 economy.coins >= option.coinCost &&
+                missingReputation === 0 &&
+                !temporaryAlreadyUsed &&
                 costsView.every((resource) => resource.sufficient),
               missingCoins: Math.max(0, option.coinCost - economy.coins),
+              missingReputation,
+              temporaryAlreadyUsed,
             };
           }),
         };
@@ -4245,17 +5107,26 @@ export function getHomesteadGameView(
     weather: {
       ...structuredClone(game.weather),
       definition: HOMESTEAD_WEATHER[game.weather.weatherId],
-      tomorrow: game.resilience.weather_station >= 1
+      tomorrow:
+        game.resilience.weather_station >= 1 &&
+          game.weather.source === "rules"
         ? HOMESTEAD_WEATHER[
             weatherForDay(game.seed, nextDayKey(game.dayKey)).weatherId
           ]
         : null,
     },
-    disaster: structuredClone(game.disaster),
+    disaster: game.disaster
+      ? {
+          ...structuredClone(game.disaster),
+          nextReputationLoss,
+          reputationPenaltyContinues,
+        }
+      : null,
     productionRules: getHomesteadProductionRules(game),
     resilience: HOMESTEAD_RESILIENCE_IDS.map((id) => {
       const level = game.resilience[id];
       const upgrade = resilienceUpgrade(id, level);
+      const requiredGoodId = localGoodId(activeTownId, "iron_ingot");
       return {
         definition: HOMESTEAD_RESILIENCE[id],
         level,
@@ -4263,10 +5134,11 @@ export function getHomesteadGameView(
         nextUpgrade: upgrade
           ? {
               ...upgrade,
+              requiredGoodId,
               canUpgrade:
                 economy.coins >= upgrade.coinCost &&
                 game.researchPoints >= upgrade.researchCost &&
-                game.goods.iron_ingot >= upgrade.ironIngotCost,
+                game.goods[requiredGoodId] >= upgrade.ironIngotCost,
             }
           : null,
       };
@@ -4274,16 +5146,21 @@ export function getHomesteadGameView(
     emergencyOperations: (["farm", "ranch", "mine"] as const).map(
       (sectorId) => {
         const operation = HOMESTEAD_EMERGENCY_OPERATIONS[sectorId];
-        const costsView = operation.costs.map((resource) =>
+        const localizedCosts = operation.costs.map((resource) =>
+          localizeResource(activeTownId, resource)
+        );
+        const costsView = localizedCosts.map((resource) =>
           resourceView(game, economy, resource)
         );
         return {
           ...operation,
           activated: game.emergencyBoosts[sectorId],
           costsView,
+          logisticsCost: 1,
           canActivate:
             game.disaster !== null &&
             !game.emergencyBoosts[sectorId] &&
+            logisticsRemaining >= 1 &&
             costsView.every((resource) => resource.sufficient),
         };
       },
@@ -4306,23 +5183,35 @@ export function getHomesteadGameView(
     }),
     specializations: {
       ...structuredClone(game.specializations),
-      cropFamilies: HOMESTEAD_CROP_FAMILY_IDS.map((cropFamily) => ({
-        definition: HOMESTEAD_CROP_FAMILIES[cropFamily],
-        canPlan:
-          game.specializations.farm.lastManagedDayKey !== game.dayKey,
-        rotationImprovesSoil:
-          game.specializations.farm.lastCropFamily !== null &&
-          game.specializations.farm.lastCropFamily !== cropFamily,
-      })),
+      cropFamilies: HOMESTEAD_CROP_FAMILY_IDS.map((cropFamily) => {
+        const definition = HOMESTEAD_CROP_FAMILIES[cropFamily];
+        return {
+          definition: activeTownId === "frostpeak"
+            ? {
+                ...definition,
+                example: "霜岭本地特色作物",
+                rewardCropId: FROSTPEAK_CROP_FAMILY_REWARDS[cropFamily],
+              }
+            : definition,
+          canPlan:
+            game.specializations.farm.lastManagedDayKey !== game.dayKey,
+          rotationImprovesSoil:
+            game.specializations.farm.lastCropFamily !== null &&
+            game.specializations.farm.lastCropFamily !== cropFamily,
+        };
+      }),
       feedPrograms: HOMESTEAD_FEED_PROGRAM_IDS.map((programId) => {
         const definition = HOMESTEAD_FEED_PROGRAMS[programId];
         const lockedByResearch = Boolean(
           definition.requiredResearch &&
             !researchUnlocked.has(definition.requiredResearch),
         );
+        const requiredGoodId = definition.goodCost
+          ? localGoodId(activeTownId, definition.goodCost.itemId)
+          : null;
         const hasResources =
           !definition.goodCost ||
-          game.goods[definition.goodCost.itemId] >=
+          game.goods[requiredGoodId!] >=
             definition.goodCost.quantity;
         return {
           definition,
@@ -4332,10 +5221,17 @@ export function getHomesteadGameView(
             hasResources,
           lockedByResearch,
           hasResources,
+          requiredGoodId,
         };
       }),
       mineLayers: HOMESTEAD_MINE_LAYER_IDS.map((layerId) => {
-        const definition = HOMESTEAD_MINE_LAYERS[layerId];
+        const baseDefinition = HOMESTEAD_MINE_LAYERS[layerId];
+        const definition = activeTownId === "frostpeak"
+          ? {
+              ...baseDefinition,
+              rewardDepositId: FROSTPEAK_MINE_LAYER_REWARDS[layerId],
+            }
+          : baseDefinition;
         const lockedByResearch = Boolean(
           definition.requiredResearch &&
             !researchUnlocked.has(definition.requiredResearch),
@@ -4343,8 +5239,12 @@ export function getHomesteadGameView(
         const lockedByProtection =
           game.specializations.mine.protectionLevel <
           definition.requiredProtection;
+        const requiredKitGoodId = localGoodId(
+          activeTownId,
+          "mining_kit",
+        );
         const hasResources =
-          game.goods.mining_kit >= definition.kitCost;
+          game.goods[requiredKitGoodId] >= definition.kitCost;
         return {
           definition,
           discovered:
@@ -4357,6 +5257,7 @@ export function getHomesteadGameView(
           lockedByResearch,
           lockedByProtection,
           hasResources,
+          requiredKitGoodId,
         };
       }),
       canManageFarmToday:
@@ -4373,15 +5274,22 @@ export function getHomesteadGameView(
               const coinCost = [0, 250, 600, 1_200][level]!;
               const ironIngotCost = [0, 1, 2, 3][level]!;
               const miningKitCost = level >= 2 ? 1 : 0;
+              const alloyGoodId = localGoodId(activeTownId, "iron_ingot");
+              const miningKitGoodId = localGoodId(
+                activeTownId,
+                "mining_kit",
+              );
               return {
                 level,
                 coinCost,
                 ironIngotCost,
                 miningKitCost,
+                alloyGoodId,
+                miningKitGoodId,
                 canUpgrade:
                   economy.coins >= coinCost &&
-                  game.goods.iron_ingot >= ironIngotCost &&
-                  game.goods.mining_kit >= miningKitCost,
+                  game.goods[alloyGoodId] >= ironIngotCost &&
+                  game.goods[miningKitGoodId] >= miningKitCost,
               };
             })(),
     },
@@ -4425,9 +5333,12 @@ export function getHomesteadGameView(
       facilityNames: Object.fromEntries(
         HOMESTEAD_FACILITY_IDS.map((id) => [id, HOMESTEAD_FACILITIES[id].name]),
       ),
-      recipeIds: HOMESTEAD_RECIPE_IDS,
+      recipeIds: homesteadRecipeIdsForTown(activeTownId),
       recipeNames: Object.fromEntries(
-        HOMESTEAD_RECIPE_IDS.map((id) => [id, HOMESTEAD_RECIPES[id].name]),
+        homesteadRecipeIdsForTown(activeTownId).map((id) => [
+          id,
+          HOMESTEAD_RECIPES[id].name,
+        ]),
       ),
     }).map((definition) => {
       const unlocked = game.collections.find(
@@ -4461,8 +5372,21 @@ function isNonNegativeInteger(value: unknown): boolean {
 function validGoodCounts(value: unknown): value is HomesteadGoodCounts {
   return (
     isRecord(value) &&
-    HOMESTEAD_GOOD_IDS.every((id) => isNonNegativeInteger(value[id]))
+    HOMESTEAD_GOOD_IDS.every(
+      (id) => value[id] === undefined || isNonNegativeInteger(value[id]),
+    )
   );
+}
+
+function validOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined ||
+    (typeof value === "number" && Number.isFinite(value));
+}
+
+function validOptionalNullableFiniteNumber(value: unknown): boolean {
+  return value === undefined ||
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value));
 }
 
 function validTownResourceCounts(
@@ -4543,6 +5467,13 @@ export function assertRestorableHomesteadGameState(
     throw new Error("庄园存档结构无效");
   }
 
+  if (
+    value.townId !== undefined &&
+    !HOMESTEAD_TOWN_IDS.includes(value.townId as HomesteadTownId)
+  ) {
+    throw new Error("庄园城镇存档无效");
+  }
+
   for (const [index, facility] of value.facilities.entries()) {
     if (
       !isRecord(facility) ||
@@ -4561,6 +5492,8 @@ export function assertRestorableHomesteadGameState(
           (facility.job.outputQuantity !== undefined &&
             (!isNonNegativeInteger(facility.job.outputQuantity) ||
               Number(facility.job.outputQuantity) < 1)) ||
+          (facility.job.accelerated !== undefined &&
+            typeof facility.job.accelerated !== "boolean") ||
           Number(facility.job.completesAt) <=
             Number(facility.job.startedAt)))
     ) {
@@ -4627,7 +5560,84 @@ export function assertRestorableHomesteadGameState(
       !HOMESTEAD_WEATHER_IDS.includes(
         value.weather.weatherId as HomesteadWeatherId,
       ) ||
-      typeof value.weather.dayKey !== "string"
+      typeof value.weather.dayKey !== "string" ||
+      (
+        value.weather.source !== undefined &&
+        !["live", "last_known_good", "fallback", "rules"].includes(
+          String(value.weather.source),
+        )
+      ) ||
+      !validOptionalFiniteNumber(value.weather.observedAt) ||
+      !validOptionalFiniteNumber(value.weather.validUntil) ||
+      (
+        value.weather.anchorCity !== undefined &&
+        typeof value.weather.anchorCity !== "string"
+      ) ||
+      !validOptionalNullableFiniteNumber(value.weather.temperatureC) ||
+      !validOptionalNullableFiniteNumber(value.weather.humidityPercent) ||
+      !validOptionalNullableFiniteNumber(value.weather.precipitationMm) ||
+      !validOptionalNullableFiniteNumber(value.weather.windKph) ||
+      (
+        value.weather.conditionText !== undefined &&
+        typeof value.weather.conditionText !== "string"
+      ) ||
+      (
+        value.weather.stale !== undefined &&
+        typeof value.weather.stale !== "boolean"
+      ) ||
+      (
+        value.weather.mechanicsEnabled !== undefined &&
+        typeof value.weather.mechanicsEnabled !== "boolean"
+      ) ||
+      (
+        value.weather.alertsAvailable !== undefined &&
+        typeof value.weather.alertsAvailable !== "boolean"
+      ) ||
+      (
+        value.weather.fallbackReason !== undefined &&
+        value.weather.fallbackReason !== null &&
+        typeof value.weather.fallbackReason !== "string"
+      ) ||
+      (
+        value.weather.providerAttributions !== undefined &&
+        (
+          !Array.isArray(value.weather.providerAttributions) ||
+          value.weather.providerAttributions.some(
+            (entry) => typeof entry !== "string",
+          )
+        )
+      ) ||
+      (
+        value.weather.liveHazards !== undefined &&
+        (
+          !Array.isArray(value.weather.liveHazards) ||
+          value.weather.liveHazards.some(
+            (hazard) =>
+              !isRecord(hazard) ||
+              typeof hazard.id !== "string" ||
+              typeof hazard.name !== "string" ||
+              typeof hazard.headline !== "string" ||
+              !isNonNegativeInteger(hazard.severity) ||
+              Number(hazard.severity) > 3 ||
+              typeof hazard.affectsGameplay !== "boolean" ||
+              (
+                hazard.mechanicId !== undefined &&
+                hazard.mechanicId !== null &&
+                !HOMESTEAD_DISASTER_MECHANIC_IDS.includes(
+                  hazard.mechanicId as
+                    (typeof HOMESTEAD_DISASTER_MECHANIC_IDS)[number],
+                )
+              ) ||
+              (
+                hazard.expiresAt !== null &&
+                (
+                  typeof hazard.expiresAt !== "number" ||
+                  !Number.isFinite(hazard.expiresAt)
+                )
+              ),
+          )
+        )
+      )
     )
   ) {
     throw new Error("庄园天气状态无效");
@@ -4637,8 +5647,28 @@ export function assertRestorableHomesteadGameState(
     value.disaster !== null &&
     (
       !isRecord(value.disaster) ||
-      !["mountain_seepage", "cold_snap"].includes(
+      ![
+        "mountain_seepage",
+        "cold_snap",
+        "heatwave",
+        "windstorm",
+        "hail",
+        "drought",
+      ].includes(
         String(value.disaster.eventId),
+      ) ||
+      (
+        value.disaster.contentEventId !== undefined &&
+        !HOMESTEAD_WORLD_EVENT_IDS.includes(
+          value.disaster.contentEventId as HomesteadWorldEventId,
+        )
+      ) ||
+      (
+        value.disaster.providerAlertId !== undefined &&
+        (
+          typeof value.disaster.providerAlertId !== "string" ||
+          value.disaster.providerAlertId.length === 0
+        )
       ) ||
       typeof value.disaster.startedDayKey !== "string" ||
       !isNonNegativeInteger(value.disaster.remainingDays) ||
@@ -4651,6 +5681,23 @@ export function assertRestorableHomesteadGameState(
       (
         value.disaster.resolution !== null &&
         typeof value.disaster.resolution !== "string"
+      ) ||
+      (
+        value.disaster.reputationPenaltyPaid !== undefined &&
+        (
+          !isNonNegativeInteger(
+            value.disaster.reputationPenaltyPaid,
+          ) ||
+          Number(value.disaster.reputationPenaltyPaid) > 12
+        )
+      ) ||
+      (
+        value.disaster.temporaryOptionId !== undefined &&
+        value.disaster.temporaryOptionId !== null &&
+        (
+          typeof value.disaster.temporaryOptionId !== "string" ||
+          value.disaster.temporaryOptionId.length === 0
+        )
       )
     )
   ) {
@@ -4682,6 +5729,20 @@ export function assertRestorableHomesteadGameState(
     )
   ) {
     throw new Error("庄园灾期增产状态无效");
+  }
+  if (
+    value.handledWeatherAlertIds !== undefined &&
+    (
+      !Array.isArray(value.handledWeatherAlertIds) ||
+      value.handledWeatherAlertIds.length > 64 ||
+      value.handledWeatherAlertIds.some(
+        (alertId) => typeof alertId !== "string" || alertId.length === 0,
+      ) ||
+      new Set(value.handledWeatherAlertIds).size !==
+        value.handledWeatherAlertIds.length
+    )
+  ) {
+    throw new Error("庄园天气预警处理记录无效");
   }
 
   if (value.research !== undefined) {
@@ -4816,6 +5877,7 @@ export function assertRestorableHomesteadGameState(
     for (const routeId of HOMESTEAD_VALUE_ROUTE_IDS) {
       const completedDayKey = value.valueRouteDayKeys[routeId];
       if (
+        completedDayKey !== undefined &&
         completedDayKey !== null &&
         typeof completedDayKey !== "string"
       ) {
@@ -4835,7 +5897,15 @@ export function assertRestorableHomesteadGameState(
       typeof value.advice.recommendation !== "string" ||
       !HOMESTEAD_NPC_IDS.includes(value.advice.npcId as HomesteadNpcId) ||
       typeof value.advice.npcLine !== "string" ||
-      !isNonNegativeInteger(value.advice.generatedAt)
+      !isNonNegativeInteger(value.advice.generatedAt) ||
+      (
+        value.advice.merchantRecommendationId !== undefined &&
+        value.advice.merchantRecommendationId !== null &&
+        !Object.prototype.hasOwnProperty.call(
+          ESTATE_MERCHANT_ITEMS,
+          String(value.advice.merchantRecommendationId),
+        )
+      )
     )
   ) {
     throw new Error("庄园经营建议存档无效");

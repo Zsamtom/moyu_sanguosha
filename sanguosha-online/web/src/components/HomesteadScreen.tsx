@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  Popconfirm,
   Progress,
   Spin,
   Tag,
@@ -11,15 +12,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
 import {
   isLatestRequest,
-  isRevisionVectorAtLeast,
+  isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
 import type {
   HomesteadClientAction,
+  HomesteadDisasterView,
   HomesteadFacilityView,
   HomesteadResourceView,
   HomesteadSnapshot,
-  HomesteadTownEstateView,
-  HomesteadTownResourceId,
 } from '../types';
 import '../farm.css';
 import '../homestead.css';
@@ -49,6 +49,30 @@ const ITEM_NAMES: Record<string, string> = {
   silver: '银矿',
   gold: '金矿',
   crystal: '晶簇',
+  frost_barley: '霜麦',
+  snow_potato: '雪薯',
+  ice_turnip: '冰芜菁',
+  highland_bean: '高原豆',
+  cloudberry: '云莓',
+  alpine_herb: '高山药草',
+  ice_lettuce: '冰叶菜',
+  juniper_berry: '杜松果',
+  blue_rose: '寒地蓝蔷薇',
+  silver_flax: '银麻',
+  winter_melon: '寒香瓜',
+  aurora_fruit: '极光果',
+  snow_egg: '雪羽蛋',
+  ptarmigan_egg: '雷鸟蛋',
+  angora_fur: '高原兔绒',
+  highland_wool: '高地羊毛',
+  yak_milk: '牦牛奶',
+  cashmere: '山羊绒',
+  lignite: '褐煤',
+  magnetite: '磁铁矿',
+  tin: '锡矿',
+  frost_silver: '霜银',
+  glacier_gold: '冰川金',
+  frost_crystal: '霜晶',
   flour: '面粉',
   coarse_feed: '粗饲料',
   fortified_feed: '强化饲料',
@@ -58,18 +82,15 @@ const ITEM_NAMES: Record<string, string> = {
   mining_kit: '矿工防护套装',
   festival_crate: '庆典食品箱',
   greenhouse_parts: '温室构件',
-};
-
-const TOWN_ITEM_NAMES: Record<HomesteadTownResourceId, string> = {
-  snow_potato: '雪薯',
-  yak_milk: '牦牛奶',
-  frost_crystal: '霜晶',
-};
-
-const TOWN_ITEM_PRICES: Record<HomesteadTownResourceId, number> = {
-  snow_potato: 8,
-  yak_milk: 26,
-  frost_crystal: 50,
+  frost_barley_flour: '霜麦粉',
+  alpine_feed: '高原营养饲料',
+  thermal_compost: '温床营养基',
+  frost_felt: '御寒呢毡',
+  frost_alloy: '耐寒合金锭',
+  cloudberry_preserves: '云莓药草蜜饯',
+  winter_provisions: '雪线远行口粮',
+  insulated_mining_kit: '保温矿务套装',
+  aurora_ceremonial_crate: '极光庆典礼箱',
 };
 
 const SOURCE_LABELS: Record<HomesteadResourceView['source'], string> = {
@@ -107,6 +128,34 @@ const COLLECTION_CATEGORY_NAMES: Record<string, string> = {
   season: '赛季',
 };
 
+const WEATHER_SOURCE_LABELS = {
+  live: '实时天气',
+  last_known_good: '最近有效天气',
+  fallback: '安全回退',
+  rules: '本地规则',
+} as const;
+
+const WEATHER_FALLBACK_REASON_LABELS: Record<string, string> = {
+  provider_disabled: '服务端未配置天气服务',
+  provider_timeout: '天气服务响应超时',
+  provider_error: '天气服务返回异常',
+};
+
+const DISASTER_NAMES: Record<HomesteadDisasterView['eventId'], string> = {
+  mountain_seepage: '矿山渗水',
+  cold_snap: '突发寒潮',
+  heatwave: '高温热浪',
+  windstorm: '强风灾害',
+  hail: '冰雹灾害',
+  drought: '持续干旱',
+};
+
+const LIVE_MERCHANT_ITEMS = new Set([
+  'priority_dispatch',
+  'rail_pass',
+  'merchant_banner',
+]);
+
 export function formatHomesteadDuration(milliseconds: number): string {
   if (milliseconds <= 0) return '可收取';
   const minutes = Math.ceil(milliseconds / 60_000);
@@ -114,6 +163,76 @@ export function formatHomesteadDuration(milliseconds: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+}
+
+export function formatWeatherObservedAt(timestamp?: number): string {
+  if (!timestamp) return '等待首次同步';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(timestamp);
+}
+
+export function formatDisasterReputationImpact(
+  disaster: Pick<
+    HomesteadDisasterView,
+    | 'reputationPenaltyPaid'
+    | 'reputationPenaltyContinues'
+    | 'nextReputationLoss'
+  >,
+): string {
+  const paid = disaster.reputationPenaltyPaid ?? 0;
+  const base = `本轮已扣声望 ${paid}/12`;
+  if (!disaster.reputationPenaltyContinues) {
+    return `${base} · 声望惩罚已达本次灾害上限`;
+  }
+  if (disaster.nextReputationLoss <= 0) {
+    return `${base} · 声望惩罚仍继续，但当前声望已到底，下一跨日无实际扣除`;
+  }
+  return `${base} · 声望惩罚仍继续，下一跨日预计 -${disaster.nextReputationLoss}`;
+}
+
+export function isWeatherMechanicsEnabled(
+  weather: Pick<
+    HomesteadSnapshot['homestead']['weather'],
+    'source' | 'mechanicsEnabled'
+  >,
+): boolean {
+  return (
+    (weather.source === 'live' || weather.source === 'rules') &&
+    weather.mechanicsEnabled === true
+  );
+}
+
+function merchantEffectLabel(
+  effect: HomesteadSnapshot['homestead']['merchantShop']['items'][number]['numericEffect'],
+): string {
+  switch (effect.kind) {
+    case 'facility_acceleration':
+      return `单次缩短 ${effect.percent}%，最多 ${Math.round(effect.maximumSeconds / 60)} 分钟`;
+    case 'travel_discount':
+      return `下一次跨镇基础票价减免 ${effect.percent}%`;
+    case 'cosmetic':
+      return '纯收藏展示，不提供数值加成';
+  }
+}
+
+function orderStrategyLabel(template: {
+  coinReward: number;
+  reputationReward: number;
+  researchReward: number;
+}): string {
+  if (template.researchReward >= 10) return '研究优先';
+  if (template.reputationReward >= 35) return '声望优先';
+  if (template.coinReward >= 800) return '现金优先';
+  return '综合收益';
+}
+
+function friendlyUnlockReason(reason: string): string {
+  return reason.replace('完成研究 civic_network', '完成研究「城镇协作网络」');
 }
 
 function ResourceTags({
@@ -176,313 +295,29 @@ function FacilityStatus({
   );
 }
 
-function FrostpeakDashboard({
-  town,
-  now,
-  busyKey,
-  advice,
-  act,
-}: {
-  town: HomesteadTownEstateView;
-  now: number;
-  busyKey?: string;
-  advice: HomesteadSnapshot['homestead']['advice'];
-  act: (
-    action: HomesteadClientAction,
-    key: string,
-    success: string,
-  ) => Promise<void>;
-}) {
-  return (
-    <>
-      <section className="homestead-section homestead-advice homestead-panel-item homestead-panel-item--today">
-        <div className="homestead-section__heading">
-          <div>
-            <p className="farm-kicker">LOCAL DIRECTOR</p>
-            <h2>{advice.headline}</h2>
-          </div>
-          <Tag color={advice.source === 'llm' ? 'purple' : 'blue'}>
-            {advice.source === 'llm' ? 'LLM 城镇建议' : '规则城镇建议'}
-          </Tag>
-        </div>
-        <p>{advice.narrative}</p>
-        <blockquote>{advice.recommendation}</blockquote>
-      </section>
-
-      <section className="homestead-section homestead-weather-section homestead-panel-item homestead-panel-item--today">
-        <div className="homestead-section__heading">
-          <div>
-            <p className="farm-kicker">LOCAL ECONOMY</p>
-            <h2>霜岭产业库存</h2>
-          </div>
-          <span>金币全城镇通用；物资与当地声望留在霜岭镇</span>
-        </div>
-        <div className="homestead-town-inventory">
-          {(Object.keys(TOWN_ITEM_NAMES) as HomesteadTownResourceId[]).map(
-            (resourceId) => (
-              <article key={resourceId}>
-                <span>{TOWN_ITEM_NAMES[resourceId]}</span>
-                <strong>{town.inventory[resourceId]}</strong>
-                <small>商路单价 {TOWN_ITEM_PRICES[resourceId]} 金币</small>
-                <Button
-                  disabled={Boolean(busyKey) || town.inventory[resourceId] < 1}
-                  loading={busyKey === `town:sell:${resourceId}`}
-                  onClick={() => void act(
-                    {
-                      type: 'homestead_sell_town_resource',
-                      resourceId,
-                      quantity: 1,
-                    },
-                    `town:sell:${resourceId}`,
-                    `已售出 1 份${TOWN_ITEM_NAMES[resourceId]}`,
-                  )}
-                >
-                  售出 1 份
-                </Button>
-              </article>
-            ),
-          )}
-        </div>
-      </section>
-
-      <section className="homestead-section">
-        <div className="homestead-section__heading">
-          <div>
-            <p className="farm-kicker">THREE-SECTOR LOOP</p>
-            <h2>高寒三业生产链</h2>
-          </div>
-          <span>雪薯 → 牦牛奶 → 霜晶；冻土农场无需投入，可防止经济死锁</span>
-        </div>
-        <div className="homestead-town-sector-grid">
-          {town.sectors.map((sector) => {
-            const ready = Boolean(
-              sector.job && sector.job.completesAt <= now,
-            );
-            const progress = !sector.job
-              ? 0
-              : Math.max(
-                  0,
-                  Math.min(
-                    1,
-                    (now - sector.job.startedAt) /
-                      Math.max(
-                        1,
-                        sector.job.completesAt - sector.job.startedAt,
-                      ),
-                  ),
-                );
-            const input = sector.definition.input;
-            const output = sector.definition.output;
-            return (
-              <article key={sector.definition.id}>
-                <div className="homestead-card-title">
-                  <h3>{sector.definition.name}</h3>
-                  <Tag color="blue">LV {sector.level}/3</Tag>
-                </div>
-                <p>
-                  {input
-                    ? `消耗 ${TOWN_ITEM_NAMES[input.itemId]} ×${input.quantity}`
-                    : '无需原料投入'}
-                  {' · '}
-                  产出 {TOWN_ITEM_NAMES[output.itemId]} ×{sector.outputQuantity}
-                </p>
-                {sector.job ? (
-                  <>
-                    <Progress
-                      percent={Math.round(progress * 100)}
-                      size="small"
-                      status={ready ? 'success' : 'active'}
-                    />
-                    <small>
-                      {ready
-                        ? '生产完成，可立即收取'
-                        : `剩余 ${formatHomesteadDuration(
-                            sector.job.completesAt - now,
-                          )}`}
-                    </small>
-                  </>
-                ) : (
-                  <small>
-                    基础工期 {formatHomesteadDuration(
-                      sector.definition.durationSeconds * 1_000,
-                    )}；每次升级缩短 10%
-                  </small>
-                )}
-                <div className="homestead-town-actions">
-                  {ready ? (
-                    <Button
-                      type="primary"
-                      disabled={Boolean(busyKey) || !sector.canCollect}
-                      loading={
-                        busyKey === `town:collect:${sector.definition.id}`
-                      }
-                      onClick={() => void act(
-                        {
-                          type: 'homestead_collect_town_sector',
-                          sectorId: sector.definition.id,
-                        },
-                        `town:collect:${sector.definition.id}`,
-                        `${sector.definition.name}已收取`,
-                      )}
-                    >
-                      收取产出
-                    </Button>
-                  ) : (
-                    <Button
-                      type="primary"
-                      disabled={Boolean(busyKey) || !sector.canStart}
-                      loading={
-                        busyKey === `town:start:${sector.definition.id}`
-                      }
-                      onClick={() => void act(
-                        {
-                          type: 'homestead_start_town_sector',
-                          sectorId: sector.definition.id,
-                        },
-                        `town:start:${sector.definition.id}`,
-                        `${sector.definition.actionName}已开始`,
-                      )}
-                    >
-                      {sector.job
-                        ? '生产中'
-                        : input &&
-                            town.inventory[input.itemId] < input.quantity
-                          ? '原料不足'
-                          : sector.definition.actionName}
-                    </Button>
-                  )}
-                  {sector.nextUpgrade && (
-                    <Button
-                      disabled={
-                        Boolean(busyKey) ||
-                        !sector.nextUpgrade.canUpgrade
-                      }
-                      loading={
-                        busyKey === `town:upgrade:${sector.definition.id}`
-                      }
-                      onClick={() => void act(
-                        {
-                          type: 'homestead_upgrade_town_sector',
-                          sectorId: sector.definition.id,
-                        },
-                        `town:upgrade:${sector.definition.id}`,
-                        `${sector.definition.name}已升级`,
-                      )}
-                    >
-                      升至 LV {sector.nextUpgrade.level}
-                    </Button>
-                  )}
-                </div>
-                {sector.nextUpgrade && (
-                  <small>
-                    升级：{sector.nextUpgrade.coinCost} 金币 ·
-                    当地声望 {sector.nextUpgrade.reputationRequired} ·
-                    霜晶 {sector.nextUpgrade.crystalCost}
-                  </small>
-                )}
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <div className="homestead-town-goal-grid">
-        <section className="homestead-section">
-          <p className="farm-kicker">LOCAL PROBLEM</p>
-          {town.currentProblem ? (
-            <>
-              <h2>{town.currentProblem.title}</h2>
-              <p>{town.currentProblem.description}</p>
-              <div className="homestead-resources">
-                {town.currentProblem.requirementsView.map((resource) => (
-                  <Tag
-                    key={resource.itemId}
-                    color={resource.sufficient ? 'green' : 'red'}
-                  >
-                    {TOWN_ITEM_NAMES[resource.itemId]}{' '}
-                    {resource.available}/{resource.quantity}
-                  </Tag>
-                ))}
-              </div>
-              <p className="homestead-reward">
-                奖励 {town.currentProblem.coinReward} 金币 ·
-                当地声望 +{town.currentProblem.reputationReward} ·
-                研究点 +{town.currentProblem.researchReward}
-              </p>
-              <Button
-                type="primary"
-                disabled={Boolean(busyKey) || !town.currentProblem.canResolve}
-                loading={busyKey === `town:problem:${town.currentProblem.id}`}
-                onClick={() => void act(
-                  {
-                    type: 'homestead_resolve_town_problem',
-                    problemId: town.currentProblem!.id,
-                  },
-                  `town:problem:${town.currentProblem!.id}`,
-                  '当地问题已经解决',
-                )}
-              >
-                提交物资并解决
-              </Button>
-            </>
-          ) : (
-            <Alert
-              type="success"
-              showIcon
-              message="霜岭镇当前问题已全部解决"
-            />
-          )}
-        </section>
-
-        <section className="homestead-section">
-          <p className="farm-kicker">LANDMARK RESTORATION</p>
-          <h2>山地热力站 · {town.landmarkStage}/3</h2>
-          {town.nextLandmark ? (
-            <>
-              <h3>{town.nextLandmark.name}</h3>
-              <p>
-                前置：解决 {town.nextLandmark.requiredProblems} 个问题 ·
-                当地声望 {town.nextLandmark.requiredReputation} ·
-                金币 {town.nextLandmark.coinCost}
-              </p>
-              <div className="homestead-resources">
-                {town.nextLandmark.requirementsView.map((resource) => (
-                  <Tag
-                    key={resource.itemId}
-                    color={resource.sufficient ? 'green' : 'red'}
-                  >
-                    {TOWN_ITEM_NAMES[resource.itemId]}{' '}
-                    {resource.available}/{resource.quantity}
-                  </Tag>
-                ))}
-              </div>
-              <p className="homestead-reward">
-                完成后当地声望 +{town.nextLandmark.reputationReward} ·
-                全局商会名望 +{town.nextLandmark.renownReward}
-              </p>
-              <Button
-                type="primary"
-                disabled={Boolean(busyKey) || !town.nextLandmark.canRestore}
-                loading={busyKey === 'town:landmark'}
-                onClick={() => void act(
-                  { type: 'homestead_restore_town_landmark' },
-                  'town:landmark',
-                  `${town.nextLandmark!.name}已完成`,
-                )}
-              >
-                修复本阶段
-              </Button>
-            </>
-          ) : (
-            <Alert
-              type="success"
-              showIcon
-              message="山地热力站已经完全恢复"
-            />
-          )}
-        </section>
-      </div>
-    </>
+export function canCommitHomesteadSnapshot(
+  next: HomesteadSnapshot,
+  current?: HomesteadSnapshot,
+): boolean {
+  return isTownRevisionVectorAtLeast(
+    next.homestead.activeTownId,
+    [
+      next.homestead.accountRevision,
+      next.homestead.revision,
+      next.homestead.revisions.farm,
+      next.homestead.revisions.ranch,
+      next.homestead.revisions.mine,
+    ],
+    current?.homestead.activeTownId,
+    current
+      ? [
+          current.homestead.accountRevision,
+          current.homestead.revision,
+          current.homestead.revisions.farm,
+          current.homestead.revisions.ranch,
+          current.homestead.revisions.mine,
+        ]
+      : undefined,
   );
 }
 
@@ -504,26 +339,18 @@ export function HomesteadScreen() {
 
   const commitSnapshot = (next: HomesteadSnapshot): boolean => {
     const current = snapshotRef.current;
-    const accepted = isRevisionVectorAtLeast(
-      [
-        next.homestead.revision,
-        next.homestead.revisions.farm,
-        next.homestead.revisions.ranch,
-        next.homestead.revisions.mine,
-      ],
-      current
-        ? [
-            current.homestead.revision,
-            current.homestead.revisions.farm,
-            current.homestead.revisions.ranch,
-            current.homestead.revisions.mine,
-          ]
-        : undefined,
+    if (!canCommitHomesteadSnapshot(next, current)) return false;
+    const townChanged = Boolean(
+      current &&
+      current.homestead.activeTownId !== next.homestead.activeTownId,
     );
-    if (!accepted) return false;
     snapshotRef.current = next;
     setSnapshot(next);
     setNow(next.homestead.serverTime);
+    if (townChanged) {
+      setUseFertilizer(false);
+      setLegacyPanel('today');
+    }
     return true;
   };
 
@@ -604,7 +431,12 @@ export function HomesteadScreen() {
 
   const completedGoods = useMemo(
     () => snapshot
-      ? Object.entries(snapshot.homestead.goods).filter(([, quantity]) => quantity > 0)
+      ? snapshot.homestead.activeGoodIds
+          .map((itemId) => [
+            itemId,
+            snapshot.homestead.goods[itemId] ?? 0,
+          ] as const)
+          .filter(([, quantity]) => quantity > 0)
       : [],
     [snapshot],
   );
@@ -655,99 +487,166 @@ export function HomesteadScreen() {
     homestead.goods.soil_conditioner > 0;
   const activeTown = homestead.towns.find(({ active }) => active)
     ?? homestead.towns[0];
+  const logisticsRemaining = Math.max(
+    0,
+    homestead.logistics.capacity - homestead.logistics.used,
+  );
+  const accelerationCards =
+    homestead.merchantShop.items.find(({ id }) => id === 'priority_dispatch')
+      ?.owned ?? 0;
+  const weatherSource = homestead.weather.source ?? 'rules';
+  const weatherMechanicsEnabled = isWeatherMechanicsEnabled(
+    homestead.weather,
+  );
   const townSwitcher = (
-    <section className="homestead-town-switcher" aria-label="城镇选择">
-      {homestead.towns.map((town) => (
-        <button
-          key={town.definition.id}
-          type="button"
-          className={town.active ? 'is-active' : undefined}
-          disabled={Boolean(busyKey)}
-          onClick={() => {
-            if (!town.active) {
-              void act(
-                {
-                  type: 'homestead_switch_town',
-                  townId: town.definition.id,
-                },
-                `town:switch:${town.definition.id}`,
-                `已前往${town.definition.name}`,
-              );
-            }
-          }}
-        >
-          <span>{town.definition.climate}</span>
-          <strong>{town.definition.name}</strong>
-          <small>{town.definition.subtitle}</small>
-          <em>
-            当地声望 {town.reputation}
-            {town.definition.id === 'frostpeak'
-              ? ` · 地标 ${town.landmarkStage}/3`
-              : ' · 完整产业'}
-          </em>
-        </button>
-      ))}
-      <div className="homestead-town-switcher__future">
-        <span>后续更新预留</span>
-        <strong>潮汐港 · 赤岩城</strong>
-        <small>海产加工与沙地能源路线</small>
+    <section className="homestead-town-network" aria-label="城镇交通与开发">
+      <div className="homestead-section__heading">
+        <div>
+          <p className="farm-kicker">TOWN NETWORK</p>
+          <h2>城镇庄园与交通</h2>
+        </div>
+        <span>金币全局共享；三业库存、声望、天气与灾害各镇独立</span>
+      </div>
+      <div className="homestead-town-switcher">
+        {homestead.towns.map((town) => {
+          const travelDisabledReason = town.travel?.reason;
+          const unlockReason = town.unlockMissing
+            .map(friendlyUnlockReason)
+            .join('；');
+          const usesRailPass = Boolean(
+            town.travel &&
+            town.travel.payableFare < town.travel.baseFare,
+          );
+          return (
+            <article
+              key={town.definition.id}
+              className={town.active ? 'is-active' : undefined}
+            >
+              <div className="homestead-town-card__status">
+                <Tag color={town.active ? 'green' : town.unlocked ? 'blue' : 'default'}>
+                  {town.active ? '当前所在地' : town.unlocked ? '已开发' : '待开发'}
+                </Tag>
+                <span>{town.definition.climate}</span>
+              </div>
+              <strong>{town.definition.name}</strong>
+              <small>{town.definition.subtitle}</small>
+              <p>{town.definition.description}</p>
+              <div className="homestead-town-card__meta">
+                <span>当地声望 {town.reputation}</span>
+                <span>三业体系完整</span>
+                <span>{town.definition.specialties.join(' · ')}</span>
+              </div>
+              {town.active ? (
+                <Button disabled block>正在经营</Button>
+              ) : town.unlocked && town.travel ? (
+                <>
+                  <div className="homestead-travel-fare">
+                    <span>{town.travel.routeName}</span>
+                    <strong>{town.travel.payableFare} 金币</strong>
+                    {usesRailPass && (
+                      <small>
+                        原价 {town.travel.baseFare} · 本次自动使用商会联运票
+                      </small>
+                    )}
+                  </div>
+                  <Popconfirm
+                    title={`确认乘车前往${town.definition.name}？`}
+                    description={`将从共享余额 ${homestead.coins} 中支付 ${town.travel.payableFare} 金币。抵达后切换为当地独立庄园。`}
+                    okText="确认出发"
+                    cancelText="留在当前城镇"
+                    disabled={actionsBusy || !town.travel.canTravel}
+                    onConfirm={() => void act(
+                      {
+                        type: 'homestead_switch_town',
+                        townId: town.definition.id,
+                      },
+                      `town:switch:${town.definition.id}`,
+                      `已抵达${town.definition.name}`,
+                    )}
+                  >
+                    <Button
+                      type="primary"
+                      block
+                      disabled={actionsBusy || !town.travel.canTravel}
+                      loading={busyKey === `town:switch:${town.definition.id}`}
+                    >
+                      {travelDisabledReason ?? `支付 ${town.travel.payableFare} 金币并出发`}
+                    </Button>
+                  </Popconfirm>
+                  {travelDisabledReason && (
+                    <small className="homestead-disabled-reason">
+                      {travelDisabledReason}
+                    </small>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="homestead-unlock-requirements">
+                    <strong>开发条件</strong>
+                    {town.unlockMissing.length
+                      ? town.unlockMissing.map((reason) => (
+                          <small key={reason}>· {friendlyUnlockReason(reason)}</small>
+                        ))
+                      : <small>条件已满足 · 开发资金 {town.unlockCoinCost} 金币</small>}
+                  </div>
+                  <Popconfirm
+                    title={`开发${town.definition.name}？`}
+                    description={`将支付 ${town.unlockCoinCost} 金币建立一套独立的农场、牧场、矿山与事件系统。解锁不会自动旅行。`}
+                    okText="确认开发"
+                    cancelText="暂不开发"
+                    disabled={actionsBusy || !town.canUnlock}
+                    onConfirm={() => void act(
+                      {
+                        type: 'homestead_unlock_town',
+                        townId: town.definition.id,
+                      },
+                      `town:unlock:${town.definition.id}`,
+                      `${town.definition.name}已完成开发`,
+                    )}
+                  >
+                    <Button
+                      block
+                      type={town.canUnlock ? 'primary' : 'default'}
+                      disabled={actionsBusy || !town.canUnlock}
+                      loading={busyKey === `town:unlock:${town.definition.id}`}
+                    >
+                      {town.canUnlock
+                        ? `支付 ${town.unlockCoinCost} 金币开发`
+                        : '开发条件未满足'}
+                    </Button>
+                  </Popconfirm>
+                  {unlockReason && (
+                    <small className="homestead-disabled-reason">
+                      {unlockReason}
+                    </small>
+                  )}
+                </>
+              )}
+            </article>
+          );
+        })}
+        {Object.values(homestead.plannedTowns).map((town) => (
+          <article
+            key={town.id}
+            className="homestead-town-switcher__future"
+            aria-disabled="true"
+          >
+            <div className="homestead-town-card__status">
+              <Tag>后续更新</Tag>
+              <span>{town.climate}</span>
+            </div>
+            <strong>{town.name}</strong>
+            <small>{town.subtitle}</small>
+            <p>{town.description}</p>
+            <div className="homestead-town-card__meta">
+              <span>{town.plannedSpecialties.join(' · ')}</span>
+            </div>
+            <Button disabled block>尚未开放</Button>
+          </article>
+        ))}
       </div>
     </section>
   );
-
-  if (homestead.activeTownId === 'frostpeak' && activeTown) {
-    return (
-      <main className="farm-page homestead-page">
-        {toastContext}
-        <header className="farm-hero homestead-hero homestead-hero--compact">
-          <div>
-            <p className="farm-kicker">FROSTPEAK EXPEDITION</p>
-            <h1>{activeTown.definition.name}</h1>
-            <p>{activeTown.definition.description}</p>
-          </div>
-          <div className="homestead-metrics">
-            <div><strong>{homestead.coins}</strong><span>全局金币</span></div>
-            <div><strong>{activeTown.reputation}</strong><span>当地声望</span></div>
-            <div><strong>{homestead.merchantRenown}</strong><span>商会名望</span></div>
-            <div><strong>{homestead.researchPoints}</strong><span>研究点</span></div>
-            <Button
-              disabled={actionsBusy}
-              loading={quietLoading}
-              onClick={() => void load(true)}
-            >
-              刷新
-            </Button>
-          </div>
-        </header>
-        {failure && (
-          <Alert
-            className="homestead-alert"
-            type="warning"
-            showIcon
-            closable
-            message={failure}
-            onClose={() => setFailure(undefined)}
-          />
-        )}
-        {actionsBusy && (
-          <Alert
-            className="homestead-alert homestead-operation-status"
-            type="info"
-            showIcon
-            message="正在保存本次庄园操作，其他经营操作暂不可用"
-          />
-        )}
-        {townSwitcher}
-        <FrostpeakDashboard
-          town={activeTown}
-          now={now}
-          busyKey={busyKey}
-          advice={homestead.advice}
-          act={act}
-        />
-      </main>
-    );
-  }
 
   return (
     <main className={`farm-page homestead-page homestead-panel-${legacyPanel}`}>
@@ -755,16 +654,18 @@ export function HomesteadScreen() {
       <header className="farm-hero homestead-hero">
         <div>
           <p className="farm-kicker">THREE-SECTOR ESTATE</p>
-          <h1>青禾镇庄园</h1>
-          <p>
-            经营农、牧、矿与加工网络，解决当地问题，并从这里开拓新的城镇庄园。
-          </p>
+          <h1>{activeTown?.definition.name ?? '三业'}庄园</h1>
+          <p>{activeTown?.definition.description}</p>
         </div>
         <div className="homestead-metrics">
-          <div><strong>{homestead.coins}</strong><span>金币</span></div>
+          <div><strong>{homestead.coins}</strong><span>共享金币</span></div>
           <div><strong>{homestead.reputation}</strong><span>当地声望</span></div>
           <div><strong>{homestead.merchantRenown}</strong><span>商会名望</span></div>
           <div><strong>{homestead.researchPoints}</strong><span>研究点</span></div>
+          <div>
+            <strong>{logisticsRemaining}/{homestead.logistics.capacity}</strong>
+            <span>今日物流点</span>
+          </div>
           <Button
             disabled={actionsBusy}
             loading={quietLoading}
@@ -796,7 +697,10 @@ export function HomesteadScreen() {
 
       {townSwitcher}
 
-      <nav className="homestead-local-nav" aria-label="青禾镇经营分区">
+      <nav
+        className="homestead-local-nav"
+        aria-label={`${activeTown?.definition.name ?? '当前城镇'}经营分区`}
+      >
         <Button
           type={legacyPanel === 'today' ? 'primary' : 'default'}
           onClick={() => setLegacyPanel('today')}
@@ -838,28 +742,137 @@ export function HomesteadScreen() {
       <section className="homestead-section homestead-panel-item homestead-panel-item--today">
         <div className="homestead-section__heading">
           <div>
+            <p className="farm-kicker">DAILY LOGISTICS</p>
+            <h2>今日物流调度</h2>
+          </div>
+          <Tag color={logisticsRemaining > 1 ? 'green' : logisticsRemaining ? 'orange' : 'red'}>
+            剩余 {logisticsRemaining}/{homestead.logistics.capacity}
+          </Tag>
+        </div>
+        <Progress
+          percent={Math.round(
+            (homestead.logistics.used / Math.max(1, homestead.logistics.capacity)) * 100,
+          )}
+          status={logisticsRemaining === 0 ? 'exception' : 'active'}
+          format={() => `已用 ${homestead.logistics.used}`}
+        />
+        <p className="homestead-weather-summary">
+          物流点每天恢复，用来迫使成熟庄园在订单、增值路线和灾期调度之间做选择；
+          普通种植、养殖、采矿和加工不消耗物流点。
+        </p>
+        <div className="homestead-logistics-costs">
+          <span><strong>2 点</strong><small>三业联合订单</small></span>
+          <span><strong>1 点</strong><small>二级增值项目</small></span>
+          <span><strong>2 点</strong><small>三级商路项目</small></span>
+          <span><strong>1 点</strong><small>灾期单板块增产</small></span>
+        </div>
+      </section>
+
+      <section className="homestead-section homestead-panel-item homestead-panel-item--today">
+        <div className="homestead-section__heading">
+          <div>
             <p className="farm-kicker">WEATHER & RESILIENCE</p>
             <h2>天气、灾害与庄园韧性</h2>
           </div>
           <Tag color={
-            homestead.weather.definition.tone === 'warning'
-              ? 'orange'
-              : homestead.weather.definition.tone === 'good'
-                ? 'green'
-                : 'blue'
+            !weatherMechanicsEnabled
+              ? 'default'
+              : homestead.weather.definition.tone === 'warning'
+                ? 'orange'
+                : homestead.weather.definition.tone === 'good'
+                  ? 'green'
+                  : 'blue'
           }>
-            今日 · {homestead.weather.definition.name}
+            {homestead.weather.anchorCity ?? activeTown?.definition.name}
+            {' · '}{homestead.weather.conditionText ?? homestead.weather.definition.name}
           </Tag>
         </div>
         <p className="homestead-weather-summary">
-          {homestead.weather.definition.description}
+          {weatherMechanicsEnabled
+            ? homestead.weather.definition.description
+            : homestead.weather.conditionText ??
+              '未取得可信实况，本窗口按中性规则运行。'}
         </p>
+        <div className="homestead-weather-live-grid">
+          <div>
+            <span>数据状态</span>
+            <strong>{WEATHER_SOURCE_LABELS[weatherSource]}</strong>
+            <small>
+              {weatherSource === 'last_known_good'
+                ? '最近可信数据，仅展示不参与数值'
+                : weatherSource === 'fallback'
+                  ? '未取得可信实况，使用中性规则'
+                  : '每 8 小时同步一次'}
+            </small>
+          </div>
+          <div>
+            <span>气温</span>
+            <strong>
+              {homestead.weather.temperatureC == null
+                ? '—'
+                : `${homestead.weather.temperatureC}℃`}
+            </strong>
+            <small>{homestead.weather.anchorCity ?? '本地规则城市'}</small>
+          </div>
+          <div>
+            <span>湿度 / 降水</span>
+            <strong>
+              {homestead.weather.humidityPercent == null
+                ? '—'
+                : `${homestead.weather.humidityPercent}%`}
+              {' / '}
+              {homestead.weather.precipitationMm == null
+                ? '—'
+                : `${homestead.weather.precipitationMm} mm`}
+            </strong>
+            <small>风速 {homestead.weather.windKph == null ? '—' : `${homestead.weather.windKph} km/h`}</small>
+          </div>
+          <div>
+            <span>最近更新</span>
+            <strong>{formatWeatherObservedAt(homestead.weather.observedAt)}</strong>
+            <small>
+              {weatherMechanicsEnabled ? '天气规则已参与生产' : '仅展示，不影响数值'}
+            </small>
+          </div>
+        </div>
+        {!weatherMechanicsEnabled && (
+          <Alert
+            className="homestead-weather-alert"
+            type="warning"
+            showIcon
+            message={
+              weatherSource === 'last_known_good'
+                ? '实时接口暂不可用，最近可信天气仅作展示'
+                : '实时天气暂不可用，已进入中性安全回退'
+            }
+            description={
+              `最近可信天气及安全回退的缓存倍率已中和，不会据此获得天气增益、受到天气惩罚或新建灾害。此前由可信实况预警创建且尚未解决的既有灾害，其后果仍会继续结算，直至完成处置。${
+                homestead.weather.fallbackReason
+                  ? ` 当前状态：${
+                    WEATHER_FALLBACK_REASON_LABELS[
+                      homestead.weather.fallbackReason
+                    ] ?? homestead.weather.fallbackReason
+                  }。`
+                  : ''
+              }`
+            }
+          />
+        )}
+        {weatherSource === 'live' && homestead.weather.alertsAvailable === false && (
+          <Alert
+            className="homestead-weather-alert"
+            type="info"
+            showIcon
+            message="实时天气已更新，但预警接口暂不可用"
+            description="当前天气仍参与生产；本窗口不会依据缺失的预警数据新建灾害。"
+          />
+        )}
         {homestead.weather.tomorrow ? (
           <Alert
             className="homestead-weather-alert"
             type="info"
             showIcon
-            message={`气象站预报：明日 ${homestead.weather.tomorrow.name}`}
+            message={`明日本地规则天气：${homestead.weather.tomorrow.name}`}
             description={homestead.weather.tomorrow.description}
           />
         ) : (
@@ -867,9 +880,42 @@ export function HomesteadScreen() {
             className="homestead-weather-alert"
             type="info"
             showIcon
-            message="建设一级气象站后可查看次日天气"
+            message={
+              weatherSource === 'live'
+                ? '真实天气将在下一个 8 小时窗口重新同步'
+                : weatherSource === 'rules'
+                  ? '建设一级气象站后可查看明日本地规则天气'
+                  : '下一个 8 小时窗口将重新尝试获取可信实况'
+            }
+            description={
+              weatherSource === 'live'
+                ? '气象站用于降低天气惩罚；系统不会伪造未来的真实天气。'
+                : undefined
+            }
           />
         )}
+        {homestead.weather.liveHazards?.map((hazard) => (
+          <Alert
+            key={hazard.id}
+            className="homestead-weather-alert"
+            type={hazard.affectsGameplay ? 'warning' : 'info'}
+            showIcon
+            message={`${hazard.name} · ${hazard.severity} 级`}
+            description={`${hazard.headline}。${
+              hazard.affectsGameplay
+                ? homestead.disaster?.eventId === hazard.mechanicId &&
+                    homestead.disaster?.mitigated === false
+                  ? '该预警已激活为当前庄园灾害。'
+                  : '该预警符合灾害规则；已有持续事件时不会覆盖，后续窗口会重新评估。'
+                : '当前仅作现实预警展示，不直接修改生产数值。'
+            }`}
+          />
+        ))}
+        {homestead.weather.providerAttributions?.length ? (
+          <p className="homestead-weather-attribution">
+            天气数据：{homestead.weather.providerAttributions.join(' · ')}
+          </p>
+        ) : null}
         {homestead.disaster && (
           <Alert
             className="homestead-weather-alert"
@@ -881,9 +927,23 @@ export function HomesteadScreen() {
                 : `灾害持续中 · ${homestead.disaster.severity} 级`
             }
             description={
-              `${homestead.disaster.eventId === 'mountain_seepage' ? '矿山渗水' : '突发寒潮'} · ` +
+              `${
+                homestead.disaster.contentEventId
+                  ? homestead.worldEvent.definition.title
+                  : DISASTER_NAMES[homestead.disaster.eventId]
+              } · ` +
               `剩余 ${homestead.disaster.remainingDays} 天 · ` +
-              `已延误 ${homestead.disaster.unresolvedDays} 天`
+              `已延误 ${homestead.disaster.unresolvedDays} 天` +
+              (
+                homestead.disaster.mitigated
+                  ? ''
+                  : ` · ${formatDisasterReputationImpact(homestead.disaster)}` +
+                    (
+                      homestead.disaster.temporaryOptionId
+                        ? ' · 已执行临时方案，灾害仍继续'
+                        : ''
+                    )
+              )
             }
           />
         )}
@@ -951,11 +1011,11 @@ export function HomesteadScreen() {
                   <ResourceTags resources={operation.costsView} />
                   <small>
                     当前灾期产量 +{operation.yieldBonusPercent}% ·
-                    工期 {operation.durationBonusPercent}%
+                    工期 {operation.durationBonusPercent}% · 消耗 1 物流点
                   </small>
                   <Button
                     type={operation.canActivate ? 'primary' : 'default'}
-                    disabled={actionsBusy || !operation.canActivate}
+                    disabled={actionsBusy || !operation.canActivate || logisticsRemaining < 1}
                     loading={busyKey === `emergency:${operation.id}`}
                     onClick={() => void act(
                       {
@@ -966,7 +1026,11 @@ export function HomesteadScreen() {
                       `${operation.name}已启动`,
                     )}
                   >
-                    {operation.activated ? '已生效' : '启动增产'}
+                    {operation.activated
+                      ? '已生效'
+                      : logisticsRemaining < 1
+                        ? '今日物流点不足'
+                        : '启动增产 · 1 点'}
                   </Button>
                 </article>
               ))}
@@ -1050,7 +1114,8 @@ export function HomesteadScreen() {
               <p>{option.description}</p>
               <ResourceTags resources={option.costsView} />
               <p className="homestead-reward">
-                声望 +{option.reputationReward} · 研究 +{option.researchReward}
+                {`声望 ${option.reputationReward >= 0 ? '+' : ''}${option.reputationReward}`}
+                {' '}· 研究 +{option.researchReward}
                 {option.coinReward ? ` · 金币 +${option.coinReward}` : ''}
                 {option.coinCost ? ` · 花费 ${option.coinCost} 金币` : ''}
               </p>
@@ -1061,11 +1126,36 @@ export function HomesteadScreen() {
                 onClick={() => void act(
                   { type: 'homestead_choose_event', optionId: option.id },
                   `event:${option.id}`,
-                  '世界事件已经处理',
+                  option.resolvesHazard === false
+                    ? '临时方案已执行，灾害仍将持续'
+                    : '世界事件已经处理',
                 )}
               >
-                {homestead.worldEvent.selectedOptionId === option.id ? '已选择' : '选择方案'}
+                {homestead.worldEvent.selectedOptionId === option.id
+                  ? '已选择'
+                  : option.temporaryAlreadyUsed
+                    ? '本次灾害已用临时方案'
+                    : option.missingReputation > 0
+                      ? `声望不足（还差 ${option.missingReputation}）`
+                      : option.missingCoins > 0
+                        ? `金币不足（还差 ${option.missingCoins}）`
+                        : option.costsView.some(({ sufficient }) => !sufficient)
+                          ? '资源不足'
+                          : '选择方案'}
               </Button>
+              {option.missingReputation > 0 && (
+                <small className="homestead-disabled-reason">
+                  该方案需要支付 {Math.max(0, -option.reputationReward)} 声望，
+                  当前还差 {option.missingReputation}。
+                </small>
+              )}
+              {option.resolvesHazard === false && (
+                <small className="homestead-disabled-reason">
+                  {option.temporaryAlreadyUsed
+                    ? '本次灾害已执行过临时方案；灾害仍在持续，请改选彻底处置。'
+                    : '临时方案不会解除灾害，且每次灾害只能执行一次。'}
+                </small>
+              )}
             </article>
           ))}
         </div>
@@ -1267,6 +1357,95 @@ export function HomesteadScreen() {
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="homestead-section homestead-panel-item homestead-panel-item--growth">
+        <div className="homestead-section__heading">
+          <div>
+            <p className="farm-kicker">MERCHANT GUILD</p>
+            <h2>庄园商会</h2>
+          </div>
+          <div className="homestead-heading-tags">
+            <Tag color={homestead.merchantShop.recommendationSource === 'llm' ? 'purple' : 'blue'}>
+              {homestead.merchantShop.recommendationSource === 'llm'
+                ? 'LLM 情境推荐'
+                : '规则推荐'}
+            </Tag>
+            <span>商会名望 {homestead.merchantRenown}</span>
+          </div>
+        </div>
+        <Alert
+          className="homestead-weather-alert"
+          type="info"
+          showIcon
+          message="商店只提供有限便利，不出售产量倍增或跳过成长的道具"
+          description="限购、库存上限和金币成本共同回收成熟期货币；加速券只缩短一次加工任务的 10%，最多 30 分钟。"
+        />
+        <div className="homestead-merchant-grid">
+          {homestead.merchantShop.items.map((item) => {
+            const featureReady = LIVE_MERCHANT_ITEMS.has(item.id);
+            const disabledReason = !featureReady
+              ? '对应使用功能尚未开放，当前暂停售卖'
+              : item.disabledReason;
+            return (
+              <article key={item.id} className={item.recommended ? 'is-recommended' : undefined}>
+                <div className="homestead-card-title">
+                  <h3>{item.name}</h3>
+                  <div>
+                    {item.recommended && <Tag color="purple">顾问推荐</Tag>}
+                    <Tag>{item.category === 'cosmetic' ? '收藏' : '便利道具'}</Tag>
+                  </div>
+                </div>
+                <p>{item.description}</p>
+                <strong className="homestead-merchant-effect">
+                  {merchantEffectLabel(item.numericEffect)}
+                </strong>
+                <div className="homestead-merchant-stock">
+                  <span>持有 {item.owned}/{item.inventoryLimit}</span>
+                  <span>本周 {item.purchasedThisWeek}/{item.weeklyPurchaseLimit}</span>
+                  <span>名望要求 {item.requiredRenown}</span>
+                </div>
+                <Button
+                  type={featureReady && item.canBuy ? 'primary' : 'default'}
+                  disabled={actionsBusy || !featureReady || !item.canBuy}
+                  loading={busyKey === `merchant:${item.id}`}
+                  onClick={() => void act(
+                    {
+                      type: 'homestead_buy_merchant_item',
+                      itemId: item.id,
+                    },
+                    `merchant:${item.id}`,
+                    `已购买${item.name}`,
+                  )}
+                >
+                  {disabledReason ?? `${item.coinPrice} 金币购买`}
+                </Button>
+                {disabledReason && (
+                  <small className="homestead-disabled-reason">{disabledReason}</small>
+                )}
+              </article>
+            );
+          })}
+        </div>
+        {homestead.travelLogs.length > 0 && (
+          <details className="homestead-travel-history">
+            <summary>最近跨镇交通记录</summary>
+            {homestead.travelLogs.slice(0, 5).map((entry) => (
+              <p key={entry.id}>
+                <span>{formatWeatherObservedAt(entry.at)}</span>
+                <strong>
+                  {entry.fromTownId === 'greenvale' ? '青禾镇' : '霜岭镇'}
+                  {' → '}
+                  {entry.toTownId === 'greenvale' ? '青禾镇' : '霜岭镇'}
+                </strong>
+                <small>
+                  实付 {entry.paidFare} 金币
+                  {entry.usedRailPass ? `（联运票，原价 ${entry.baseFare}）` : ''}
+                </small>
+              </p>
+            ))}
+          </details>
+        )}
       </section>
 
       <section className="homestead-section homestead-panel-item homestead-panel-item--operations">
@@ -1475,6 +1654,7 @@ export function HomesteadScreen() {
                 <h3>{facility.definition.name}</h3>
                 <div>
                   {facility.built && <Tag color="gold">LV {facility.level}</Tag>}
+                  {facility.job?.accelerated && <Tag color="purple">已加速</Tag>}
                   <Tag color={facility.built ? (facility.job ? 'blue' : 'green') : 'default'}>
                     {facility.built ? (facility.job ? '生产中' : '空闲') : '未建设'}
                   </Tag>
@@ -1507,6 +1687,51 @@ export function HomesteadScreen() {
                   收取
                 </Button>
               ) : null}
+              {facility.job && facility.job.completesAt > now && (
+                <>
+                  <Popconfirm
+                    title={`对${facility.definition.name}使用优先调度券？`}
+                    description="本任务缩短原始工期的 10%，最多 30 分钟；每个任务只能使用一次。"
+                    okText="确认使用"
+                    cancelText="保留道具"
+                    disabled={
+                      actionsBusy ||
+                      accelerationCards < 1 ||
+                      Boolean(facility.job.accelerated)
+                    }
+                    onConfirm={() => void act(
+                      {
+                        type: 'homestead_use_acceleration_card',
+                        facilityId: facility.id,
+                      },
+                      `accelerate:${facility.id}`,
+                      `${facility.definition.name}已完成优先调度`,
+                    )}
+                  >
+                    <Button
+                      disabled={
+                        actionsBusy ||
+                        accelerationCards < 1 ||
+                        Boolean(facility.job.accelerated)
+                      }
+                      loading={busyKey === `accelerate:${facility.id}`}
+                    >
+                      {facility.job.accelerated
+                        ? '本任务已加速'
+                        : accelerationCards < 1
+                          ? '优先调度券不足'
+                          : `使用加速券（持有 ${accelerationCards}）`}
+                    </Button>
+                  </Popconfirm>
+                  {(facility.job.accelerated || accelerationCards < 1) && (
+                    <small className="homestead-disabled-reason">
+                      {facility.job.accelerated
+                        ? '同一加工任务不能重复加速'
+                        : '可在庄园商会限量购买'}
+                    </small>
+                  )}
+                </>
+              )}
               {facility.built && facility.nextUpgrade && (
                 <Button
                   disabled={actionsBusy || !facility.nextUpgrade.canUpgrade}
@@ -1548,6 +1773,9 @@ export function HomesteadScreen() {
               <p className="homestead-output">
                 产出：{ITEM_NAMES[recipe.output.itemId]} × {recipe.effectiveOutputQuantity}
               </p>
+              <p className="homestead-reward">
+                运营成本 {recipe.coinCost} 金币
+              </p>
               <Button
                 type={recipe.canStart ? 'primary' : 'default'}
                 disabled={actionsBusy || !recipe.canStart}
@@ -1564,6 +1792,8 @@ export function HomesteadScreen() {
                     ? '设施未建设'
                     : recipe.facilityBusy
                       ? '设施忙碌'
+                      : homestead.coins < recipe.coinCost
+                        ? '运营金币不足'
                       : recipe.inputsView.some(({ sufficient }) => !sufficient)
                         ? '原料不足'
                         : '开始加工'}
@@ -1589,9 +1819,18 @@ export function HomesteadScreen() {
             >
               <div className="homestead-card-title">
                 <h3>{route.title}</h3>
-                <Tag color={route.stage === 3 ? 'purple' : 'cyan'}>
-                  {route.stage === 3 ? '三级商路' : '二级加工'}
-                </Tag>
+                <div>
+                  <Tag color={route.kind === 'public_project' ? 'green' : 'gold'}>
+                    {route.kind === 'public_project'
+                      ? '公共建设'
+                      : route.kind === 'specialty_order'
+                        ? '特色订单'
+                        : '加工变现'}
+                  </Tag>
+                  <Tag color={route.stage === 3 ? 'purple' : 'cyan'}>
+                    {route.stage === 3 ? '三级商路' : '二级加工'}
+                  </Tag>
+                </div>
               </div>
               <p>{route.description}</p>
               <ResourceTags resources={route.requirementsView} />
@@ -1600,10 +1839,14 @@ export function HomesteadScreen() {
                 {route.researchReward > 0
                   ? ` · 研究 +${route.researchReward}`
                   : ''}
+                {' '}· 物流 {route.logisticsCost} 点
               </p>
               <Button
                 type={route.canComplete ? 'primary' : 'default'}
-                disabled={actionsBusy || !route.canComplete}
+                disabled={
+                  actionsBusy ||
+                  !route.canComplete
+                }
                 loading={busyKey === `value-route:${route.id}`}
                 onClick={() => void act(
                   {
@@ -1614,8 +1857,15 @@ export function HomesteadScreen() {
                   `${route.title}已交付`,
                 )}
               >
-                {route.completedToday ? '今日已完成' : '交付增值项目'}
+                {route.completedToday
+                  ? '今日已完成'
+                  : route.disabledReason ?? `交付增值项目 · ${route.logisticsCost} 点`}
               </Button>
+              {route.disabledReason && !route.completedToday && (
+                <small className="homestead-disabled-reason">
+                  {route.disabledReason}
+                </small>
+              )}
             </article>
           ))}
         </div>
@@ -1634,13 +1884,16 @@ export function HomesteadScreen() {
             <article key={order.id} className={order.completed ? 'is-complete' : ''}>
               <div className="homestead-card-title">
                 <h3>{order.template.title}</h3>
-                {order.completed && <Tag color="green">已完成</Tag>}
+                <div>
+                  <Tag color="blue">{orderStrategyLabel(order.template)}</Tag>
+                  {order.completed && <Tag color="green">已完成</Tag>}
+                </div>
               </div>
               <p>{order.template.description}</p>
               <ResourceTags resources={order.requirements} />
               <p className="homestead-reward">
                 {order.template.coinReward} 金币 · 声望 +{order.template.reputationReward}
-                {' '}· 研究 +{order.template.researchReward}
+                {' '}· 研究 +{order.template.researchReward} · 物流 {order.logisticsCost} 点
               </p>
               <Button
                 type={order.canComplete ? 'primary' : 'default'}
@@ -1652,8 +1905,15 @@ export function HomesteadScreen() {
                   '联合订单完成',
                 )}
               >
-                {order.completed ? '已交付' : '交付订单'}
+                {order.completed
+                  ? '已交付'
+                  : order.disabledReason ?? `交付订单 · ${order.logisticsCost} 点`}
               </Button>
+              {order.disabledReason && !order.completed && (
+                <small className="homestead-disabled-reason">
+                  {order.disabledReason}
+                </small>
+              )}
             </article>
           ))}
         </div>

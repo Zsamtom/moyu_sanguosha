@@ -1,5 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
+import {
+  ALL_RANCH_ANIMAL_IDS,
+  ALL_RANCH_PRODUCT_IDS,
+  ESTATE_TOWN_IDS,
+} from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
 import type {
   FarmService,
@@ -8,22 +13,9 @@ import type {
 } from "../farm-service.js";
 import { currentUser } from "../middleware/auth.js";
 
-const animalIdSchema = z.enum([
-  "chicken",
-  "duck",
-  "rabbit",
-  "sheep",
-  "cow",
-  "goat",
-]);
-const productIdSchema = z.enum([
-  "egg",
-  "duck_egg",
-  "rabbit_fur",
-  "wool",
-  "milk",
-  "goat_milk",
-]);
+const animalIdSchema = z.enum(ALL_RANCH_ANIMAL_IDS);
+const productIdSchema = z.enum(ALL_RANCH_PRODUCT_IDS);
+const townIdSchema = z.enum(ESTATE_TOWN_IDS);
 const quantitySchema = z.number().int().min(1).max(99);
 const penIndexSchema = z.number().int().min(0).max(7);
 
@@ -74,12 +66,14 @@ const visitActionSchema = z.discriminatedUnion("type", [
 ]);
 
 export const ranchActionEnvelopeSchema = z.object({
+  townId: townIdSchema,
   expectedFarmRevision: z.number().int().nonnegative(),
   expectedRanchRevision: z.number().int().nonnegative(),
   action: actionSchema,
 }).strict();
 
 export const ranchVisitEnvelopeSchema = z.object({
+  townId: townIdSchema,
   expectedRanchRevision: z.number().int().nonnegative(),
   expectedNeighborRevision: z.number().int().nonnegative(),
   action: visitActionSchema,
@@ -103,6 +97,7 @@ export function createRanchRouter(farm: FarmService): Router {
       input.expectedFarmRevision,
       input.expectedRanchRevision,
       input.action as RanchClientAction,
+      input.townId,
     ));
   }));
 
@@ -131,6 +126,7 @@ export function createRanchRouter(farm: FarmService): Router {
       input.expectedRanchRevision,
       input.expectedNeighborRevision,
       input.action as RanchVisitClientAction,
+      input.townId,
     ));
   }));
 

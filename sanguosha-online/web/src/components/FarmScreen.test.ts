@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import type { FarmCropDefinition, FarmPlot, FarmSnapshot } from '../types';
+import type {
+  FarmCropDefinition,
+  FarmGameView,
+  FarmPlot,
+  FarmSnapshot,
+} from '../types';
 import {
+  canCommitFarmSnapshot,
+  farmCropCatalogIds,
+  farmCropName,
   farmPlotCardAction,
   farmPlotRuntime,
   farmPlotToolAction,
@@ -201,5 +209,123 @@ describe('FarmScreen plot toolbar', () => {
     });
     expect(snapshot.farm.inventory!.seeds.wheat).toBe(2);
     expect(snapshot.farm.plots[0]!.cropId).toBeNull();
+  });
+});
+
+describe('FarmScreen town-scoped snapshot guard', () => {
+  const snapshot = (
+    townId: FarmGameView['townId'],
+    revision: number,
+  ) => ({
+    farm: { townId, revision },
+  }) as unknown as FarmSnapshot;
+
+  it('accepts either town at a lower revision and rejects same-town rollback', () => {
+    expect(canCommitFarmSnapshot(
+      snapshot('frostpeak', 1),
+      snapshot('greenvale', 48),
+    )).toBe(true);
+    expect(canCommitFarmSnapshot(
+      snapshot('greenvale', 2),
+      snapshot('frostpeak', 31),
+    )).toBe(true);
+    expect(canCommitFarmSnapshot(
+      snapshot('greenvale', 47),
+      snapshot('greenvale', 48),
+    )).toBe(false);
+  });
+});
+
+describe('FarmScreen town catalog', () => {
+  const frostBarley: FarmCropDefinition = {
+    ...crop,
+    id: 'frost_barley',
+    name: '霜麦',
+    seedCost: 4,
+    basePrice: 7,
+  };
+  const snowPotato: FarmCropDefinition = {
+    ...crop,
+    id: 'snow_potato',
+    name: '雪薯',
+    seedCost: 6,
+    basePrice: 10,
+  };
+  const frostpeak = {
+    townDefinition: {
+      content: {
+        cropIds: ['snow_potato', 'frost_barley'],
+      },
+    },
+    crops: {
+      frost_barley: frostBarley,
+      snow_potato: snowPotato,
+    },
+  } as unknown as FarmGameView;
+
+  it('renders the Frostpeak ordering and labels from the current town view', () => {
+    expect(farmCropCatalogIds(frostpeak)).toEqual([
+      'snow_potato',
+      'frost_barley',
+    ]);
+    expect(farmCropName(frostpeak, 'frost_barley')).toBe('霜麦');
+    expect(farmCropName(
+      { crops: {} } as unknown as FarmGameView,
+      'aurora_fruit',
+    )).toBe('Aurora Fruit');
+  });
+
+  it('optimistically plants a Frostpeak crop without a Greenvale catalog entry', () => {
+    const snapshot = {
+      farm: {
+        ...frostpeak,
+        isOwner: true,
+        revision: 9,
+        inventory: {
+          coins: 100,
+          seeds: { frost_barley: 2 },
+          produce: { frost_barley: 0 },
+          mutations: { frost_barley: 0 },
+        },
+        plots: [{
+          index: 0,
+          cycle: 0,
+          cropId: null,
+          plantedAt: null,
+          maturesAt: null,
+          watered: false,
+          weedAt: null,
+          pestAt: null,
+          weedCleared: false,
+          pestCleared: false,
+          stolen: 0,
+          stealAttempts: [],
+          stolenBy: [],
+          unlocked: true,
+          ready: false,
+          progress: 0,
+          hasWeeds: false,
+          hasPests: false,
+          estimatedYield: 0,
+          maximumStealable: 0,
+        }],
+        market: { frost_barley: { price: 7 } },
+      },
+      neighbors: [],
+      marketDirectorAvailable: false,
+    } as unknown as FarmSnapshot;
+
+    const optimistic = optimisticFarmAction(snapshot, {
+      type: 'farming_plant',
+      cropId: 'frost_barley',
+      plotIndex: 0,
+    }, 20_000);
+
+    expect(optimistic.farm.inventory?.seeds.frost_barley).toBe(1);
+    expect(optimistic.farm.plots[0]).toMatchObject({
+      cropId: 'frost_barley',
+      plantedAt: 20_000,
+      maturesAt: 320_000,
+    });
   });
 });

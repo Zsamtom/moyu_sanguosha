@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
 import {
   isLatestRequest,
-  isRevisionVectorAtLeast,
+  isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
 import type {
   MineClientAction,
@@ -23,34 +23,109 @@ import type {
   RanchProductId,
 } from '../types';
 import '../farm.css';
+
+const MINE_UNREINFORCED_YIELD_PENALTY = 1;
+const MINE_REINFORCED_YIELD_BONUS = 1;
 import '../mine.css';
 
-const DEPOSIT_IDS: MineDepositId[] = [
-  'coal',
-  'iron',
-  'copper',
-  'silver',
-  'gold',
-  'crystal',
-];
+export function canCommitMineSnapshot(
+  next: MineSnapshot,
+  current?: MineSnapshot,
+): boolean {
+  return isTownRevisionVectorAtLeast(
+    next.mine.townId,
+    [
+      next.mine.farmRevision,
+      next.mine.ranchRevision,
+      next.mine.revision,
+    ],
+    current?.mine.townId,
+    current
+      ? [
+          current.mine.farmRevision,
+          current.mine.ranchRevision,
+          current.mine.revision,
+        ]
+      : undefined,
+  );
+}
 
-const PRODUCT_NAMES: Record<RanchProductId, string> = {
+const PRODUCT_NAMES: Partial<Record<RanchProductId, string>> = {
   egg: '鸡蛋',
   duck_egg: '鸭蛋',
   rabbit_fur: '兔绒',
   wool: '羊毛',
   milk: '牛奶',
   goat_milk: '羊奶',
+  snow_egg: '雪羽蛋',
+  ptarmigan_egg: '雷鸟蛋',
+  angora_fur: '高原兔绒',
+  highland_wool: '高地羊毛',
+  yak_milk: '牦牛奶',
+  cashmere: '山羊绒',
 };
 
-const DEPOSIT_MARKS: Record<MineDepositId, string> = {
+const DEPOSIT_MARKS: Partial<Record<MineDepositId, string>> = {
   coal: 'C',
   iron: 'Fe',
   copper: 'Cu',
   silver: 'Ag',
   gold: 'Au',
   crystal: '◇',
+  lignite: 'L',
+  magnetite: 'Mt',
+  tin: 'Sn',
+  frost_silver: 'Fs',
+  glacier_gold: 'Gg',
+  frost_crystal: '◆',
 };
+
+type MineCatalogView = Pick<MineGameView, 'deposits' | 'townDefinition'>;
+
+function fallbackCatalogName(id: string): string {
+  return id
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || '未知资源';
+}
+
+export function mineDepositCatalogIds(
+  game: MineCatalogView,
+): MineDepositId[] {
+  const available = new Set(Object.keys(game.deposits));
+  const ordered = game.townDefinition.content.depositIds.filter(
+    (depositId): depositId is MineDepositId => available.has(depositId),
+  );
+  for (const depositId of available) {
+    if (!ordered.includes(depositId as MineDepositId)) {
+      ordered.push(depositId as MineDepositId);
+    }
+  }
+  return ordered;
+}
+
+export function mineDepositName(
+  game: Pick<MineGameView, 'deposits'>,
+  depositId: MineDepositId,
+): string {
+  return game.deposits[depositId]?.name ?? fallbackCatalogName(depositId);
+}
+
+export function mineProductName(productId: RanchProductId): string {
+  return PRODUCT_NAMES[productId] ?? fallbackCatalogName(productId);
+}
+
+function depositMark(deposit: MineDepositDefinition): string {
+  return DEPOSIT_MARKS[deposit.id] ?? (deposit.name.slice(0, 2) || '矿');
+}
+
+function inventoryCount<T extends string>(
+  counts: Partial<Record<T, number>>,
+  id: T,
+): number {
+  return counts[id] ?? 0;
+}
 
 export interface MineShaftRuntime {
   ready: boolean;
@@ -97,7 +172,12 @@ export function mineShaftRuntime(
     estimatedYield: Math.max(
       1,
       Math.round(
-        (deposit.yield + pickaxeYieldBonus - (hasHazard ? 1 : 0)) *
+        (
+          deposit.yield +
+          pickaxeYieldBonus -
+          (hasHazard ? MINE_UNREINFORCED_YIELD_PENALTY : 0) +
+          (shaft.reinforced ? MINE_REINFORCED_YIELD_BONUS : 0)
+        ) *
           (100 + (shaft.productionModifierPercent ?? 0)) /
           100,
       ),
@@ -147,36 +227,30 @@ export function MineScreen() {
   const actionInFlight = useRef(false);
   const snapshotRef = useRef<MineSnapshot>();
   const loadRequestSequence = useRef(0);
-  const [selectedDeposit, setSelectedDeposit] = useState<MineDepositId>('coal');
+  const [selectedDeposit, setSelectedDeposit] =
+    useState<MineDepositId | null>(null);
   const [marketOpen, setMarketOpen] = useState(false);
-  const [quantities, setQuantities] = useState<Record<MineDepositId, number>>(
-    Object.fromEntries(DEPOSIT_IDS.map((depositId) => [depositId, 1])) as Record<MineDepositId, number>,
-  );
+  const [quantities, setQuantities] = useState<
+    Partial<Record<MineDepositId, number>>
+  >({});
 
   const commitSnapshot = (next: MineSnapshot): boolean => {
     const current = snapshotRef.current;
-    if (
-      !isRevisionVectorAtLeast(
-        [
-          next.mine.farmRevision,
-          next.mine.ranchRevision,
-          next.mine.revision,
-        ],
-        current
-          ? [
-              current.mine.farmRevision,
-              current.mine.ranchRevision,
-              current.mine.revision,
-            ]
-          : undefined,
-      )
-    ) {
+    if (!canCommitMineSnapshot(next, current)) {
       return false;
     }
+    const townChanged = Boolean(
+      current && current.mine.townId !== next.mine.townId,
+    );
     snapshotRef.current = next;
     setSnapshot(next);
     clockOffset.current = next.mine.serverTime - Date.now();
     setNow(next.mine.serverTime);
+    if (townChanged) {
+      setSelectedDeposit(null);
+      setMarketOpen(false);
+      setQuantities({});
+    }
     return true;
   };
 
@@ -233,11 +307,12 @@ export function MineScreen() {
         game.ranchRevision,
         game.revision,
         action,
+        game.townId,
       );
       commitSnapshot(next);
       if (action.type === 'mine_start') {
         toast.success(
-          `已在 ${action.shaftIndex + 1} 号矿井开采${next.mine.deposits[action.depositId].name}`,
+          `已在 ${action.shaftIndex + 1} 号矿井开采${mineDepositName(next.mine, action.depositId)}`,
         );
       } else if (action.type === 'mine_abandon') {
         toast.success(`已放弃 ${action.shaftIndex + 1} 号矿井的采掘任务`);
@@ -270,23 +345,38 @@ export function MineScreen() {
   };
 
   const game = snapshot?.mine;
+  const depositIds = useMemo(
+    () => game ? mineDepositCatalogIds(game) : [],
+    [game?.deposits, game?.townDefinition],
+  );
   const unlockedDeposits = useMemo(
     () => game
-      ? DEPOSIT_IDS.filter((depositId) => {
+      ? depositIds.filter((depositId) => {
           const deposit = game.deposits[depositId];
-          return game.farmLevel >= deposit.requiredFarmLevel &&
+          return deposit !== undefined &&
+            game.farmLevel >= deposit.requiredFarmLevel &&
             game.ranchLevel >= deposit.requiredRanchLevel &&
             game.level >= deposit.requiredMineLevel;
         })
       : [],
-    [game],
+    [
+      depositIds,
+      game?.deposits,
+      game?.farmLevel,
+      game?.ranchLevel,
+      game?.level,
+    ],
   );
+  const activeDepositId =
+    selectedDeposit && unlockedDeposits.includes(selectedDeposit)
+      ? selectedDeposit
+      : unlockedDeposits[0] ?? depositIds[0] ?? null;
 
   useEffect(() => {
-    if (game && !unlockedDeposits.includes(selectedDeposit)) {
-      setSelectedDeposit(unlockedDeposits[0] ?? 'coal');
+    if (activeDepositId !== selectedDeposit) {
+      setSelectedDeposit(activeDepositId);
     }
-  }, [game?.farmLevel, game?.ranchLevel, game?.level]);
+  }, [activeDepositId, selectedDeposit]);
 
   if (loading && !snapshot) {
     return (
@@ -308,18 +398,35 @@ export function MineScreen() {
     );
   }
 
-  const selectedDefinition = game.deposits[selectedDeposit];
+  const selectedDefinition =
+    activeDepositId ? game.deposits[activeDepositId] : undefined;
+  if (!activeDepositId || !selectedDefinition) {
+    return (
+      <main className="farm-page farm-page--loading mine-page">
+        {toastContext}
+        <p>{game.townDefinition.name}的矿脉目录暂不可用，请刷新后重试。</p>
+        <Button onClick={() => void load()}>重新读取</Button>
+      </main>
+    );
+  }
+
   const canStartSelected =
-    unlockedDeposits.includes(selectedDeposit) &&
+    unlockedDeposits.includes(activeDepositId) &&
     game.economy.coins >= selectedDefinition.expeditionCost &&
-    game.economy.ranchProducts[selectedDefinition.rationProductId] >=
+    inventoryCount(
+      game.economy.ranchProducts,
+      selectedDefinition.rationProductId,
+    ) >=
       selectedDefinition.rationAmount;
   const startIssue =
     game.economy.coins < selectedDefinition.expeditionCost
       ? `金币不足：需要 ${selectedDefinition.expeditionCost}`
-      : game.economy.ranchProducts[selectedDefinition.rationProductId] <
+      : inventoryCount(
+          game.economy.ranchProducts,
+          selectedDefinition.rationProductId,
+        ) <
           selectedDefinition.rationAmount
-        ? `${PRODUCT_NAMES[selectedDefinition.rationProductId]}不足：需要 ${selectedDefinition.rationAmount}`
+        ? `${mineProductName(selectedDefinition.rationProductId)}不足：需要 ${selectedDefinition.rationAmount}`
         : null;
   const canExpand =
     game.nextExpansion !== null &&
@@ -333,12 +440,21 @@ export function MineScreen() {
     game.ranchLevel >= game.nextPickaxeUpgrade.requiredRanchLevel &&
     game.level >= game.nextPickaxeUpgrade.requiredMineLevel &&
     game.economy.coins >= game.nextPickaxeUpgrade.coinCost;
+  const supplyProductIds = Array.from(new Set(
+    depositIds.flatMap((depositId) => {
+      const deposit = game.deposits[depositId];
+      return deposit
+        ? [deposit.rationProductId, deposit.supportProductId]
+        : [];
+    }),
+  ));
 
   return (
     <main className="farm-page mine-page">
       {toastContext}
       <section className="farm-status-strip" aria-label="矿山状态">
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
+        <span>城镇：{game.townDefinition.name}</span>
         <span>矿主：{game.ownerName}</span>
         <span>矿山：LV {game.level} / {game.unlockedShafts} 条矿井</span>
         <span>农场：LV {game.farmLevel}</span>
@@ -428,19 +544,20 @@ export function MineScreen() {
                 <span className="farm-tool-strip__label">开采</span>
                 {unlockedDeposits.map((depositId) => {
                   const deposit = game.deposits[depositId];
+                  if (!deposit) return null;
                   return (
                     <Button
                       key={depositId}
-                      aria-pressed={selectedDeposit === depositId}
+                      aria-pressed={activeDepositId === depositId}
                       disabled={busy}
                       size="small"
-                      type={selectedDeposit === depositId ? 'primary' : 'default'}
+                      type={activeDepositId === depositId ? 'primary' : 'default'}
                       onClick={() => {
                         setSelectedDeposit(depositId);
                         toast.info(`已选择${deposit.name}，请点击空闲矿井开采`);
                       }}
                     >
-                      {selectedDeposit === depositId && <span aria-hidden="true">✓</span>}
+                      {activeDepositId === depositId && <span aria-hidden="true">✓</span>}
                       {deposit.name}
                       <small>◎{deposit.expeditionCost}</small>
                     </Button>
@@ -452,14 +569,14 @@ export function MineScreen() {
                     : startIssue
                       ? startIssue
                     : `点击空闲矿井开采${selectedDefinition.name}；需${
-                      PRODUCT_NAMES[selectedDefinition.rationProductId]
+                      mineProductName(selectedDefinition.rationProductId)
                     }×${selectedDefinition.rationAmount}`}
                 </span>
               </div>
               <div className="farm-plots mine-shafts">
                 {game.shafts.map((shaft) => {
                   const deposit = shaft.depositId
-                    ? game.deposits[shaft.depositId]
+                    ? game.deposits[shaft.depositId] ?? null
                     : null;
                   const runtime = mineShaftRuntime(
                     shaft,
@@ -501,7 +618,7 @@ export function MineScreen() {
                         ) return;
                         void runAction({
                           type: 'mine_start',
-                          depositId: selectedDeposit,
+                          depositId: activeDepositId,
                           shaftIndex: shaft.index,
                         });
                       }}
@@ -517,13 +634,19 @@ export function MineScreen() {
                       <div className="farm-plot__body mine-shaft__body">
                         {deposit && (
                           <span className="mine-deposit-mark" aria-hidden="true">
-                            {DEPOSIT_MARKS[deposit.id]}
+                            {depositMark(deposit)}
                           </span>
                         )}
-                        <strong>{deposit?.name ?? '空闲矿井'}</strong>
+                        <strong>
+                          {shaft.depositId
+                            ? mineDepositName(game, shaft.depositId)
+                            : '空闲矿井'}
+                        </strong>
                         <small>
                           {deposit
                             ? `${remainingLabel(runtime.remainingMs)} · 预计 ${runtime.estimatedYield} 份`
+                            : shaft.depositId
+                              ? '矿脉目录正在同步，本地暂不估算产量'
                             : startIssue
                               ? startIssue
                             : `点击下方按钮开采${selectedDefinition.name}`}
@@ -536,11 +659,18 @@ export function MineScreen() {
                               {shaft.productionModifierPercent}%
                             </Tag>
                           )}
+                          {deposit && (shaft.durationModifierPercent ?? 0) !== 0 && (
+                            <Tag color={(shaft.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
+                              {shaft.productionModifierLabel ?? '庄园环境'}
+                              {' '}· 工期 {(shaft.durationModifierPercent ?? 0) > 0 ? '+' : ''}
+                              {shaft.durationModifierPercent}%
+                            </Tag>
+                          )}
                           {runtime.hasHazard && <Tag color="orange">需加固</Tag>}
                           {shaft.reinforced && <Tag color="green">已加固</Tag>}
                           {deposit && (
                             <Tag>
-                              口粮 {PRODUCT_NAMES[deposit.rationProductId]}×{deposit.rationAmount}
+                              口粮 {mineProductName(deposit.rationProductId)}×{deposit.rationAmount}
                             </Tag>
                           )}
                         </div>
@@ -556,7 +686,7 @@ export function MineScreen() {
                             disabled={!canStartHere}
                             onClick={() => void runAction({
                               type: 'mine_start',
-                              depositId: selectedDeposit,
+                              depositId: activeDepositId,
                               shaftIndex: shaft.index,
                             })}
                           >
@@ -568,7 +698,10 @@ export function MineScreen() {
                             size="small"
                             disabled={
                               busy ||
-                              game.economy.ranchProducts[deposit.supportProductId] <
+                              inventoryCount(
+                                game.economy.ranchProducts,
+                                deposit.supportProductId,
+                              ) <
                                 deposit.supportAmount
                             }
                             onClick={() => void runAction({
@@ -576,9 +709,12 @@ export function MineScreen() {
                               shaftIndex: shaft.index,
                             })}
                           >
-                            用{PRODUCT_NAMES[deposit.supportProductId]}
+                            用{mineProductName(deposit.supportProductId)}
                             ×{deposit.supportAmount}加固
-                            （库存 {game.economy.ranchProducts[deposit.supportProductId]}）
+                            （库存 {inventoryCount(
+                              game.economy.ranchProducts,
+                              deposit.supportProductId,
+                            )}）
                           </Button>
                         )}
                         {deposit && (
@@ -649,9 +785,10 @@ export function MineScreen() {
                     </tr>
                   </thead>
                   <tbody>
-                    {DEPOSIT_IDS.map((depositId) => {
+                    {depositIds.map((depositId) => {
                       const deposit = game.deposits[depositId];
-                      const quantity = quantities[depositId];
+                      if (!deposit) return null;
+                      const quantity = quantities[depositId] ?? 1;
                       const unlocked = unlockedDeposits.includes(depositId);
                       return (
                         <tr key={depositId} className={unlocked ? '' : 'farm-row--locked'}>
@@ -666,13 +803,13 @@ export function MineScreen() {
                           </td>
                           <td>{deposit.expeditionCost}</td>
                           <td>
-                            {PRODUCT_NAMES[deposit.rationProductId]}×{deposit.rationAmount}
+                            {mineProductName(deposit.rationProductId)}×{deposit.rationAmount}
                           </td>
                           <td>
-                            {PRODUCT_NAMES[deposit.supportProductId]}×{deposit.supportAmount}
+                            {mineProductName(deposit.supportProductId)}×{deposit.supportAmount}
                           </td>
                           <td>{durationLabel(deposit.durationSeconds)}</td>
-                          <td>{game.economy.ores[depositId]} / {deposit.orePrice}</td>
+                          <td>{inventoryCount(game.economy.ores, depositId)} / {deposit.orePrice}</td>
                           <td>
                             <InputNumber
                               aria-label={`${deposit.name}出售数量`}
@@ -689,12 +826,16 @@ export function MineScreen() {
                           <td>
                             <Button
                               size="small"
-                              disabled={busy || game.economy.ores[depositId] < quantity}
+                              disabled={
+                                busy ||
+                                inventoryCount(game.economy.ores, depositId) < quantity
+                              }
                               title={
                                 busy
                                   ? '正在保存另一项操作'
-                                  : game.economy.ores[depositId] < quantity
-                                    ? `库存不足，当前有 ${game.economy.ores[depositId]}`
+                                  : inventoryCount(game.economy.ores, depositId) <
+                                      quantity
+                                    ? `库存不足，当前有 ${inventoryCount(game.economy.ores, depositId)}`
                                     : undefined
                               }
                               onClick={() => void runAction({
@@ -722,19 +863,18 @@ export function MineScreen() {
                 </div>
               </header>
               <div className="mine-supply-grid">
-                {([
-                  'egg',
-                  'duck_egg',
-                  'milk',
-                  'goat_milk',
-                  'rabbit_fur',
-                  'wool',
-                ] as RanchProductId[]).map((productId) => (
+                {supplyProductIds.map((productId) => (
                   <article key={productId}>
-                    <span>{PRODUCT_NAMES[productId]}</span>
-                    <strong>{game.economy.ranchProducts[productId]}</strong>
+                    <span>{mineProductName(productId)}</span>
+                    <strong>
+                      {inventoryCount(game.economy.ranchProducts, productId)}
+                    </strong>
                     <small>
-                      {productId === 'rabbit_fur' || productId === 'wool'
+                      {depositIds.some(
+                        (depositId) =>
+                          game.deposits[depositId]?.supportProductId ===
+                          productId,
+                      )
                         ? '矿道加固材料'
                         : '采掘队口粮'}
                     </small>

@@ -12,6 +12,7 @@ import { api, ApiError, errorMessage } from '../api';
 import {
   isLatestRequest,
   isRevisionVectorAtLeast,
+  isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
 import type {
   RanchAnimalDefinition,
@@ -26,41 +27,78 @@ import type {
 import '../farm.css';
 import '../ranch.css';
 
-const ANIMAL_IDS: RanchAnimalId[] = [
-  'chicken',
-  'duck',
-  'rabbit',
-  'sheep',
-  'cow',
-  'goat',
-];
-
-const PRODUCT_IDS: RanchProductId[] = [
-  'egg',
-  'duck_egg',
-  'rabbit_fur',
-  'wool',
-  'milk',
-  'goat_milk',
-];
-
 const RANCH_DAILY_HELP_LIMIT = 20;
 const RANCH_DAILY_COLLECT_LIMIT = 10;
 
-const FEED_NAMES = {
+export function canCommitRanchSnapshot(
+  next: RanchSnapshot,
+  current?: RanchSnapshot,
+): boolean {
+  return isTownRevisionVectorAtLeast(
+    next.ranch.townId,
+    [next.ranch.farmRevision, next.ranch.revision],
+    current?.ranch.townId,
+    current
+      ? [current.ranch.farmRevision, current.ranch.revision]
+      : undefined,
+  );
+}
+
+const FEED_NAMES: Partial<Record<string, string>> = {
   wheat: '小麦',
   corn: '玉米',
   carrot: '胡萝卜',
-} as const;
-
-const ANIMAL_MARKS: Record<RanchAnimalId, string> = {
-  chicken: '鸡',
-  duck: '鸭',
-  rabbit: '兔',
-  sheep: '羊',
-  cow: '牛',
-  goat: '乳羊',
+  frost_barley: '霜麦',
+  snow_potato: '雪薯',
+  highland_bean: '高原豆',
 };
+
+type RanchCatalogView = Pick<RanchGameView, 'animals' | 'townDefinition'>;
+
+function fallbackCatalogName(id: string): string {
+  return id
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || '未知资源';
+}
+
+export function ranchAnimalCatalogIds(
+  game: RanchCatalogView,
+): RanchAnimalId[] {
+  const available = new Set(Object.keys(game.animals));
+  const ordered = game.townDefinition.content.animalIds.filter(
+    (animalId): animalId is RanchAnimalId => available.has(animalId),
+  );
+  for (const animalId of available) {
+    if (!ordered.includes(animalId as RanchAnimalId)) {
+      ordered.push(animalId as RanchAnimalId);
+    }
+  }
+  return ordered;
+}
+
+export function ranchAnimalName(
+  game: Pick<RanchGameView, 'animals'>,
+  animalId: RanchAnimalId,
+): string {
+  return game.animals[animalId]?.name ?? fallbackCatalogName(animalId);
+}
+
+export function ranchFeedName(cropId: string): string {
+  return FEED_NAMES[cropId] ?? fallbackCatalogName(cropId);
+}
+
+function animalMark(animal: RanchAnimalDefinition): string {
+  return animal.name.slice(0, 2) || '牧';
+}
+
+function inventoryCount<T extends string>(
+  counts: Partial<Record<T, number>>,
+  id: T,
+): number {
+  return counts[id] ?? 0;
+}
 
 export interface RanchPenRuntime {
   ready: boolean;
@@ -158,29 +196,35 @@ export function RanchScreen() {
   const neighborRanchRef = useRef<RanchGameView>();
   const loadRequestSequence = useRef(0);
   const neighborRequestSequence = useRef(0);
-  const [selectedAnimal, setSelectedAnimal] = useState<RanchAnimalId>('chicken');
+  const [selectedAnimal, setSelectedAnimal] =
+    useState<RanchAnimalId | null>(null);
   const [movingPenIndex, setMovingPenIndex] = useState<number>();
   const [marketOpen, setMarketOpen] = useState(false);
-  const [quantities, setQuantities] = useState<Record<RanchProductId, number>>(
-    Object.fromEntries(PRODUCT_IDS.map((productId) => [productId, 1])) as Record<RanchProductId, number>,
-  );
+  const [quantities, setQuantities] = useState<
+    Partial<Record<RanchProductId, number>>
+  >({});
 
   const commitSnapshot = (next: RanchSnapshot): boolean => {
     const current = snapshotRef.current;
-    if (
-      !isRevisionVectorAtLeast(
-        [next.ranch.farmRevision, next.ranch.revision],
-        current
-          ? [current.ranch.farmRevision, current.ranch.revision]
-          : undefined,
-      )
-    ) {
+    if (!canCommitRanchSnapshot(next, current)) {
       return false;
     }
+    const townChanged = Boolean(
+      current && current.ranch.townId !== next.ranch.townId,
+    );
     snapshotRef.current = next;
     setSnapshot(next);
     clockOffset.current = next.ranch.serverTime - Date.now();
     setNow(next.ranch.serverTime);
+    if (townChanged) {
+      neighborRequestSequence.current += 1;
+      neighborRanchRef.current = undefined;
+      setNeighborRanch(undefined);
+      setSelectedAnimal(null);
+      setMovingPenIndex(undefined);
+      setMarketOpen(false);
+      setQuantities({});
+    }
     return true;
   };
 
@@ -291,6 +335,7 @@ export function RanchScreen() {
         current.ranch.farmRevision,
         current.ranch.revision,
         action,
+        current.ranch.townId,
       );
       commitSnapshot({
         ranch: next.ranch,
@@ -298,7 +343,7 @@ export function RanchScreen() {
       });
       if (action.type === 'ranch_buy_animal') {
         toast.success(
-          `已在 ${action.penIndex + 1} 号畜舍购入${next.ranch.animals[action.animalId].name}`,
+          `已在 ${action.penIndex + 1} 号畜舍购入${ranchAnimalName(next.ranch, action.animalId)}`,
         );
       } else if (action.type === 'ranch_move_animal') {
         setMovingPenIndex(undefined);
@@ -368,6 +413,7 @@ export function RanchScreen() {
         current.ranch.revision,
         currentNeighbor.revision,
         action,
+        current.ranch.townId,
       );
       commitSnapshot({ ranch: next.ranch, neighbors: next.neighbors });
       commitNeighborRanch(next.neighbor);
@@ -412,22 +458,31 @@ export function RanchScreen() {
 
   const ownGame = snapshot?.ranch;
   const displayGame = neighborRanch ?? ownGame;
+  const animalIds = useMemo(
+    () => ownGame ? ranchAnimalCatalogIds(ownGame) : [],
+    [ownGame?.animals, ownGame?.townDefinition],
+  );
   const unlockedAnimals = useMemo(
     () => ownGame
-      ? ANIMAL_IDS.filter((animalId) => {
+      ? animalIds.filter((animalId) => {
           const animal = ownGame.animals[animalId];
-          return ownGame.farmLevel >= animal.requiredFarmLevel &&
+          return animal !== undefined &&
+            ownGame.farmLevel >= animal.requiredFarmLevel &&
             ownGame.level >= animal.requiredRanchLevel;
         })
       : [],
-    [ownGame],
+    [animalIds, ownGame?.animals, ownGame?.farmLevel, ownGame?.level],
   );
+  const activeAnimalId =
+    selectedAnimal && unlockedAnimals.includes(selectedAnimal)
+      ? selectedAnimal
+      : unlockedAnimals[0] ?? animalIds[0] ?? null;
 
   useEffect(() => {
-    if (ownGame && !unlockedAnimals.includes(selectedAnimal)) {
-      setSelectedAnimal(unlockedAnimals[0] ?? 'chicken');
+    if (activeAnimalId !== selectedAnimal) {
+      setSelectedAnimal(activeAnimalId);
     }
-  }, [ownGame?.farmLevel, ownGame?.level]);
+  }, [activeAnimalId, selectedAnimal]);
 
   if (loading && !snapshot) {
     return (
@@ -449,27 +504,40 @@ export function RanchScreen() {
     );
   }
 
+  const selectedDefinition =
+    activeAnimalId ? ownGame.animals[activeAnimalId] : undefined;
+  if (!activeAnimalId || !selectedDefinition) {
+    return (
+      <main className="farm-page farm-page--loading ranch-page">
+        {toastContext}
+        <p>{ownGame.townDefinition.name}的动物目录暂不可用，请刷新后重试。</p>
+        <Button onClick={() => void load()}>重新读取</Button>
+      </main>
+    );
+  }
+
   const isOwnerView = displayGame.isOwner;
   const economy = ownGame.economy!;
-  const selectedDefinition = ownGame.animals[selectedAnimal];
   const canExpand =
     isOwnerView &&
     ownGame.nextExpansion !== null &&
     ownGame.farmLevel >= ownGame.nextExpansion.requiredFarmLevel &&
     ownGame.level >= ownGame.nextExpansion.requiredRanchLevel &&
     economy.coins >= ownGame.nextExpansion.coinCost;
-  const productDefinitions = Object.fromEntries(
-    ANIMAL_IDS.map((animalId) => {
-      const animal = ownGame.animals[animalId];
-      return [animal.productId, animal];
-    }),
-  ) as Record<RanchProductId, RanchAnimalDefinition>;
+  const feedCropIds = Array.from(new Set(
+    animalIds
+      .map((animalId) => ownGame.animals[animalId]?.feedCropId)
+      .filter((cropId): cropId is RanchAnimalDefinition['feedCropId'] =>
+        cropId !== undefined
+      ),
+  ));
 
   return (
     <main className="farm-page ranch-page">
       {toastContext}
       <section className="farm-status-strip" aria-label="牧场状态">
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
+        <span>城镇：{displayGame.townDefinition.name}</span>
         <span>场主：{displayGame.ownerName}</span>
         <span>牧场：LV {displayGame.level} / {displayGame.unlockedPens} 间畜舍</span>
         <span>农场：LV {displayGame.farmLevel}</span>
@@ -534,7 +602,7 @@ export function RanchScreen() {
           <h2>牧场将在农场达到 {ownGame.requiredFarmLevel} 级后开放</h2>
           <p>
             当前农场等级为 {ownGame.farmLevel}。继续种植、照料和收获可获得经验；
-            开放后，小麦、玉米与胡萝卜会成为动物饲料。
+            开放后，本镇特色作物会成为动物饲料。
           </p>
           <Progress
             percent={Math.min(
@@ -559,20 +627,21 @@ export function RanchScreen() {
                   <span className="farm-tool-strip__label">购入</span>
                   {unlockedAnimals.map((animalId) => {
                     const animal = ownGame.animals[animalId];
+                    if (!animal) return null;
                     return (
                       <Button
                         key={animalId}
-                        aria-pressed={selectedAnimal === animalId}
+                        aria-pressed={activeAnimalId === animalId}
                         disabled={busy}
                         size="small"
-                        type={selectedAnimal === animalId ? 'primary' : 'default'}
+                        type={activeAnimalId === animalId ? 'primary' : 'default'}
                         onClick={() => {
                           setSelectedAnimal(animalId);
                           setMovingPenIndex(undefined);
                           toast.info(`已选择${animal.name}，请点击空置畜舍购入`);
                         }}
                       >
-                        {selectedAnimal === animalId && <span aria-hidden="true">✓</span>}
+                        {activeAnimalId === animalId && <span aria-hidden="true">✓</span>}
                         {animal.name}
                         <small>◎{animal.purchaseCost}</small>
                       </Button>
@@ -599,7 +668,9 @@ export function RanchScreen() {
               )}
               <div className="farm-plots farm-plots--realtime">
                 {displayGame.pens.map((pen) => {
-                  const animal = pen.animalId ? displayGame.animals[pen.animalId] : null;
+                  const animal = pen.animalId
+                    ? displayGame.animals[pen.animalId] ?? null
+                    : null;
                   const runtime = ranchPenRuntime(pen, animal, now);
                   const attempted = pen.collectAttempts.includes(ownGame.ownerId);
                   const penPending =
@@ -620,7 +691,7 @@ export function RanchScreen() {
                     !animal &&
                     !busy &&
                     movingPenIndex === undefined &&
-                    unlockedAnimals.includes(selectedAnimal) &&
+                    unlockedAnimals.includes(activeAnimalId) &&
                     economy.coins >= selectedDefinition.purchaseCost;
                   if (!pen.unlocked) {
                     return (
@@ -655,7 +726,7 @@ export function RanchScreen() {
                             }
                           : {
                               type: 'ranch_buy_animal',
-                              animalId: selectedAnimal,
+                              animalId: activeAnimalId,
                               penIndex: pen.index,
                             });
                       }}
@@ -673,12 +744,18 @@ export function RanchScreen() {
                       <div className="farm-plot__body ranch-pen__body">
                         {animal && (
                           <span className="ranch-animal-mark" aria-hidden="true">
-                            {ANIMAL_MARKS[animal.id]}
+                            {animalMark(animal)}
                           </span>
                         )}
-                        <strong>{animal?.name ?? '空置畜舍'}</strong>
+                        <strong>
+                          {pen.animalId
+                            ? ranchAnimalName(displayGame, pen.animalId)
+                            : '空置畜舍'}
+                        </strong>
                         <small>
-                          {!animal
+                          {pen.animalId && !animal
+                            ? '动物目录正在同步，本地暂不估算产出'
+                            : !animal
                             ? movingPenIndex !== undefined
                               ? `点击下方按钮把动物移到 ${pen.index + 1} 号畜舍`
                               : `点击下方按钮购入${selectedDefinition.name}`
@@ -692,6 +769,13 @@ export function RanchScreen() {
                               {pen.productionModifierLabel ?? '庄园环境'}
                               {' '}· 产量 {(pen.productionModifierPercent ?? 0) > 0 ? '+' : ''}
                               {pen.productionModifierPercent}%
+                            </Tag>
+                          )}
+                          {pen.fedAt !== null && (pen.durationModifierPercent ?? 0) !== 0 && (
+                            <Tag color={(pen.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
+                              {pen.productionModifierLabel ?? '庄园环境'}
+                              {' '}· 工期 {(pen.durationModifierPercent ?? 0) > 0 ? '+' : ''}
+                              {pen.durationModifierPercent}%
                             </Tag>
                           )}
                           {animal && pen.fedAt === null && <Tag>待投喂</Tag>}
@@ -726,9 +810,9 @@ export function RanchScreen() {
                                     fromPenIndex: movingPenIndex,
                                     toPenIndex: pen.index,
                                   }
-                                : {
+                                  : {
                                     type: 'ranch_buy_animal',
-                                    animalId: selectedAnimal,
+                                    animalId: activeAnimalId,
                                     penIndex: pen.index,
                                   })}
                             >
@@ -775,16 +859,19 @@ export function RanchScreen() {
                               size="small"
                               disabled={
                                 busy ||
-                                economy.produce[animal.feedCropId] < animal.feedAmount
+                                economy.coins < animal.careCost ||
+                                inventoryCount(economy.produce, animal.feedCropId) <
+                                  animal.feedAmount
                               }
                               onClick={() => void runAction({
                                 type: 'ranch_feed',
                                 penIndex: pen.index,
                               })}
                             >
-                              投喂{FEED_NAMES[animal.feedCropId as keyof typeof FEED_NAMES] ?? animal.feedCropId}
+                              投喂{ranchFeedName(animal.feedCropId)}
                               ×{animal.feedAmount}
-                              （库存 {economy.produce[animal.feedCropId]}）
+                              {' '}+ 养护 ◎{animal.careCost}
+                              （库存 {inventoryCount(economy.produce, animal.feedCropId)}）
                             </Button>
                           )}
                           {animal && runtime.hasMess && (
@@ -888,9 +975,10 @@ export function RanchScreen() {
                       </tr>
                     </thead>
                     <tbody>
-                      {ANIMAL_IDS.map((animalId) => {
+                      {animalIds.map((animalId) => {
                         const animal = ownGame.animals[animalId];
-                        const quantity = quantities[animal.productId];
+                        if (!animal) return null;
+                        const quantity = quantities[animal.productId] ?? 1;
                         const unlocked = unlockedAnimals.includes(animalId);
                         return (
                           <tr key={animalId} className={unlocked ? '' : 'farm-row--locked'}>
@@ -900,12 +988,12 @@ export function RanchScreen() {
                             </td>
                             <td>农 {animal.requiredFarmLevel} / 牧 {animal.requiredRanchLevel}</td>
                             <td>
-                              {FEED_NAMES[animal.feedCropId as keyof typeof FEED_NAMES] ?? animal.feedCropId}
-                              ×{animal.feedAmount}
+                              {ranchFeedName(animal.feedCropId)}
+                              ×{animal.feedAmount} + 养护 ◎{animal.careCost}
                             </td>
                             <td>{durationLabel(animal.productionSeconds)}</td>
                             <td>{animal.yield}</td>
-                            <td>{economy.products[animal.productId]}</td>
+                            <td>{inventoryCount(economy.products, animal.productId)}</td>
                             <td>
                               <InputNumber
                                 aria-label={`${animal.productName}出售数量`}
@@ -922,12 +1010,17 @@ export function RanchScreen() {
                             <td>
                               <Button
                                 size="small"
-                                disabled={busy || economy.products[animal.productId] < quantity}
+                                disabled={
+                                  busy ||
+                                  inventoryCount(economy.products, animal.productId) <
+                                    quantity
+                                }
                                 title={
                                   busy
                                     ? '正在保存另一项操作'
-                                    : economy.products[animal.productId] < quantity
-                                      ? `库存不足，当前有 ${economy.products[animal.productId]}`
+                                    : inventoryCount(economy.products, animal.productId) <
+                                        quantity
+                                      ? `库存不足，当前有 ${inventoryCount(economy.products, animal.productId)}`
                                       : undefined
                                 }
                                 onClick={() => void runAction({
@@ -957,10 +1050,10 @@ export function RanchScreen() {
                   </div>
                 </header>
                 <div className="ranch-resource-grid">
-                  {(['wheat', 'corn', 'carrot'] as const).map((cropId) => (
+                  {feedCropIds.map((cropId) => (
                     <article key={cropId}>
-                      <span>{FEED_NAMES[cropId]}饲料源</span>
-                      <strong>{economy.produce[cropId]}</strong>
+                      <span>{ranchFeedName(cropId)}饲料源</span>
+                      <strong>{inventoryCount(economy.produce, cropId)}</strong>
                       <small>来自农场仓库</small>
                     </article>
                   ))}

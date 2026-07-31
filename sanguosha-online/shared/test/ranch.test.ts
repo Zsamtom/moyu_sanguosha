@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  FARMING_CROPS,
   RANCH_ANIMALS,
   RanchRuleError,
   applyRanchAction,
@@ -35,6 +36,20 @@ function economy(input: Partial<RanchEconomyState> = {}): RanchEconomyState {
 }
 
 describe("persistent ranch engine", () => {
+  it("keeps permanent animals as multi-cycle capital investments", () => {
+    for (const animal of Object.values(RANCH_ANIMALS)) {
+      const feedValue =
+        FARMING_CROPS[animal.feedCropId as keyof typeof FARMING_CROPS]
+          .basePrice * animal.feedAmount;
+      const netCycleValue =
+        animal.productPrice * animal.yield -
+        feedValue -
+        animal.careCost;
+      expect(animal.purchaseCost / netCycleValue).toBeGreaterThanOrEqual(6);
+      expect(animal.resalePrice).toBeLessThan(animal.purchaseCost);
+    }
+  });
+
   it("opens the starter ranch on day one while retaining later animal gates", () => {
     const ranch = createRanchGame({
       ownerId: "owner",
@@ -94,6 +109,11 @@ describe("persistent ranch engine", () => {
     ranch = result.ranch;
     farmEconomy = result.economy;
     expect(farmEconomy.produce.wheat).toBe(9);
+    expect(farmEconomy.coins).toBe(
+      1_000 -
+      RANCH_ANIMALS.chicken.purchaseCost -
+      RANCH_ANIMALS.chicken.careCost,
+    );
 
     const readyAt = start + RANCH_ANIMALS.chicken.productionSeconds * 1_000;
     result = applyRanchAction(
@@ -122,7 +142,8 @@ describe("persistent ranch engine", () => {
     expect(result.economy.coins).toBe(
       1_000 -
       RANCH_ANIMALS.chicken.purchaseCost +
-      RANCH_ANIMALS.chicken.productPrice * 2,
+      RANCH_ANIMALS.chicken.productPrice * 2 -
+      RANCH_ANIMALS.chicken.careCost,
     );
   });
 

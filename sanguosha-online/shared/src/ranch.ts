@@ -54,6 +54,7 @@ export interface RanchAnimalDefinition {
   readonly resalePrice: number;
   readonly feedCropId: FarmingCropId;
   readonly feedAmount: number;
+  readonly careCost: number;
   readonly productionSeconds: number;
   readonly yield: number;
   readonly productPrice: number;
@@ -74,10 +75,11 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "鸡蛋",
     requiredFarmLevel: 1,
     requiredRanchLevel: 1,
-    purchaseCost: 80,
-    resalePrice: 40,
+    purchaseCost: 400,
+    resalePrice: 200,
     feedCropId: "wheat",
     feedAmount: 1,
+    careCost: 5,
     productionSeconds: 10 * MINUTE,
     yield: 3,
     productPrice: 18,
@@ -90,10 +92,11 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "鸭蛋",
     requiredFarmLevel: 4,
     requiredRanchLevel: 2,
-    purchaseCost: 140,
-    resalePrice: 70,
+    purchaseCost: 700,
+    resalePrice: 350,
     feedCropId: "corn",
     feedAmount: 1,
+    careCost: 8,
     productionSeconds: 20 * MINUTE,
     yield: 3,
     productPrice: 30,
@@ -106,10 +109,11 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "兔绒",
     requiredFarmLevel: 5,
     requiredRanchLevel: 3,
-    purchaseCost: 220,
-    resalePrice: 110,
+    purchaseCost: 1_100,
+    resalePrice: 550,
     feedCropId: "carrot",
     feedAmount: 1,
+    careCost: 12,
     productionSeconds: 30 * MINUTE,
     yield: 3,
     productPrice: 46,
@@ -122,10 +126,11 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "羊毛",
     requiredFarmLevel: 6,
     requiredRanchLevel: 4,
-    purchaseCost: 360,
-    resalePrice: 180,
+    purchaseCost: 1_800,
+    resalePrice: 900,
     feedCropId: "wheat",
     feedAmount: 2,
+    careCost: 21,
     productionSeconds: HOUR,
     yield: 4,
     productPrice: 65,
@@ -138,10 +143,11 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "牛奶",
     requiredFarmLevel: 8,
     requiredRanchLevel: 6,
-    purchaseCost: 720,
-    resalePrice: 360,
+    purchaseCost: 3_600,
+    resalePrice: 1_800,
     feedCropId: "corn",
     feedAmount: 2,
+    careCost: 36,
     productionSeconds: 2 * HOUR,
     yield: 4,
     productPrice: 110,
@@ -154,10 +160,11 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "羊奶",
     requiredFarmLevel: 10,
     requiredRanchLevel: 8,
-    purchaseCost: 1_100,
-    resalePrice: 550,
+    purchaseCost: 5_500,
+    resalePrice: 2_750,
     feedCropId: "carrot",
     feedAmount: 2,
+    careCost: 66,
     productionSeconds: 3 * HOUR,
     yield: 5,
     productPrice: 165,
@@ -826,6 +833,12 @@ export function applyRanchAction(
         `需要 ${animal.feedAmount} 份${animal.feedCropId === "wheat" ? "小麦" : animal.feedCropId === "corn" ? "玉米" : "胡萝卜"}作为饲料`,
       );
     }
+    if (economy.coins < animal.careCost) {
+      throw new RanchRuleError(
+        "RANCH_NOT_ENOUGH_COINS",
+        `投喂还需要 ${animal.careCost} 金币用于垫料与基础诊疗`,
+      );
+    }
     const duration = Math.max(
       60_000,
       Math.round(
@@ -834,6 +847,7 @@ export function applyRanchAction(
       ),
     );
     economy.produce[animal.feedCropId] -= animal.feedAmount;
+    economy.coins -= animal.careCost;
     economyChanged = true;
     pen.cycle += 1;
     pen.fedAt = effectiveNow;
@@ -852,7 +866,7 @@ export function applyRanchAction(
       ranch,
       effectiveNow,
       "animal",
-      `给 ${pen.index + 1} 号畜舍的${animal.name}投喂，预计 ${new Date(pen.producesAt).toLocaleString("zh-CN")} 可收取${animal.productName}。`,
+      `给 ${pen.index + 1} 号畜舍的${animal.name}投喂，并支付 ${animal.careCost} 金币垫料与诊疗费；预计 ${new Date(pen.producesAt).toLocaleString("zh-CN")} 可收取${animal.productName}。`,
     );
   } else if (action.type === "ranch_clean") {
     const pen = requirePen(ranch, action.penIndex);

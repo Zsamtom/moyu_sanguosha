@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../api';
 import {
   isLatestRequest,
-  isRevisionVectorAtLeast,
+  isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
 import type {
   FarmClientAction,
@@ -24,20 +24,54 @@ import type {
 } from '../types';
 import '../farm.css';
 
-const CROP_IDS: FarmCropId[] = [
-  'wheat',
-  'carrot',
-  'tomato',
-  'corn',
-  'pumpkin',
-  'strawberry',
-  'sunflower',
-  'watermelon',
-  'grape',
-  'blueberry',
-  'cotton',
-  'dragonfruit',
-];
+type FarmCatalogView = Pick<FarmGameView, 'crops' | 'townDefinition'>;
+
+function fallbackCatalogName(id: string): string {
+  return id
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || '未知作物';
+}
+
+export function farmCropCatalogIds(game: FarmCatalogView): FarmCropId[] {
+  const available = new Set(Object.keys(game.crops));
+  const ordered = game.townDefinition.content.cropIds.filter(
+    (cropId): cropId is FarmCropId => available.has(cropId),
+  );
+  for (const cropId of available) {
+    if (!ordered.includes(cropId as FarmCropId)) {
+      ordered.push(cropId as FarmCropId);
+    }
+  }
+  return ordered;
+}
+
+export function canCommitFarmSnapshot(
+  next: FarmSnapshot,
+  current?: FarmSnapshot,
+): boolean {
+  return isTownRevisionVectorAtLeast(
+    next.farm.townId,
+    [next.farm.revision],
+    current?.farm.townId,
+    current ? [current.farm.revision] : undefined,
+  );
+}
+
+export function farmCropName(
+  game: Pick<FarmGameView, 'crops'>,
+  cropId: FarmCropId,
+): string {
+  return game.crops[cropId]?.name ?? fallbackCatalogName(cropId);
+}
+
+function inventoryCount<T extends string>(
+  counts: Partial<Record<T, number>>,
+  id: T,
+): number {
+  return counts[id] ?? 0;
+}
 
 const TREND_LABELS: Record<-1 | 0 | 1, string> = {
   [-1]: '↓ 下行',
@@ -120,10 +154,16 @@ export function optimisticFarmAction(
   if (action.type === 'farming_plant') {
     const crop = game.crops[action.cropId];
     const plot = plots.find((candidate) => candidate.index === action.plotIndex);
-    if (!plot || plot.cropId !== null || inventory.seeds[action.cropId] < 1) {
+    if (
+      !crop ||
+      !plot ||
+      plot.cropId !== null ||
+      inventoryCount(inventory.seeds, action.cropId) < 1
+    ) {
       return snapshot;
     }
-    inventory.seeds[action.cropId] -= 1;
+    inventory.seeds[action.cropId] =
+      inventoryCount(inventory.seeds, action.cropId) - 1;
     updatePlot(action.plotIndex, (current) => ({
       ...current,
       cycle: current.cycle + 1,
@@ -180,20 +220,33 @@ export function optimisticFarmAction(
         : {}),
     }));
   } else if (action.type === 'farming_buy_seed') {
-    const cost = game.crops[action.cropId].seedCost * action.quantity;
+    const crop = game.crops[action.cropId];
+    if (!crop) return snapshot;
+    const cost = crop.seedCost * action.quantity;
     if (inventory.coins < cost) return snapshot;
     inventory.coins -= cost;
-    inventory.seeds[action.cropId] += action.quantity;
+    inventory.seeds[action.cropId] =
+      inventoryCount(inventory.seeds, action.cropId) + action.quantity;
     changed = true;
   } else if (action.type === 'farming_sell') {
-    if (inventory.produce[action.cropId] < action.quantity) return snapshot;
-    inventory.produce[action.cropId] -= action.quantity;
-    inventory.coins += game.market[action.cropId].price * action.quantity;
+    const quote = game.market[action.cropId];
+    if (
+      !quote ||
+      inventoryCount(inventory.produce, action.cropId) < action.quantity
+    ) return snapshot;
+    inventory.produce[action.cropId] =
+      inventoryCount(inventory.produce, action.cropId) - action.quantity;
+    inventory.coins += quote.price * action.quantity;
     changed = true;
   } else if (action.type === 'farming_redeem_mutation') {
-    if (inventory.mutations[action.cropId] < action.quantity) return snapshot;
-    inventory.mutations[action.cropId] -= action.quantity;
-    inventory.coins += game.market[action.cropId].price * 5 * action.quantity;
+    const quote = game.market[action.cropId];
+    if (
+      !quote ||
+      inventoryCount(inventory.mutations, action.cropId) < action.quantity
+    ) return snapshot;
+    inventory.mutations[action.cropId] =
+      inventoryCount(inventory.mutations, action.cropId) - action.quantity;
+    inventory.coins += quote.price * 5 * action.quantity;
     changed = true;
   }
 
@@ -308,31 +361,37 @@ export function FarmScreen() {
   const neighborFarmRef = useRef<FarmGameView>();
   const loadRequestSequence = useRef(0);
   const neighborRequestSequence = useRef(0);
-  const [selectedCrop, setSelectedCrop] = useState<FarmCropId>('wheat');
+  const [selectedCrop, setSelectedCrop] = useState<FarmCropId | null>(null);
   const [toolMode, setToolMode] = useState<'plant' | 'shovel'>('plant');
   const [marketOpen, setMarketOpen] = useState(false);
-  const [quantities, setQuantities] = useState<Record<FarmCropId, number>>(
-    Object.fromEntries(CROP_IDS.map((cropId) => [cropId, 1])) as Record<FarmCropId, number>,
-  );
+  const [quantities, setQuantities] = useState<
+    Partial<Record<FarmCropId, number>>
+  >({});
 
   const commitSnapshot = (
     next: FarmSnapshot,
     force = false,
   ): boolean => {
     const current = snapshotRef.current;
-    if (
-      !force &&
-      !isRevisionVectorAtLeast(
-        [next.farm.revision],
-        current ? [current.farm.revision] : undefined,
-      )
-    ) {
+    if (!force && !canCommitFarmSnapshot(next, current)) {
       return false;
     }
+    const townChanged = Boolean(
+      current && current.farm.townId !== next.farm.townId,
+    );
     snapshotRef.current = next;
     setSnapshot(next);
     clockOffset.current = next.farm.serverTime - Date.now();
     setNow(next.farm.serverTime);
+    if (townChanged) {
+      neighborRequestSequence.current += 1;
+      neighborFarmRef.current = undefined;
+      setNeighborFarm(undefined);
+      setSelectedCrop(null);
+      setToolMode('plant');
+      setMarketOpen(false);
+      setQuantities({});
+    }
     return true;
   };
 
@@ -433,7 +492,11 @@ export function FarmScreen() {
     commitSnapshot(optimisticFarmAction(previous, action, now));
     let refreshAfterAction = false;
     try {
-      const next = await api.applyFarmAction(expectedRevision, action);
+      const next = await api.applyFarmAction(
+        expectedRevision,
+        action,
+        previous.farm.townId,
+      );
       commitSnapshot({
         farm: next.farm,
         neighbors: snapshotRef.current?.neighbors ?? previous.neighbors,
@@ -441,13 +504,13 @@ export function FarmScreen() {
       });
       if (action.type === 'farming_plant') {
         toast.success(
-          `已在 ${action.plotIndex + 1} 号田播种${next.farm.crops[action.cropId].name}`,
+          `已在 ${action.plotIndex + 1} 号田播种${farmCropName(next.farm, action.cropId)}`,
         );
       } else if (action.type === 'farming_clear_plot') {
         toast.success(`已铲除 ${action.plotIndex + 1} 号田的作物`);
       } else if (action.type === 'farming_redeem_mutation') {
         toast.success(
-          `已兑换 ${action.quantity} 株变异${next.farm.crops[action.cropId].name}`,
+          `已兑换 ${action.quantity} 株变异${farmCropName(next.farm, action.cropId)}`,
         );
       }
     } catch (error) {
@@ -507,6 +570,7 @@ export function FarmScreen() {
         current.farm.revision,
         currentNeighbor.revision,
         action,
+        current.farm.townId,
       );
       commitSnapshot({
         farm: next.farm,
@@ -555,21 +619,31 @@ export function FarmScreen() {
 
   const ownGame = snapshot?.farm;
   const displayGame = neighborFarm ?? ownGame;
-  const selectedDefinition = ownGame?.crops[selectedCrop];
+  const cropIds = useMemo(
+    () => ownGame ? farmCropCatalogIds(ownGame) : [],
+    [ownGame?.crops, ownGame?.townDefinition],
+  );
   const unlockedCrops = useMemo(
     () => ownGame
-      ? CROP_IDS.filter((cropId) =>
-          ownGame.level >= ownGame.crops[cropId].unlockLevel
-        )
+      ? cropIds.filter((cropId) => {
+          const crop = ownGame.crops[cropId];
+          return crop !== undefined && ownGame.level >= crop.unlockLevel;
+        })
       : [],
-    [ownGame],
+    [cropIds, ownGame?.level, ownGame?.crops],
   );
+  const activeCropId =
+    selectedCrop && unlockedCrops.includes(selectedCrop)
+      ? selectedCrop
+      : unlockedCrops[0] ?? cropIds[0] ?? null;
+  const selectedDefinition =
+    activeCropId && ownGame ? ownGame.crops[activeCropId] : undefined;
 
   useEffect(() => {
-    if (ownGame && selectedDefinition && ownGame.level < selectedDefinition.unlockLevel) {
-      setSelectedCrop(unlockedCrops[0] ?? 'wheat');
+    if (activeCropId !== selectedCrop) {
+      setSelectedCrop(activeCropId);
     }
-  }, [ownGame?.level]);
+  }, [activeCropId, selectedCrop]);
 
   if (loading && !snapshot) {
     return (
@@ -586,6 +660,16 @@ export function FarmScreen() {
       <main className="farm-page farm-page--loading">
         {toastContext}
         <p>未能读取农场档案。</p>
+        <Button onClick={() => void load()}>重新读取</Button>
+      </main>
+    );
+  }
+
+  if (!activeCropId || !selectedDefinition) {
+    return (
+      <main className="farm-page farm-page--loading">
+        {toastContext}
+        <p>{ownGame.townDefinition.name}的作物目录暂不可用，请刷新后重试。</p>
         <Button onClick={() => void load()}>重新读取</Button>
       </main>
     );
@@ -610,6 +694,7 @@ export function FarmScreen() {
       {toastContext}
       <section className="farm-status-strip" aria-label="农场状态">
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
+        <span>城镇：{displayGame.townDefinition.name}</span>
         <span>场主：{displayGame.ownerName}</span>
         <span>农场：LV {displayGame.level} / {displayGame.unlockedPlots} 块田</span>
         <span>护院犬：{displayGame.dogLevel} 级 / 拦截 {displayGame.dogBlockChance}%</span>
@@ -678,21 +763,21 @@ export function FarmScreen() {
               {unlockedCrops.map((cropId) => (
                 <Button
                   key={cropId}
-                  aria-pressed={toolMode === 'plant' && selectedCrop === cropId}
+                  aria-pressed={toolMode === 'plant' && activeCropId === cropId}
                   disabled={busy}
                   size="small"
-                  type={toolMode === 'plant' && selectedCrop === cropId ? 'primary' : 'default'}
+                  type={toolMode === 'plant' && activeCropId === cropId ? 'primary' : 'default'}
                   onClick={() => {
                     setSelectedCrop(cropId);
                     setToolMode('plant');
-                    toast.info(`已选择${ownGame.crops[cropId].name}，请点击空田播种`);
+                    toast.info(`已选择${farmCropName(ownGame, cropId)}，请点击空田播种`);
                   }}
                 >
-                  {toolMode === 'plant' && selectedCrop === cropId && (
+                  {toolMode === 'plant' && activeCropId === cropId && (
                     <span aria-hidden="true">✓</span>
                   )}
-                  {ownGame.crops[cropId].name}
-                  <small>×{inventory.seeds[cropId]}</small>
+                  {farmCropName(ownGame, cropId)}
+                  <small>×{inventoryCount(inventory.seeds, cropId)}</small>
                 </Button>
               ))}
               <Button
@@ -708,27 +793,29 @@ export function FarmScreen() {
               <span className="farm-tool-strip__hint">
                 {toolMode === 'shovel'
                   ? '点击田块内的铲除按钮并确认'
-                  : `点击空田播种${ownGame.crops[selectedCrop].name}`}
+                  : `点击空田播种${selectedDefinition.name}`}
               </span>
             </div>
           )}
           <div className="farm-plots farm-plots--realtime">
             {displayGame.plots.map((plot) => {
-              const crop = plot.cropId ? displayGame.crops[plot.cropId] : null;
+              const crop = plot.cropId
+                ? displayGame.crops[plot.cropId] ?? null
+                : null;
               const runtime = farmPlotRuntime(plot, crop, now);
               const attempted = plot.stealAttempts.includes(ownGame.ownerId);
               const plotToolAction = isOwnerView
                 ? farmPlotToolAction(
                     toolMode === 'shovel'
                       ? { type: 'shovel' }
-                      : { type: 'plant', cropId: selectedCrop },
+                      : { type: 'plant', cropId: activeCropId },
                     plot,
                   )
                 : null;
               const plotToolReady =
                 !busy &&
                 plotToolAction?.type === 'farming_plant' &&
-                inventory.seeds[plotToolAction.cropId] > 0;
+                inventoryCount(inventory.seeds, plotToolAction.cropId) > 0;
               const plotCardAction = farmPlotCardAction(
                 plotToolAction,
                 plotToolReady,
@@ -771,17 +858,23 @@ export function FarmScreen() {
                     <i>{plotPending ? 'SYNCING' : runtime.ready ? 'RIPE' : crop ? 'GROWING' : 'IDLE'}</i>
                   </header>
                   <div className="farm-plot__body">
-                    <strong>{crop?.name ?? '空置田块'}</strong>
+                    <strong>
+                      {plot.cropId
+                        ? farmCropName(displayGame, plot.cropId)
+                        : '空置田块'}
+                    </strong>
                     <small>
                       {crop
                         ? `${remainingLabel(runtime.remainingMs)} · 预计产量 ${runtime.estimatedYield}`
+                        : plot.cropId
+                          ? '作物目录正在同步，本地暂不估算产量'
                         : !isOwnerView
                           ? '当前田块为空'
                           : toolMode === 'shovel'
                             ? '空田无需铲除'
-                            : inventory.seeds[selectedCrop] > 0
-                              ? `点击田块播种${ownGame.crops[selectedCrop].name}`
-                              : `${ownGame.crops[selectedCrop].name}种子不足，请先到市场购入`}
+                            : inventoryCount(inventory.seeds, activeCropId) > 0
+                              ? `点击田块播种${selectedDefinition.name}`
+                              : `${selectedDefinition.name}种子不足，请先到市场购入`}
                     </small>
                     <div className="farm-plot__tags">
                       {crop && (plot.productionModifierPercent ?? 0) !== 0 && (
@@ -789,6 +882,20 @@ export function FarmScreen() {
                           {plot.productionModifierLabel ?? '庄园环境'}
                           {' '}· 产量 {(plot.productionModifierPercent ?? 0) > 0 ? '+' : ''}
                           {plot.productionModifierPercent}%
+                        </Tag>
+                      )}
+                      {crop && (plot.durationModifierPercent ?? 0) !== 0 && (
+                        <Tag color={(plot.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
+                          {plot.productionModifierLabel ?? '庄园环境'}
+                          {' '}· 工期 {(plot.durationModifierPercent ?? 0) > 0 ? '+' : ''}
+                          {plot.durationModifierPercent}%
+                        </Tag>
+                      )}
+                      {crop && (plot.durationModifierPercent ?? 0) !== 0 && (
+                        <Tag color={(plot.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
+                          {plot.productionModifierLabel ?? '庄园环境'}
+                          {' '}· 工期 {(plot.durationModifierPercent ?? 0) > 0 ? '+' : ''}
+                          {plot.durationModifierPercent}%
                         </Tag>
                       )}
                       {plot.watered && <Tag color="blue">已浇水</Tag>}
@@ -820,7 +927,7 @@ export function FarmScreen() {
                             }
                           }}
                         >
-                          播种{ownGame.crops[selectedCrop].name}
+                          播种{selectedDefinition.name}
                         </Button>
                       )}
                       {crop && toolMode === 'shovel' && (
@@ -1014,10 +1121,11 @@ export function FarmScreen() {
                   </tr>
                 </thead>
                 <tbody>
-                  {CROP_IDS.map((cropId) => {
+                  {cropIds.map((cropId) => {
                     const crop = ownGame.crops[cropId];
                     const quote = ownGame.market[cropId];
-                    const quantity = quantities[cropId];
+                    if (!crop || !quote) return null;
+                    const quantity = quantities[cropId] ?? 1;
                     const unlocked = ownGame.level >= crop.unlockLevel;
                     return (
                       <tr key={cropId} className={unlocked ? '' : 'farm-row--locked'}>
@@ -1032,8 +1140,8 @@ export function FarmScreen() {
                           <small>{TREND_LABELS[quote.trend]}</small>
                         </td>
                         <td>
-                          种 {inventory.seeds[cropId]}
-                          <small>货 {inventory.produce[cropId]}</small>
+                          种 {inventoryCount(inventory.seeds, cropId)}
+                          <small>货 {inventoryCount(inventory.produce, cropId)}</small>
                         </td>
                         <td>
                           <InputNumber
@@ -1077,12 +1185,15 @@ export function FarmScreen() {
                             <Button
                               size="small"
                               type="primary"
-                              disabled={busy || inventory.produce[cropId] < quantity}
+                              disabled={
+                                busy ||
+                                inventoryCount(inventory.produce, cropId) < quantity
+                              }
                               title={
                                 busy
                                   ? '正在保存另一项操作'
-                                  : inventory.produce[cropId] < quantity
-                                    ? `库存不足，当前有 ${inventory.produce[cropId]}`
+                                  : inventoryCount(inventory.produce, cropId) < quantity
+                                    ? `库存不足，当前有 ${inventoryCount(inventory.produce, cropId)}`
                                     : undefined
                               }
                               onClick={() => void runAction({
@@ -1151,23 +1262,35 @@ export function FarmScreen() {
               <article className="farm-mutation-card">
                 <span>变异图鉴</span>
                 <strong>
-                  {CROP_IDS.reduce((total, cropId) => total + inventory.mutations[cropId], 0)} 株
+                  {cropIds.reduce(
+                    (total, cropId) =>
+                      total + inventoryCount(inventory.mutations, cropId),
+                    0,
+                  )} 株
                 </strong>
                 <small>
                   普通收获有 7% 概率发现；完整浇水、除草和除虫可提升到 12%。
                   变异作物可提交珍稀订单，按当日收购价 5 倍兑换金币，并获得对应收获经验。
                 </small>
-                {CROP_IDS.some((cropId) => inventory.mutations[cropId] > 0) ? (
+                {cropIds.some(
+                  (cropId) => inventoryCount(inventory.mutations, cropId) > 0,
+                ) ? (
                   <div className="farm-mutation-list">
-                    {CROP_IDS.filter((cropId) =>
-                      inventory.mutations[cropId] > 0
+                    {cropIds.filter((cropId) =>
+                      inventoryCount(inventory.mutations, cropId) > 0
                     ).map((cropId) => {
                       const crop = ownGame.crops[cropId];
-                      const coinReward = ownGame.market[cropId].price * 5;
+                      const quote = ownGame.market[cropId];
+                      if (!crop || !quote) return null;
+                      const mutationCount = inventoryCount(
+                        inventory.mutations,
+                        cropId,
+                      );
+                      const coinReward = quote.price * 5;
                       return (
                         <div key={cropId}>
                           <span>
-                            <strong>变异{crop.name} ×{inventory.mutations[cropId]}</strong>
+                            <strong>变异{crop.name} ×{mutationCount}</strong>
                             <small>{coinReward} 金币 + {crop.harvestExperience} 经验 / 株</small>
                           </span>
                           <Button
@@ -1243,16 +1366,16 @@ export function FarmScreen() {
               </div>
             </header>
             <dl className="farm-ledger farm-ledger--expanded">
-              {CROP_IDS.filter((cropId) =>
-                inventory.seeds[cropId] > 0 ||
-                inventory.produce[cropId] > 0 ||
-                inventory.mutations[cropId] > 0
+              {cropIds.filter((cropId) =>
+                inventoryCount(inventory.seeds, cropId) > 0 ||
+                inventoryCount(inventory.produce, cropId) > 0 ||
+                inventoryCount(inventory.mutations, cropId) > 0
               ).map((cropId) => (
                 <div key={cropId}>
-                  <dt>{ownGame.crops[cropId].name}</dt>
-                  <dd><span>种子</span><strong>{inventory.seeds[cropId]}</strong></dd>
-                  <dd><span>农产</span><strong>{inventory.produce[cropId]}</strong></dd>
-                  <dd><span>变异</span><strong>{inventory.mutations[cropId]}</strong></dd>
+                  <dt>{farmCropName(ownGame, cropId)}</dt>
+                  <dd><span>种子</span><strong>{inventoryCount(inventory.seeds, cropId)}</strong></dd>
+                  <dd><span>农产</span><strong>{inventoryCount(inventory.produce, cropId)}</strong></dd>
+                  <dd><span>变异</span><strong>{inventoryCount(inventory.mutations, cropId)}</strong></dd>
                 </div>
               ))}
             </dl>

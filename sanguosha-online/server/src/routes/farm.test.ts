@@ -7,6 +7,7 @@ import {
 describe("real-time farm HTTP schemas", () => {
   it("accepts account-scoped farming actions", () => {
     expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 4,
       action: {
         type: "farming_plant",
@@ -14,6 +15,7 @@ describe("real-time farm HTTP schemas", () => {
         plotIndex: 2,
       },
     })).toEqual({
+      townId: "greenvale",
       expectedRevision: 4,
       action: {
         type: "farming_plant",
@@ -22,6 +24,7 @@ describe("real-time farm HTTP schemas", () => {
       },
     });
     expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 5,
       action: {
         type: "farming_tend",
@@ -30,6 +33,7 @@ describe("real-time farm HTTP schemas", () => {
       },
     })).toBeTruthy();
     expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 6,
       action: {
         type: "farming_clear_plot",
@@ -37,6 +41,7 @@ describe("real-time farm HTTP schemas", () => {
       },
     })).toBeTruthy();
     expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 7,
       action: {
         type: "farming_redeem_mutation",
@@ -48,6 +53,7 @@ describe("real-time farm HTTP schemas", () => {
 
   it("rejects injected player ids and invalid quantities", () => {
     expect(() => farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 0,
       action: {
         type: "farming_tend",
@@ -57,6 +63,7 @@ describe("real-time farm HTTP schemas", () => {
       },
     })).toThrow();
     expect(() => farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 0,
       action: {
         type: "farming_buy_seed",
@@ -68,6 +75,7 @@ describe("real-time farm HTTP schemas", () => {
 
   it("requires both revisions for cross-account help and steal actions", () => {
     expect(farmVisitEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 8,
       expectedNeighborRevision: 3,
       action: {
@@ -75,6 +83,7 @@ describe("real-time farm HTTP schemas", () => {
         plotIndex: 0,
       },
     })).toEqual({
+      townId: "greenvale",
       expectedRevision: 8,
       expectedNeighborRevision: 3,
       action: {
@@ -83,6 +92,7 @@ describe("real-time farm HTTP schemas", () => {
       },
     });
     expect(() => farmVisitEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRevision: 8,
       action: {
         type: "farming_help",

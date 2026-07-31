@@ -1,5 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
-import type { Pool } from "pg";
+import type {
+  Pool,
+  PoolClient,
+  QueryResult,
+  QueryResultRow,
+} from "pg";
 import {
   FARMING_STATE_VERSION,
   FarmingRuleError,
@@ -53,6 +59,7 @@ import {
   type HomesteadGameState,
   type HomesteadGameView,
   type HomesteadLinkedEconomy,
+  type HomesteadWorldEventId,
   assertRestorableEstateAccount,
   buyEstateMerchantItem,
   consumeEstateMerchantItem,
@@ -64,6 +71,7 @@ import {
   unlockEstateTown,
   ESTATE_MERCHANT_ITEMS,
   HOMESTEAD_VALUE_ROUTES,
+  HOMESTEAD_WORLD_EVENTS,
   type EstateAccountState,
   type EstateMerchantItemId,
   type EstateTownId,
@@ -72,7 +80,10 @@ import {
 } from "@sanguosha/shared";
 import type { BotDecisionRegistry } from "./bots/decision-registry.js";
 import { createFarmMarketDecision } from "./bots/farm-market-llm.js";
-import { createHomesteadDirectorDecision } from "./bots/homestead-director-llm.js";
+import {
+  createHomesteadDirectorDecision,
+  type HomesteadDirectorContext,
+} from "./bots/homestead-director-llm.js";
 import { HttpError } from "./errors.js";
 import {
   createTownWeatherService,
@@ -140,6 +151,10 @@ export interface TownEstateBundle {
 }
 
 export interface FarmStateStore {
+  withUserLocks?<T>(
+    userIds: readonly string[],
+    operation: () => Promise<T>,
+  ): Promise<T>;
   load(userId: string): Promise<unknown | undefined>;
   list(limit: number): Promise<unknown[]>;
   save(userId: string, state: FarmingGameState): Promise<void>;
@@ -225,6 +240,16 @@ export interface FarmStateStore {
     secondTownId: EstateTownId,
     secondState: TownEstateBundle,
   ): Promise<void>;
+  saveAccountAndTownEstatePair(
+    accountUserId: string,
+    account: EstateAccountState,
+    firstUserId: string,
+    firstTownId: EstateTownId,
+    firstState: TownEstateBundle,
+    secondUserId: string,
+    secondTownId: EstateTownId,
+    secondState: TownEstateBundle,
+  ): Promise<void>;
   quarantineTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -234,10 +259,77 @@ export interface FarmStateStore {
 }
 
 export class PostgresFarmStateStore implements FarmStateStore {
+  private readonly lockClient = new AsyncLocalStorage<PoolClient>();
+
   constructor(private readonly pool: Pool) {}
 
+  private query<Row extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values: unknown[] = [],
+  ): Promise<QueryResult<Row>> {
+    const client = this.lockClient.getStore();
+    return client
+      ? client.query<Row>(text, values)
+      : this.pool.query<Row>(text, values);
+  }
+
+  private async acquireClient(): Promise<{
+    client: PoolClient;
+    release: () => void;
+  }> {
+    const scopedClient = this.lockClient.getStore();
+    if (scopedClient) {
+      return {
+        client: scopedClient,
+        release: () => undefined,
+      };
+    }
+    const freshClient = await this.pool.connect();
+    return {
+      client: freshClient,
+      release: () => freshClient.release(),
+    };
+  }
+
+  async withUserLocks<T>(
+    userIds: readonly string[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const inheritedClient = this.lockClient.getStore();
+    const client = inheritedClient ?? await this.pool.connect();
+    const lockKeys = [...new Set(userIds)]
+      .sort()
+      .map((userId) => `estate:${userId}`);
+    const acquired: string[] = [];
+    try {
+      for (const lockKey of lockKeys) {
+        await client.query(
+          "SELECT pg_advisory_lock(hashtext($1))",
+          [lockKey],
+        );
+        acquired.push(lockKey);
+      }
+      return inheritedClient
+        ? await operation()
+        : await this.lockClient.run(client, operation);
+    } finally {
+      for (const lockKey of acquired.reverse()) {
+        try {
+          await client.query(
+            "SELECT pg_advisory_unlock(hashtext($1))",
+            [lockKey],
+          );
+        } catch {
+          // Releasing the connection below also releases any remaining
+          // session-level advisory locks.
+        }
+      }
+      if (!inheritedClient) client.release();
+    }
+  }
+
   async load(userId: string): Promise<unknown | undefined> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       "SELECT state FROM farm_state WHERE user_id = $1",
       [userId],
     );
@@ -245,7 +337,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
   }
 
   async list(limit: number): Promise<unknown[]> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       `SELECT state FROM farm_state
        ORDER BY updated_at DESC
        LIMIT $1`,
@@ -255,7 +347,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
   }
 
   async save(userId: string, state: FarmingGameState): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO farm_state (user_id, state, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
@@ -270,7 +362,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     secondUserId: string,
     secondState: FarmingGameState,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       for (const [userId, state] of [
@@ -290,12 +382,12 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
   async quarantine(userId: string, state: unknown, reason: string): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -309,12 +401,12 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
   async loadRanch(userId: string): Promise<unknown | undefined> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       "SELECT state FROM ranch_state WHERE user_id = $1",
       [userId],
     );
@@ -322,7 +414,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
   }
 
   async listRanches(limit: number): Promise<unknown[]> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       `SELECT state FROM ranch_state
        ORDER BY updated_at DESC
        LIMIT $1`,
@@ -332,7 +424,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
   }
 
   async saveRanch(userId: string, state: RanchGameState): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO ranch_state (user_id, state, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
@@ -346,7 +438,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     farm: FarmingGameState,
     ranch: RanchGameState,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -368,7 +460,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -378,7 +470,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     secondUserId: string,
     secondState: RanchGameState,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       for (const [userId, state] of [
@@ -398,7 +490,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -407,7 +499,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     state: unknown,
     reason: string,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -421,12 +513,12 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
   async loadMine(userId: string): Promise<unknown | undefined> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       "SELECT state FROM mine_state WHERE user_id = $1",
       [userId],
     );
@@ -434,7 +526,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
   }
 
   async saveMine(userId: string, state: MineGameState): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO mine_state (user_id, state, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
@@ -449,7 +541,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     ranch: RanchGameState,
     mine: MineGameState,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       for (const [table, state] of [
@@ -470,7 +562,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -479,7 +571,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     state: unknown,
     reason: string,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -493,12 +585,12 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
   async loadHomesteadState(userId: string): Promise<unknown | undefined> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       "SELECT state FROM homestead_state WHERE user_id = $1",
       [userId],
     );
@@ -509,7 +601,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     userId: string,
     state: HomesteadGameState,
   ): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO homestead_state (user_id, state, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
@@ -525,7 +617,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     mine: MineGameState,
     homestead: HomesteadGameState,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       for (const [table, state] of [
@@ -547,7 +639,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -556,7 +648,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     state: unknown,
     reason: string,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -573,12 +665,12 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
   async loadEstateAccount(userId: string): Promise<unknown | undefined> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       "SELECT state FROM estate_account_state WHERE user_id = $1",
       [userId],
     );
@@ -589,7 +681,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     userId: string,
     state: EstateAccountState,
   ): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO estate_account_state (user_id, state, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
@@ -602,7 +694,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     userId: string,
     townId: EstateTownId,
   ): Promise<unknown | undefined> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       `SELECT state FROM town_estate_state
        WHERE user_id = $1 AND town_id = $2`,
       [userId, townId],
@@ -614,7 +706,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     townId: EstateTownId,
     limit: number,
   ): Promise<unknown[]> {
-    const result = await this.pool.query<{ state: unknown }>(
+    const result = await this.query<{ state: unknown }>(
       `SELECT state FROM town_estate_state
        WHERE town_id = $1
        ORDER BY updated_at DESC
@@ -629,7 +721,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     townId: EstateTownId,
     state: TownEstateBundle,
   ): Promise<void> {
-    await this.pool.query(
+    await this.query(
       `INSERT INTO town_estate_state (user_id, town_id, state, updated_at)
        VALUES ($1, $2, $3::jsonb, NOW())
        ON CONFLICT (user_id, town_id) DO UPDATE
@@ -644,7 +736,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     townId: EstateTownId,
     state: TownEstateBundle,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -666,7 +758,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -678,7 +770,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     toTownId: EstateTownId,
     toState: TownEstateBundle,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -705,7 +797,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -717,7 +809,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     secondTownId: EstateTownId,
     secondState: TownEstateBundle,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       for (const [userId, townId, state] of [
@@ -737,7 +829,48 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
+    }
+  }
+
+  async saveAccountAndTownEstatePair(
+    accountUserId: string,
+    account: EstateAccountState,
+    firstUserId: string,
+    firstTownId: EstateTownId,
+    firstState: TownEstateBundle,
+    secondUserId: string,
+    secondTownId: EstateTownId,
+    secondState: TownEstateBundle,
+  ): Promise<void> {
+    const { client, release } = await this.acquireClient();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO estate_account_state (user_id, state, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET state = EXCLUDED.state, updated_at = NOW()`,
+        [accountUserId, JSON.stringify(account)],
+      );
+      for (const [userId, townId, state] of [
+        [firstUserId, firstTownId, firstState],
+        [secondUserId, secondTownId, secondState],
+      ] as const) {
+        await client.query(
+          `INSERT INTO town_estate_state (user_id, town_id, state, updated_at)
+           VALUES ($1, $2, $3::jsonb, NOW())
+           ON CONFLICT (user_id, town_id) DO UPDATE
+           SET state = EXCLUDED.state, updated_at = NOW()`,
+          [userId, townId, JSON.stringify(state)],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      release();
     }
   }
 
@@ -747,7 +880,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
     state: unknown,
     reason: string,
   ): Promise<void> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquireClient();
     try {
       await client.query("BEGIN");
       await client.query(
@@ -766,7 +899,7 @@ export class PostgresFarmStateStore implements FarmStateStore {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 }
@@ -1067,6 +1200,27 @@ export class MemoryFarmStateStore implements FarmStateStore {
     );
   }
 
+  async saveAccountAndTownEstatePair(
+    accountUserId: string,
+    account: EstateAccountState,
+    firstUserId: string,
+    firstTownId: EstateTownId,
+    firstState: TownEstateBundle,
+    secondUserId: string,
+    secondTownId: EstateTownId,
+    secondState: TownEstateBundle,
+  ): Promise<void> {
+    this.estateAccounts.set(accountUserId, structuredClone(account));
+    await this.saveTownEstatePair(
+      firstUserId,
+      firstTownId,
+      firstState,
+      secondUserId,
+      secondTownId,
+      secondState,
+    );
+  }
+
   async quarantineTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -1129,10 +1283,12 @@ export class FarmService {
     user: PublicUser,
     expectedRevision: number,
     action: FarmClientAction,
+    expectedTownId?: EstateTownId,
   ): Promise<FarmActionSnapshot> {
     await this.prefetchTownWeather(user.id);
     return this.serializedMany([user.id], async () => {
       let { account, bundle } = await this.loadActiveEstate(user);
+      this.assertExpectedTown(account.activeTownId, expectedTownId);
       const game = bundle.farm;
       this.assertRevision(game, expectedRevision);
       let next: FarmingGameState;
@@ -1194,6 +1350,7 @@ export class FarmService {
     expectedRevision: number,
     expectedNeighborRevision: number,
     action: FarmVisitClientAction,
+    expectedTownId?: EstateTownId,
   ): Promise<FarmVisitSnapshot> {
     if (neighborId === user.id) {
       throw new HttpError(400, "FARMING_CANNOT_VISIT_SELF", "不能访问自己的农场");
@@ -1202,6 +1359,7 @@ export class FarmService {
     return this.serializedMany([user.id, neighborId], async () => {
       let { account, bundle: visitorBundle } =
         await this.loadActiveEstate(user);
+      this.assertExpectedTown(account.activeTownId, expectedTownId);
       const ownerBundle = await this.loadExistingTownEstate(
         neighborId,
         account.activeTownId,
@@ -1226,8 +1384,9 @@ export class FarmService {
       ownerBundle.farm = result!.owner;
       account = this.syncAccountFromBundle(account, visitorBundle);
       visitorBundle = this.syncBundleFromAccount(visitorBundle, account);
-      await this.store.saveEstateAccount(user.id, account);
-      await this.store.saveTownEstatePair(
+      await this.store.saveAccountAndTownEstatePair(
+        user.id,
+        account,
         result!.owner.ownerId,
         account.activeTownId,
         ownerBundle,
@@ -1265,10 +1424,12 @@ export class FarmService {
     expectedFarmRevision: number,
     expectedRanchRevision: number,
     action: RanchClientAction,
+    expectedTownId?: EstateTownId,
   ): Promise<RanchActionSnapshot> {
     await this.prefetchTownWeather(user.id);
     return this.serializedMany([user.id], async () => {
       let { account, bundle } = await this.loadActiveEstate(user);
+      this.assertExpectedTown(account.activeTownId, expectedTownId);
       const { farm, ranch } = bundle;
       this.assertRevision(farm, expectedFarmRevision);
       this.assertRanchRevision(ranch, expectedRanchRevision);
@@ -1344,6 +1505,7 @@ export class FarmService {
     expectedRanchRevision: number,
     expectedNeighborRevision: number,
     action: RanchVisitClientAction,
+    expectedTownId?: EstateTownId,
   ): Promise<RanchVisitSnapshot> {
     if (neighborId === user.id) {
       throw new HttpError(400, "RANCH_CANNOT_VISIT_SELF", "不能访问自己的牧场");
@@ -1352,6 +1514,7 @@ export class FarmService {
     return this.serializedMany([user.id, neighborId], async () => {
       let { account, bundle: visitorBundle } =
         await this.loadActiveEstate(user);
+      this.assertExpectedTown(account.activeTownId, expectedTownId);
       const visitorFarm = visitorBundle.farm;
       if (visitorFarm.level < RANCH_REQUIRED_FARM_LEVEL) {
         throw new HttpError(
@@ -1391,8 +1554,9 @@ export class FarmService {
       ownerBundle.ranch = result!.owner;
       account = this.syncAccountFromBundle(account, visitorBundle);
       visitorBundle = this.syncBundleFromAccount(visitorBundle, account);
-      await this.store.saveEstateAccount(user.id, account);
-      await this.store.saveTownEstatePair(
+      await this.store.saveAccountAndTownEstatePair(
+        user.id,
+        account,
         result!.owner.ownerId,
         account.activeTownId,
         ownerBundle,
@@ -1429,10 +1593,12 @@ export class FarmService {
     expectedRanchRevision: number,
     expectedMineRevision: number,
     action: MineClientAction,
+    expectedTownId?: EstateTownId,
   ): Promise<MineSnapshot> {
     await this.prefetchTownWeather(user.id);
     return this.serializedMany([user.id], async () => {
       let { account, bundle } = await this.loadActiveEstate(user);
+      this.assertExpectedTown(account.activeTownId, expectedTownId);
       const { farm, ranch, mine } = bundle;
       this.assertRevision(farm, expectedFarmRevision);
       this.assertRanchRevision(ranch, expectedRanchRevision);
@@ -1515,6 +1681,7 @@ export class FarmService {
       | number
       | HomesteadClientAction,
     maybeAction?: HomesteadClientAction,
+    expectedTownId?: EstateTownId,
   ): Promise<HomesteadSnapshot> {
     const expectedAccountRevision =
       typeof expectedAccountRevisionOrAction === "number"
@@ -1540,6 +1707,7 @@ export class FarmService {
     );
     return this.serializedMany([user.id], async () => {
       let { account, bundle } = await this.loadActiveEstate(user);
+      this.assertExpectedTown(account.activeTownId, expectedTownId);
       const { farm, ranch, mine, homestead } = bundle;
       this.assertRevision(farm, expectedFarmRevision);
       this.assertRanchRevision(ranch, expectedRanchRevision);
@@ -1614,11 +1782,21 @@ export class FarmService {
             ? 1
             : 0;
       if (logisticsCost > 0) {
-        account = spendEstateLogistics(
-          account,
-          logisticsCost,
-          now,
-        );
+        try {
+          account = spendEstateLogistics(
+            account,
+            logisticsCost,
+            now,
+          );
+        } catch (error) {
+          throw new HttpError(
+            409,
+            "ESTATE_LOGISTICS_INSUFFICIENT",
+            error instanceof Error
+              ? error.message
+              : "今日物流容量不足",
+          );
+        }
       }
       bundle = this.syncBundleFromAccount(bundle, account);
       await this.store.saveAccountAndTownEstate(
@@ -1661,7 +1839,18 @@ export class FarmService {
         );
       }
       let source = this.syncBundleFromAccount(currentBundle, account);
-      let target = this.createTownEstateBundle(user, action.townId, account);
+      let target = await this.loadOrCreateTownEstate(
+        user,
+        action.townId,
+        account,
+      );
+      target.farm = refreshFarmingGame(target.farm, now);
+      target.ranch = refreshRanchGame(target.ranch, now);
+      target.homestead = refreshHomesteadGame(target.homestead, now);
+      target = this.applyTownWeatherSnapshot(
+        target,
+        await this.townWeather.getTownWeather(action.townId, now),
+      );
       source.homestead.revision += 1;
       source.homestead.updatedAt = Math.max(
         source.homestead.updatedAt,
@@ -1698,6 +1887,13 @@ export class FarmService {
     }
 
     if (action.type === "homestead_switch_town") {
+      if (this.homesteadLogisticsBlocked(currentBundle.homestead)) {
+        throw new HttpError(
+          400,
+          "HOMESTEAD_TRAVEL_UNAVAILABLE",
+          "当前城镇交通受持续灾害影响，请先处理本地物流事件",
+        );
+      }
       if (!state.townProgress[action.townId]?.unlocked) {
         const status = getEstateTownUnlockStatus(state, action.townId);
         throw new HttpError(
@@ -1711,9 +1907,25 @@ export class FarmService {
         action.townId,
         state,
       );
+      targetBeforeTravel.farm = refreshFarmingGame(
+        targetBeforeTravel.farm,
+        now,
+      );
+      targetBeforeTravel.ranch = refreshRanchGame(
+        targetBeforeTravel.ranch,
+        now,
+      );
+      targetBeforeTravel.homestead = refreshHomesteadGame(
+        targetBeforeTravel.homestead,
+        now,
+      );
       let account: EstateAccountState;
       try {
-        account = travelEstateTown(state, action.townId, now);
+        account = travelEstateTown(
+          this.syncAccountFromBundle(state, targetBeforeTravel),
+          action.townId,
+          now,
+        );
       } catch (error) {
         throw new HttpError(
           400,
@@ -1723,6 +1935,10 @@ export class FarmService {
       }
       let source = this.syncBundleFromAccount(currentBundle, account);
       let target = this.syncBundleFromAccount(targetBeforeTravel, account);
+      target = this.applyTownWeatherSnapshot(
+        target,
+        await this.townWeather.getTownWeather(action.townId, now),
+      );
       source.homestead.logs.unshift({
         id: `${now}:town-depart:${action.townId}`,
         at: now,
@@ -1932,23 +2148,18 @@ export class FarmService {
   ): TownEstateBundle {
     const bundle = structuredClone(state);
     const current = bundle.homestead.weather;
-    if (
-      current.validUntil === snapshot.validUntil &&
-      current.source !== "rules"
-    ) {
-      return bundle;
-    }
     const source = snapshot.source === "qweather"
       ? "live"
       : snapshot.source === "last_known_good"
         ? "last_known_good"
         : "fallback";
-    bundle.homestead.weather = {
+    const nextWeather: HomesteadGameState["weather"] = {
       weatherId: snapshot.weatherId,
       dayKey: bundle.homestead.dayKey,
       source,
-      observedAt: snapshot.observation.observedAt ??
-        snapshot.fetchedAt,
+      ...(snapshot.observation.observedAt !== null
+        ? { observedAt: snapshot.observation.observedAt }
+        : {}),
       validUntil: snapshot.validUntil,
       anchorCity: snapshot.anchor.realCityName,
       temperatureC: snapshot.observation.temperatureC,
@@ -1958,6 +2169,8 @@ export class FarmService {
       conditionText: snapshot.observation.conditionText,
       stale: snapshot.stale,
       mechanicsEnabled: snapshot.mechanicsEnabled,
+      alertsAvailable: snapshot.alertsAvailable,
+      fallbackReason: snapshot.fallbackReason,
       providerAttributions: [...snapshot.attributions],
       liveHazards: snapshot.disasters.map((hazard) => ({
         id: hazard.providerAlertId,
@@ -1965,47 +2178,97 @@ export class FarmService {
         headline: hazard.headline,
         severity: hazard.severity,
         affectsGameplay: hazard.affectsGameplay,
+        mechanicId: hazard.mechanicId,
         expiresAt: hazard.expiresAt,
       })),
     };
+    const weatherWindowChanged =
+      current.validUntil !== nextWeather.validUntil ||
+      current.source !== nextWeather.source ||
+      current.mechanicsEnabled !== nextWeather.mechanicsEnabled ||
+      current.alertsAvailable !== nextWeather.alertsAvailable ||
+      current.weatherId !== nextWeather.weatherId;
+    const hazardsChanged =
+      JSON.stringify(current.liveHazards ?? []) !==
+        JSON.stringify(nextWeather.liveHazards ?? []);
+    if (!weatherWindowChanged && !hazardsChanged) {
+      return bundle;
+    }
+    bundle.homestead.weather = nextWeather;
     if (snapshot.mechanicsEnabled) {
-      const disaster = snapshot.disasters.find(
+      const activeDisaster = bundle.homestead.disaster;
+      const matchingActiveAlert = activeDisaster?.providerAlertId
+        ? snapshot.disasters.find(
+            (hazard) =>
+              hazard.affectsGameplay &&
+              hazard.mechanicId !== null &&
+              hazard.providerAlertId === activeDisaster.providerAlertId,
+          )
+        : undefined;
+      const unavailableAlertIds = new Set(
+        bundle.homestead.handledWeatherAlertIds,
+      );
+      if (activeDisaster?.mitigated && activeDisaster.providerAlertId) {
+        unavailableAlertIds.add(activeDisaster.providerAlertId);
+      }
+      const nextUnhandledAlert = snapshot.disasters.find(
         (hazard) =>
           hazard.affectsGameplay &&
-          (
-            hazard.mechanicId === "mountain_seepage" ||
-            hazard.mechanicId === "cold_snap"
-          ),
+          hazard.mechanicId !== null &&
+          !unavailableAlertIds.has(hazard.providerAlertId),
       );
       if (
-        disaster &&
-        (
-          !bundle.homestead.disaster ||
-          bundle.homestead.disaster.mitigated
-        )
+        matchingActiveAlert &&
+        activeDisaster &&
+        !activeDisaster.mitigated
       ) {
+        activeDisaster.severity = Math.max(
+          activeDisaster.severity,
+          matchingActiveAlert.severity,
+        );
+        activeDisaster.remainingDays = Math.max(
+          1,
+          activeDisaster.remainingDays,
+        );
+        bundle.homestead.worldEvent.severity = activeDisaster.severity;
+      } else if (
+        nextUnhandledAlert &&
+        (!activeDisaster || activeDisaster.mitigated)
+      ) {
+        const contentEventId = this.weatherDisasterContentEvent(
+          bundle.townId,
+          nextUnhandledAlert.mechanicId!,
+          `${nextUnhandledAlert.eventName} ${nextUnhandledAlert.headline}`,
+        );
         bundle.homestead.disaster = {
-          eventId: disaster.mechanicId as
-            "mountain_seepage" | "cold_snap",
+          eventId: nextUnhandledAlert.mechanicId!,
+          ...(contentEventId !== nextUnhandledAlert.mechanicId
+            ? { contentEventId }
+            : {}),
+          providerAlertId: nextUnhandledAlert.providerAlertId,
           startedDayKey: bundle.homestead.dayKey,
           remainingDays: 1,
           unresolvedDays: 0,
-          severity: disaster.severity,
+          severity: nextUnhandledAlert.severity,
           mitigated: false,
           resolution: null,
         };
         bundle.homestead.worldEvent = {
           ...bundle.homestead.worldEvent,
-          eventId: disaster.mechanicId as
-            "mountain_seepage" | "cold_snap",
+          eventId: contentEventId,
           dayKey: bundle.homestead.dayKey,
           selectedOptionId: null,
-          narrative: disaster.headline,
+          narrative: nextUnhandledAlert.headline,
           source: "rules",
           startedDayKey: bundle.homestead.dayKey,
           durationDays: 1,
           unresolvedDays: 0,
-          severity: disaster.severity,
+          severity: nextUnhandledAlert.severity,
+        };
+        bundle.homestead.emergencyBoosts = {
+          farm: false,
+          ranch: false,
+          mine: false,
         };
       }
     }
@@ -2013,23 +2276,70 @@ export class FarmService {
     bundle.homestead.updatedAt = Math.max(
       bundle.homestead.updatedAt,
       snapshot.fetchedAt,
+      this.clock(),
     );
-    bundle.homestead.logs.unshift({
-      id: `${snapshot.validFrom}:weather:${bundle.townId}`,
-      at: snapshot.fetchedAt,
-      type: "event",
-      message:
-        `${TOWN_DEFINITIONS[bundle.townId].name}已同步${
-          snapshot.anchor.realCityName
-        }的实时天气：${snapshot.observation.conditionText}。本轮效果冻结至下一个 8 小时窗口。`,
-    });
+    if (weatherWindowChanged) {
+      bundle.homestead.logs.unshift({
+        id: `${snapshot.validFrom}:weather:${bundle.townId}`,
+        at: snapshot.fetchedAt,
+        type: "event",
+        message: snapshot.source === "qweather"
+          ? `${TOWN_DEFINITIONS[bundle.townId].name}已同步${
+            snapshot.anchor.realCityName
+          }的实时天气：${snapshot.observation.conditionText}。本轮效果冻结至下一个 8 小时窗口。`
+          : snapshot.source === "last_known_good"
+            ? `实时天气暂时不可用，当前仅展示${
+              snapshot.anchor.realCityName
+            }最近可信实况；本轮不应用天气或预警数值。`
+            : `未取得${
+              snapshot.anchor.realCityName
+            }的可信实况，当前按中性安全规则运行，不应用天气或灾害倍率。`,
+      });
+    }
     return bundle;
+  }
+
+  private weatherDisasterContentEvent(
+    townId: EstateTownId,
+    mechanicId:
+      | "mountain_seepage"
+      | "cold_snap"
+      | "heatwave"
+      | "windstorm"
+      | "hail"
+      | "drought",
+    description: string,
+  ): HomesteadWorldEventId {
+    if (townId === "greenvale") return mechanicId;
+    if (/雪崩|avalanche/i.test(description)) return "frost_avalanche";
+    if (/道路结冰|轨道结冰|road icing|rail icing/i.test(description)) {
+      return "frost_rail_icing";
+    }
+    if (mechanicId === "drought") {
+      return "frost_highland_drought";
+    }
+    if (
+      mechanicId === "mountain_seepage" ||
+      mechanicId === "heatwave"
+    ) {
+      return "frost_spring_thaw";
+    }
+    return "frost_whiteout_damage";
+  }
+
+  private homesteadLogisticsBlocked(game: HomesteadGameState): boolean {
+    if (!game.disaster || game.disaster.mitigated) return false;
+    const event = HOMESTEAD_WORLD_EVENTS[
+      game.disaster.contentEventId ?? game.disaster.eventId
+    ];
+    return event.hazard?.affectedSectors.includes("logistics") ?? false;
   }
 
   private async loadActiveEstate(user: PublicUser): Promise<{
     account: EstateAccountState;
     bundle: TownEstateBundle;
   }> {
+    const now = this.clock();
     let account = await this.loadOrCreateEstateAccount(user);
     let bundle = await this.loadOrCreateTownEstate(
       user,
@@ -2037,26 +2347,34 @@ export class FarmService {
       account,
     );
     bundle = this.syncBundleFromAccount(bundle, account);
-    const beforeRefreshRevision = bundle.homestead.revision;
+
+    const previousMarketDay = bundle.farm.marketDay;
+    bundle.farm = refreshFarmingGame(bundle.farm, now);
+    if (bundle.farm.marketDay !== previousMarketDay) {
+      bundle.farm = await this.applyMarketDirector(bundle.farm, user.id);
+    }
+    bundle.ranch = refreshRanchGame(bundle.ranch, now);
+
+    const previousHomesteadDay = bundle.homestead.dayKey;
     const refreshedHomestead = refreshHomesteadGame(
       bundle.homestead,
-      this.clock(),
+      now,
     );
-    const dayChanged =
-      refreshedHomestead.revision !== beforeRefreshRevision;
+    const dayChanged = refreshedHomestead.dayKey !== previousHomesteadDay;
     bundle.homestead = refreshedHomestead;
     const weather = await this.townWeather.getTownWeather(
       account.activeTownId,
-      this.clock(),
+      now,
     );
     bundle = this.applyTownWeatherSnapshot(bundle, weather);
+    account = this.syncAccountFromBundle(account, bundle);
     if (dayChanged) {
       this.scheduleHomesteadDirector(
         user,
         bundle,
+        account,
       );
     }
-    account = this.syncAccountFromBundle(account, bundle);
     bundle = this.syncBundleFromAccount(bundle, account);
     await this.store.saveAccountAndTownEstate(
       user.id,
@@ -2070,6 +2388,7 @@ export class FarmService {
   private scheduleHomesteadDirector(
     user: PublicUser,
     bundle: TownEstateBundle,
+    account: EstateAccountState,
   ): void {
     const baseRevision = bundle.homestead.revision;
     const baseDayKey = bundle.homestead.dayKey;
@@ -2080,6 +2399,7 @@ export class FarmService {
       structuredClone(bundle.ranch),
       structuredClone(bundle.mine),
       user.id,
+      this.homesteadDirectorContext(account),
     );
     void operation.then(async (directed) => {
       if (directed.revision === baseRevision) return;
@@ -2152,16 +2472,23 @@ export class FarmService {
     let legacyRanch: RanchGameState | undefined;
     let legacyMine: MineGameState | undefined;
     let legacyHomestead: HomesteadGameState | undefined;
+    const recoveredTownBundles: Partial<
+      Record<EstateTownId, TownEstateBundle>
+    > = {};
     const [
       rawFarm,
       rawRanch,
       rawMine,
       rawHomestead,
+      rawGreenvaleBundle,
+      rawFrostpeakBundle,
     ] = await Promise.all([
       this.store.load(user.id),
       this.store.loadRanch(user.id),
       this.store.loadMine(user.id),
       this.store.loadHomesteadState(user.id),
+      this.store.loadTownEstate(user.id, "greenvale"),
+      this.store.loadTownEstate(user.id, "frostpeak"),
     ]);
     try {
       if (rawFarm !== undefined) {
@@ -2195,17 +2522,83 @@ export class FarmService {
     } catch {
       // Ignore an invalid legacy projection here.
     }
+    for (const [townId, rawBundle] of [
+      ["greenvale", rawGreenvaleBundle],
+      ["frostpeak", rawFrostpeakBundle],
+    ] as const) {
+      if (rawBundle === undefined) continue;
+      try {
+        this.assertTownEstateBundle(rawBundle, user.id, townId);
+        recoveredTownBundles[townId] = structuredClone(rawBundle);
+      } catch (error) {
+        await this.store.quarantineTownEstate(
+          user.id,
+          townId,
+          rawBundle,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    const recoveredBundles = Object.values(recoveredTownBundles);
+    const freshestBundle = recoveredBundles
+      .slice()
+      .sort((left, right) => {
+        const leftUpdatedAt = Math.max(
+          left.farm.updatedAt,
+          left.ranch.updatedAt,
+          left.mine.updatedAt,
+          left.homestead.updatedAt,
+        );
+        const rightUpdatedAt = Math.max(
+          right.farm.updatedAt,
+          right.ranch.updatedAt,
+          right.mine.updatedAt,
+          right.homestead.updatedAt,
+        );
+        return rightUpdatedAt - leftUpdatedAt;
+      })[0];
+    const recoveredResearch = new Set(
+      recoveredBundles.flatMap((bundle) =>
+        bundle.homestead.research.unlocked
+      ),
+    );
+    for (const nodeId of legacyHomestead?.research.unlocked ?? []) {
+      recoveredResearch.add(nodeId);
+    }
+    const recoveredMerchantRenown = Math.max(
+      legacyHomestead?.townNetwork?.merchantRenown ?? 0,
+      ...recoveredBundles.map((bundle) =>
+        bundle.homestead.townNetwork.merchantRenown
+      ),
+    );
 
     const account = createEstateAccount({
       ownerId: user.id,
       ownerName: user.displayName,
       now: this.clock(),
-      coins: legacyFarm?.coins,
-      researchPoints: legacyHomestead?.researchPoints,
-      merchantRenown: legacyHomestead?.townNetwork?.merchantRenown,
-      unlockedResearchIds: legacyHomestead?.research?.unlocked,
+      coins: freshestBundle?.farm.coins ?? legacyFarm?.coins,
+      researchPoints:
+        freshestBundle?.homestead.researchPoints ??
+        legacyHomestead?.researchPoints,
+      merchantRenown: recoveredMerchantRenown,
+      unlockedResearchIds: [...recoveredResearch],
     });
-    account.townProgress.greenvale = {
+    const recoveredGreenvale = recoveredTownBundles.greenvale;
+    account.townProgress.greenvale = recoveredGreenvale
+      ? {
+        unlocked: true,
+        unlockedAt: recoveredGreenvale.homestead.createdAt,
+        localReputation: recoveredGreenvale.homestead.reputation,
+        farmLevel: recoveredGreenvale.farm.level,
+        ranchLevel: recoveredGreenvale.ranch.level,
+        mineLevel: recoveredGreenvale.mine.level,
+        landmarkStage:
+          recoveredGreenvale.homestead.townNetwork.towns.greenvale
+            .landmarkStage,
+        lastVisitedAt: recoveredGreenvale.homestead.updatedAt,
+      }
+      : {
       unlocked: true,
       unlockedAt: legacyHomestead?.createdAt ?? account.createdAt,
       localReputation: legacyHomestead?.reputation ?? 0,
@@ -2215,9 +2608,11 @@ export class FarmService {
       landmarkStage:
         legacyHomestead?.townNetwork?.towns.greenvale.landmarkStage ?? 0,
       lastVisitedAt: this.clock(),
-    };
+      };
+    const recoveredFrostpeak = recoveredTownBundles.frostpeak;
     const legacyFrost = legacyHomestead?.townNetwork?.towns.frostpeak;
     const frostWasUsed = Boolean(
+      recoveredFrostpeak ||
       legacyHomestead?.townNetwork?.activeTownId === "frostpeak" ||
       legacyFrost?.reputation ||
       legacyFrost?.landmarkStage ||
@@ -2230,20 +2625,39 @@ export class FarmService {
       ),
     );
     if (frostWasUsed) {
-      account.townProgress.frostpeak = {
-        unlocked: true,
-        unlockedAt: legacyHomestead?.updatedAt ?? account.createdAt,
-        localReputation: legacyFrost?.reputation ?? 0,
-        farmLevel: Math.max(1, legacyFrost?.sectors.farm.level ?? 1),
-        ranchLevel: Math.max(1, legacyFrost?.sectors.ranch.level ?? 1),
-        mineLevel: Math.max(1, legacyFrost?.sectors.mine.level ?? 1),
-        landmarkStage: legacyFrost?.landmarkStage ?? 0,
-        lastVisitedAt:
+      account.townProgress.frostpeak = recoveredFrostpeak
+        ? {
+          unlocked: true,
+          unlockedAt: recoveredFrostpeak.homestead.createdAt,
+          localReputation: recoveredFrostpeak.homestead.reputation,
+          farmLevel: recoveredFrostpeak.farm.level,
+          ranchLevel: recoveredFrostpeak.ranch.level,
+          mineLevel: recoveredFrostpeak.mine.level,
+          landmarkStage:
+            recoveredFrostpeak.homestead.townNetwork.towns.frostpeak
+              .landmarkStage,
+          lastVisitedAt: recoveredFrostpeak.homestead.updatedAt,
+        }
+        : {
+          unlocked: true,
+          unlockedAt: legacyHomestead?.updatedAt ?? account.createdAt,
+          localReputation: legacyFrost?.reputation ?? 0,
+          farmLevel: Math.max(1, legacyFrost?.sectors.farm.level ?? 1),
+          ranchLevel: Math.max(1, legacyFrost?.sectors.ranch.level ?? 1),
+          mineLevel: Math.max(1, legacyFrost?.sectors.mine.level ?? 1),
+          landmarkStage: legacyFrost?.landmarkStage ?? 0,
+          lastVisitedAt:
+            legacyHomestead?.townNetwork?.activeTownId === "frostpeak"
+              ? this.clock()
+              : null,
+        };
+      if (
+        freshestBundle?.townId === "frostpeak" ||
+        (
+          !freshestBundle &&
           legacyHomestead?.townNetwork?.activeTownId === "frostpeak"
-            ? this.clock()
-            : null,
-      };
-      if (legacyHomestead?.townNetwork?.activeTownId === "frostpeak") {
+        )
+      ) {
         account.activeTownId = "frostpeak";
       }
     }
@@ -2438,6 +2852,14 @@ export class FarmService {
     ) {
       throw new Error("城镇庄园存档所有者不匹配");
     }
+    if (
+      bundle.farm.townId !== townId ||
+      bundle.ranch.townId !== townId ||
+      bundle.mine.townId !== townId ||
+      bundle.homestead.townId !== townId
+    ) {
+      throw new Error("城镇庄园存档包含异镇产业状态");
+    }
   }
 
   private syncBundleFromAccount(
@@ -2474,6 +2896,8 @@ export class FarmService {
       merchantRenown: account.merchantRenown,
       research: account.unlockedResearchIds,
       progress: account.townProgress[bundle.townId],
+      shopRecommendationId: account.shopRecommendationId,
+      shopRecommendationSource: account.shopRecommendationSource,
     });
     account.coins = bundle.farm.coins;
     account.researchPoints = bundle.homestead.researchPoints;
@@ -2485,6 +2909,23 @@ export class FarmService {
         ...bundle.homestead.research.unlocked,
       ]),
     ];
+    const recommendedItemId =
+      bundle.homestead.advice.merchantRecommendationId;
+    if (recommendedItemId === null) {
+      account.shopRecommendationId = null;
+      account.shopRecommendationSource =
+        bundle.homestead.advice.source === "llm" ? "llm" : "rules";
+    } else if (
+      recommendedItemId &&
+      Object.prototype.hasOwnProperty.call(
+        ESTATE_MERCHANT_ITEMS,
+        recommendedItemId,
+      )
+    ) {
+      account.shopRecommendationId = recommendedItemId;
+      account.shopRecommendationSource =
+        bundle.homestead.advice.source === "llm" ? "llm" : "rules";
+    }
     account.townProgress[bundle.townId] = {
       unlocked: true,
       unlockedAt:
@@ -2505,6 +2946,8 @@ export class FarmService {
       merchantRenown: account.merchantRenown,
       research: account.unlockedResearchIds,
       progress: account.townProgress[bundle.townId],
+      shopRecommendationId: account.shopRecommendationId,
+      shopRecommendationSource: account.shopRecommendationSource,
     });
     if (previous !== next) {
       account.revision += 1;
@@ -2895,6 +3338,42 @@ export class FarmService {
     });
   }
 
+  private homesteadDirectorContext(
+    account: EstateAccountState,
+  ): HomesteadDirectorContext {
+    return {
+      coins: account.coins,
+      localReputation:
+        account.townProgress[account.activeTownId]?.localReputation ?? 0,
+      merchantRenown: account.merchantRenown,
+      logistics: structuredClone(account.logistics),
+      merchantCandidates: Object.values(ESTATE_MERCHANT_ITEMS).map(
+        (item) => {
+          const owned = account.merchantInventory[item.id];
+          const purchasedThisWeek =
+            account.purchaseLedger.counts[item.id];
+          const disabledReason =
+            account.merchantRenown < item.requiredRenown
+              ? `商会名望达到 ${item.requiredRenown} 后开放`
+              : account.coins < item.coinPrice
+                ? "金币不足"
+                : owned >= item.inventoryLimit
+                  ? "库存已达上限"
+                  : purchasedThisWeek >= item.weeklyPurchaseLimit
+                    ? "本周限购次数已用完"
+                    : null;
+          return {
+            itemId: item.id,
+            owned,
+            purchasedThisWeek,
+            canBuy: disabledReason === null,
+            disabledReason,
+          };
+        },
+      ),
+    };
+  }
+
   private async applyMarketDirector(
     game: FarmingGameState,
     playerId: string,
@@ -2921,6 +3400,7 @@ export class FarmService {
     ranch: RanchGameState,
     mine: MineGameState,
     playerId: string,
+    context?: HomesteadDirectorContext,
   ): Promise<HomesteadGameState> {
     const request = createHomesteadDirectorDecision(
       homestead,
@@ -2928,6 +3408,7 @@ export class FarmService {
       ranch,
       mine,
       playerId,
+      context,
     );
     if (!request) return homestead;
     try {
@@ -2948,6 +3429,12 @@ export class FarmService {
               narrative: result?.presentation?.narrative,
               recommendation: result?.presentation?.recommendation,
               npcLine: result?.presentation?.npcLine,
+              ...(result?.presentation?.merchantRecommendationId
+                ? {
+                    merchantRecommendationId:
+                      result.presentation.merchantRecommendationId,
+                  }
+                : {}),
             },
           )
         : homestead;
@@ -3005,6 +3492,19 @@ export class FarmService {
         409,
         "HOMESTEAD_REVISION_CONFLICT",
         "庄园状态已更新，请刷新后重试",
+      );
+    }
+  }
+
+  private assertExpectedTown(
+    activeTownId: EstateTownId,
+    expectedTownId?: EstateTownId,
+  ): void {
+    if (expectedTownId !== undefined && expectedTownId !== activeTownId) {
+      throw new HttpError(
+        409,
+        "ESTATE_TOWN_CONFLICT",
+        "当前城镇已在其他页面切换，请刷新后重试",
       );
     }
   }
@@ -3207,7 +3707,9 @@ export class FarmService {
     await Promise.all(previous.map((pending) => pending.catch(() => undefined)));
 
     try {
-      return await operation();
+      return this.store.withUserLocks
+        ? await this.store.withUserLocks(uniqueIds, operation)
+        : await operation();
     } finally {
       release();
       for (const userId of uniqueIds) {

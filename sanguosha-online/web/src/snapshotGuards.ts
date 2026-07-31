@@ -13,3 +13,13 @@ export function isRevisionVectorAtLeast(
   if (next.length !== current.length) return false;
   return next.every((revision, index) => revision >= current[index]!);
 }
+
+export function isTownRevisionVectorAtLeast(
+  nextTownId: string,
+  next: readonly number[],
+  currentTownId?: string,
+  current?: readonly number[],
+): boolean {
+  if (currentTownId === undefined || nextTownId !== currentTownId) return true;
+  return isRevisionVectorAtLeast(next, current);
+}

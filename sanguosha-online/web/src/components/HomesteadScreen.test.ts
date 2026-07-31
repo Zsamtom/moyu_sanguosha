@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { formatHomesteadDuration } from './HomesteadScreen';
+import type { HomesteadSnapshot } from '../types';
+import {
+  canCommitHomesteadSnapshot,
+  formatDisasterReputationImpact,
+  formatHomesteadDuration,
+  formatWeatherObservedAt,
+  isWeatherMechanicsEnabled,
+} from './HomesteadScreen';
 
 describe('HomesteadScreen helpers', () => {
   it('formats production countdowns for short and long jobs', () => {
@@ -8,9 +15,99 @@ describe('HomesteadScreen helpers', () => {
     expect(formatHomesteadDuration(10 * 60_000)).toBe('10 分钟');
     expect(formatHomesteadDuration(90 * 60_000)).toBe('1 小时 30 分');
     expect(formatHomesteadDuration(2 * 60 * 60_000)).toBe('2 小时');
+    expect(formatWeatherObservedAt()).toBe('等待首次同步');
   });
 
-  it('keeps every homestead server action reachable from the interface', () => {
+  it('explains zero and non-zero next-day reputation losses clearly', () => {
+    expect(formatDisasterReputationImpact({
+      reputationPenaltyPaid: 2,
+      reputationPenaltyContinues: true,
+      nextReputationLoss: 4,
+    })).toBe(
+      '本轮已扣声望 2/12 · 声望惩罚仍继续，下一跨日预计 -4',
+    );
+    expect(formatDisasterReputationImpact({
+      reputationPenaltyPaid: 2,
+      reputationPenaltyContinues: true,
+      nextReputationLoss: 0,
+    })).toBe(
+      '本轮已扣声望 2/12 · 声望惩罚仍继续，但当前声望已到底，下一跨日无实际扣除',
+    );
+    expect(formatDisasterReputationImpact({
+      reputationPenaltyPaid: 12,
+      reputationPenaltyContinues: false,
+      nextReputationLoss: 0,
+    })).toBe(
+      '本轮已扣声望 12/12 · 声望惩罚已达本次灾害上限',
+    );
+  });
+
+  it('fails closed for stale, fallback, and incomplete weather metadata', () => {
+    expect(isWeatherMechanicsEnabled({
+      source: 'live',
+      mechanicsEnabled: true,
+    })).toBe(true);
+    expect(isWeatherMechanicsEnabled({
+      source: 'rules',
+      mechanicsEnabled: true,
+    })).toBe(true);
+    expect(isWeatherMechanicsEnabled({
+      source: 'last_known_good',
+      mechanicsEnabled: true,
+    })).toBe(false);
+    expect(isWeatherMechanicsEnabled({
+      source: 'fallback',
+      mechanicsEnabled: true,
+    })).toBe(false);
+    expect(isWeatherMechanicsEnabled({
+      source: 'live',
+    })).toBe(false);
+    expect(isWeatherMechanicsEnabled({
+      source: 'rules',
+    })).toBe(false);
+    expect(isWeatherMechanicsEnabled({
+      mechanicsEnabled: true,
+    })).toBe(false);
+  });
+
+  it('accepts a switch to either town even when local revisions restart lower', () => {
+    const snapshot = (
+      activeTownId: 'greenvale' | 'frostpeak',
+      revisions: readonly [
+        account: number,
+        homestead: number,
+        farm: number,
+        ranch: number,
+        mine: number,
+      ],
+    ) => ({
+      homestead: {
+        activeTownId,
+        accountRevision: revisions[0],
+        revision: revisions[1],
+        revisions: {
+          farm: revisions[2],
+          ranch: revisions[3],
+          mine: revisions[4],
+        },
+      },
+    }) as unknown as HomesteadSnapshot;
+
+    expect(canCommitHomesteadSnapshot(
+      snapshot('frostpeak', [9, 1, 1, 0, 0]),
+      snapshot('greenvale', [8, 50, 60, 35, 16]),
+    )).toBe(true);
+    expect(canCommitHomesteadSnapshot(
+      snapshot('greenvale', [10, 2, 2, 1, 0]),
+      snapshot('frostpeak', [9, 40, 45, 22, 10]),
+    )).toBe(true);
+    expect(canCommitHomesteadSnapshot(
+      snapshot('greenvale', [11, 49, 61, 35, 16]),
+      snapshot('greenvale', [10, 50, 60, 35, 16]),
+    )).toBe(false);
+  });
+
+  it('keeps every supported modular homestead action reachable from the interface', () => {
     const source = readFileSync(
       new URL('./HomesteadScreen.tsx', import.meta.url),
       'utf8',
@@ -31,16 +128,51 @@ describe('HomesteadScreen helpers', () => {
       'homestead_claim_season_reward',
       'homestead_upgrade_resilience',
       'homestead_activate_emergency_boost',
+      'homestead_unlock_town',
       'homestead_switch_town',
-      'homestead_start_town_sector',
-      'homestead_collect_town_sector',
-      'homestead_upgrade_town_sector',
-      'homestead_sell_town_resource',
-      'homestead_resolve_town_problem',
-      'homestead_restore_town_landmark',
+      'homestead_buy_merchant_item',
+      'homestead_use_acceleration_card',
       'homestead_complete_value_route',
     ]) {
       expect(source).toContain(`type: '${actionType}'`);
     }
+  });
+
+  it('uses one complete estate interface for every active town', () => {
+    const source = readFileSync(
+      new URL('./HomesteadScreen.tsx', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).not.toContain("if (homestead.activeTownId === 'frostpeak'");
+    expect(source).toContain('Object.values(homestead.plannedTowns)');
+    expect(source).toContain('accountRevision');
+    expect(source).toContain('今日物流调度');
+    expect(source).toContain('庄园商会');
+    expect(source).toContain('实时天气暂不可用');
+    expect(source).toContain('缓存倍率已中和');
+    expect(source).toContain('既有灾害，其后果仍会继续结算');
+  });
+
+  it('shows reputation costs and ongoing disaster consequences', () => {
+    const source = readFileSync(
+      new URL('./HomesteadScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    const typesSource = readFileSync(
+      new URL('../types.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toContain("option.reputationReward >= 0 ? '+' : ''");
+    expect(source).toContain('声望不足（还差');
+    expect(source).toContain('声望惩罚仍继续，下一跨日预计');
+    expect(source).toContain('当前声望已到底，下一跨日无实际扣除');
+    expect(source).toContain('临时方案不会解除灾害');
+    expect(source).toContain('灾害仍在持续，请改选彻底处置');
+    expect(typesSource).toContain('missingReputation: number');
+    expect(typesSource).toContain('nextReputationLoss: number');
+    expect(typesSource).toContain('reputationPenaltyContinues: boolean');
+    expect(typesSource).toContain('temporaryAlreadyUsed: boolean');
   });
 });

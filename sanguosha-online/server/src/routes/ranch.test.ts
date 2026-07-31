@@ -7,6 +7,7 @@ import {
 describe("ranch HTTP schemas", () => {
   it("requires both farm and ranch revisions for linked actions", () => {
     expect(ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedRanchRevision: 3,
       action: {
@@ -15,6 +16,7 @@ describe("ranch HTTP schemas", () => {
         penIndex: 0,
       },
     })).toEqual({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedRanchRevision: 3,
       action: {
@@ -24,10 +26,12 @@ describe("ranch HTTP schemas", () => {
       },
     });
     expect(() => ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRanchRevision: 3,
       action: { type: "ranch_feed", penIndex: 0 },
     })).toThrow();
     expect(ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedRanchRevision: 3,
       action: {
@@ -37,6 +41,7 @@ describe("ranch HTTP schemas", () => {
       },
     })).toBeTruthy();
     expect(ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedRanchRevision: 3,
       action: {
@@ -48,6 +53,7 @@ describe("ranch HTTP schemas", () => {
 
   it("rejects injected owners, unsupported animals and invalid quantities", () => {
     expect(() => ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 0,
       expectedRanchRevision: 0,
       action: {
@@ -57,6 +63,7 @@ describe("ranch HTTP schemas", () => {
       },
     })).toThrow();
     expect(() => ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 0,
       expectedRanchRevision: 0,
       action: {
@@ -70,6 +77,7 @@ describe("ranch HTTP schemas", () => {
 
   it("requires both ranch revisions for cross-account actions", () => {
     expect(ranchVisitEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRanchRevision: 4,
       expectedNeighborRevision: 9,
       action: {
@@ -78,6 +86,7 @@ describe("ranch HTTP schemas", () => {
       },
     })).toBeTruthy();
     expect(() => ranchVisitEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedRanchRevision: 4,
       action: { type: "ranch_help", penIndex: 2 },
     })).toThrow();

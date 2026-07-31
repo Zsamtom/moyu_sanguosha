@@ -11,9 +11,6 @@ export const ESTATE_DAILY_LOGISTICS_CAPACITY = 6;
 
 export const ESTATE_MERCHANT_ITEM_IDS = [
   "priority_dispatch",
-  "contract_reroll",
-  "forecast_report",
-  "disaster_supplies",
   "rail_pass",
   "merchant_banner",
 ] as const;
@@ -35,18 +32,6 @@ export interface EstateMerchantItemDefinition {
         readonly kind: "facility_acceleration";
         readonly percent: 10;
         readonly maximumSeconds: number;
-      }
-    | {
-        readonly kind: "contract_reroll";
-        readonly count: 1;
-      }
-    | {
-        readonly kind: "forecast_unlock";
-        readonly windows: 1;
-      }
-    | {
-        readonly kind: "disaster_penalty_reduction";
-        readonly percentagePoints: 5;
       }
     | {
         readonly kind: "travel_discount";
@@ -76,47 +61,11 @@ export const ESTATE_MERCHANT_ITEMS: Readonly<
       maximumSeconds: 30 * 60,
     },
   },
-  contract_reroll: {
-    id: "contract_reroll",
-    name: "合同改签券",
-    description: "重新生成一份同档联合订单，不提高奖励档位。",
-    coinPrice: 120,
-    requiredRenown: 1,
-    inventoryLimit: 2,
-    weeklyPurchaseLimit: 3,
-    category: "utility",
-    numericEffect: { kind: "contract_reroll", count: 1 },
-  },
-  forecast_report: {
-    id: "forecast_report",
-    name: "下一周期气象报告",
-    description: "提前显示下一 8 小时天气窗口；不提供任何产量加成。",
-    coinPrice: 60,
-    requiredRenown: 0,
-    inventoryLimit: 2,
-    weeklyPurchaseLimit: 5,
-    category: "information",
-    numericEffect: { kind: "forecast_unlock", windows: 1 },
-  },
-  disaster_supplies: {
-    id: "disaster_supplies",
-    name: "灾期保险物资",
-    description: "本次灾害中将一个板块的负面倍率减轻 5 个百分点。",
-    coinPrice: 260,
-    requiredRenown: 3,
-    inventoryLimit: 2,
-    weeklyPurchaseLimit: 2,
-    category: "resilience",
-    numericEffect: {
-      kind: "disaster_penalty_reduction",
-      percentagePoints: 5,
-    },
-  },
   rail_pass: {
     id: "rail_pass",
     name: "商会联运票",
     description: "下一次跨镇客运基础票价减半，不减免货运费用。",
-    coinPrice: 160,
+    coinPrice: 50,
     requiredRenown: 1,
     inventoryLimit: 2,
     weeklyPurchaseLimit: 2,
@@ -218,11 +167,11 @@ function emptyMerchantInventory(initial = 0): EstateMerchantInventory {
 }
 
 function accountDayKey(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
+  return new Date(now + 8 * 60 * 60 * 1_000).toISOString().slice(0, 10);
 }
 
 function accountWeekKey(now: number): string {
-  const date = new Date(now);
+  const date = new Date(now + 8 * 60 * 60 * 1_000);
   const day = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - day);
   const yearStart = Date.UTC(date.getUTCFullYear(), 0, 1);
@@ -346,8 +295,17 @@ export function getEstateTownUnlockStatus(
     ? state.townProgress[requirements.sourceTownId]
     : undefined;
   const unlocked = Boolean(state.townProgress[townId]?.unlocked);
+  if (unlocked) {
+    return {
+      townId,
+      unlocked: true,
+      canUnlock: false,
+      missing: [],
+      coinCost: requirements.coinCost,
+    };
+  }
   const missing: string[] = [];
-  if (!unlocked && progress) {
+  if (progress) {
     if (progress.farmLevel < requirements.minimumFarmLevel) {
       missing.push(`农场达到 ${requirements.minimumFarmLevel} 级`);
     }
@@ -360,7 +318,7 @@ export function getEstateTownUnlockStatus(
     if (progress.localReputation < requirements.minimumReputation) {
       missing.push(`当地声望达到 ${requirements.minimumReputation}`);
     }
-  } else if (!unlocked && requirements.sourceTownId && !progress) {
+  } else if (requirements.sourceTownId) {
     missing.push(`先开发${TOWN_DEFINITIONS[requirements.sourceTownId].name}`);
   }
   for (const researchId of requirements.requiredResearchIds) {
@@ -373,8 +331,8 @@ export function getEstateTownUnlockStatus(
   }
   return {
     townId,
-    unlocked,
-    canUnlock: !unlocked && missing.length === 0,
+    unlocked: false,
+    canUnlock: missing.length === 0,
     missing,
     coinCost: requirements.coinCost,
   };
@@ -400,6 +358,9 @@ export function unlockEstateTown(
     landmarkStage: 0,
     lastVisitedAt: null,
   };
+  if (townId === "frostpeak") {
+    account.merchantRenown += 2;
+  }
   account.revision += 1;
   account.updatedAt = Math.max(account.updatedAt, now);
   return account;
@@ -519,6 +480,10 @@ export function assertRestorableEstateAccount(
     state.version !== ESTATE_ACCOUNT_STATE_VERSION ||
     typeof state.ownerId !== "string" ||
     typeof state.ownerName !== "string" ||
+    typeof state.createdAt !== "number" ||
+    !Number.isFinite(state.createdAt) ||
+    typeof state.updatedAt !== "number" ||
+    !Number.isFinite(state.updatedAt) ||
     !Number.isSafeInteger(state.revision) ||
     Number(state.revision) < 0 ||
     !Number.isSafeInteger(state.coins) ||
@@ -535,14 +500,91 @@ export function assertRestorableEstateAccount(
     typeof state.merchantInventory !== "object" ||
     !state.purchaseLedger ||
     !state.logistics ||
-    !Array.isArray(state.travelLogs)
+    !Array.isArray(state.travelLogs) ||
+    (
+      state.shopRecommendationId !== null &&
+      !ESTATE_MERCHANT_ITEM_IDS.includes(
+        state.shopRecommendationId as EstateMerchantItemId,
+      )
+    ) ||
+    !["rules", "llm"].includes(String(state.shopRecommendationSource))
   ) {
     throw new Error("庄园账户存档无效");
   }
   for (const itemId of ESTATE_MERCHANT_ITEM_IDS) {
     const quantity = state.merchantInventory[itemId];
-    if (!Number.isSafeInteger(quantity) || Number(quantity) < 0) {
+    const purchased = state.purchaseLedger.counts?.[itemId];
+    if (
+      !Number.isSafeInteger(quantity) ||
+      Number(quantity) < 0 ||
+      Number(quantity) > ESTATE_MERCHANT_ITEMS[itemId].inventoryLimit ||
+      !Number.isSafeInteger(purchased) ||
+      Number(purchased) < 0 ||
+      Number(purchased) >
+        ESTATE_MERCHANT_ITEMS[itemId].weeklyPurchaseLimit
+    ) {
       throw new Error("庄园商会道具存档无效");
+    }
+  }
+  if (
+    typeof state.purchaseLedger.weekKey !== "string" ||
+    typeof state.logistics.dayKey !== "string" ||
+    !Number.isSafeInteger(state.logistics.used) ||
+    !Number.isSafeInteger(state.logistics.capacity) ||
+    state.logistics.used < 0 ||
+    state.logistics.capacity < 1 ||
+    state.logistics.used > state.logistics.capacity
+  ) {
+    throw new Error("庄园物流存档无效");
+  }
+  for (const townId of ESTATE_TOWN_IDS) {
+    const progress = state.townProgress[townId];
+    if (!progress) continue;
+    if (
+      typeof progress.unlocked !== "boolean" ||
+      (
+        progress.unlockedAt !== null &&
+        !Number.isFinite(progress.unlockedAt)
+      ) ||
+      !Number.isSafeInteger(progress.localReputation) ||
+      progress.localReputation < 0 ||
+      !Number.isSafeInteger(progress.farmLevel) ||
+      progress.farmLevel < 1 ||
+      !Number.isSafeInteger(progress.ranchLevel) ||
+      progress.ranchLevel < 1 ||
+      !Number.isSafeInteger(progress.mineLevel) ||
+      progress.mineLevel < 1 ||
+      !Number.isSafeInteger(progress.landmarkStage) ||
+      progress.landmarkStage < 0 ||
+      (
+        progress.lastVisitedAt !== null &&
+        !Number.isFinite(progress.lastVisitedAt)
+      )
+    ) {
+      throw new Error("城镇开发进度存档无效");
+    }
+  }
+  const activeTownId = state.activeTownId as EstateTownId;
+  if (!state.townProgress[activeTownId]?.unlocked) {
+    throw new Error("当前城镇尚未解锁");
+  }
+  for (const log of state.travelLogs) {
+    if (
+      !log ||
+      typeof log !== "object" ||
+      typeof log.id !== "string" ||
+      !Number.isFinite(log.at) ||
+      !ESTATE_TOWN_IDS.includes(log.fromTownId) ||
+      !ESTATE_TOWN_IDS.includes(log.toTownId) ||
+      typeof log.routeId !== "string" ||
+      !Number.isSafeInteger(log.baseFare) ||
+      log.baseFare < 0 ||
+      !Number.isSafeInteger(log.paidFare) ||
+      log.paidFare < 0 ||
+      log.paidFare > log.baseFare ||
+      typeof log.usedRailPass !== "boolean"
+    ) {
+      throw new Error("城镇交通记录存档无效");
     }
   }
 }

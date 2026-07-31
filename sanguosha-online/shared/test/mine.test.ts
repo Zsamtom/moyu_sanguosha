@@ -107,7 +107,7 @@ describe("linked mine engine", () => {
       { type: "mine_collect", shaftIndex: 0 },
       readyAt,
     );
-    expect(result.mine.ores.coal).toBe(MINE_DEPOSITS.coal.yield);
+    expect(result.mine.ores.coal).toBe(MINE_DEPOSITS.coal.yield + 1);
 
     result = applyMineAction(
       result.mine,
@@ -115,7 +115,7 @@ describe("linked mine engine", () => {
       { type: "mine_sell", depositId: "coal", quantity: 2 },
       readyAt,
     );
-    expect(result.mine.ores.coal).toBe(1);
+    expect(result.mine.ores.coal).toBe(MINE_DEPOSITS.coal.yield - 1);
     expect(result.economy.coins).toBe(
       3_000 -
       MINE_DEPOSITS.coal.expeditionCost +
@@ -153,7 +153,7 @@ describe("linked mine engine", () => {
     );
   });
 
-  it("applies one unit of loss when a completed shaft was not reinforced", () => {
+  it("makes reinforcement worth two units versus ignoring the risk point", () => {
     let mine = createMineGame({
       ownerId: "owner",
       ownerName: "经营者",

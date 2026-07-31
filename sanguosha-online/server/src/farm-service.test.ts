@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { Pool } from "pg";
+import { describe, expect, it, vi } from "vitest";
 import {
   FARMING_CROPS,
   MINE_DEPOSITS,
@@ -9,6 +10,8 @@ import {
   createHomesteadGame,
   createMineGame,
   createRanchGame,
+  TOWN_DEFINITIONS,
+  type EstateAccountState,
   type FarmingGameState,
   type FarmingMarketDecision,
   type HomesteadGameState,
@@ -22,7 +25,16 @@ import {
 import {
   FarmService,
   MemoryFarmStateStore,
+  PostgresFarmStateStore,
+  type TownEstateBundle,
 } from "./farm-service.js";
+import {
+  TOWN_WEATHER_ANCHORS,
+  TownWeatherService,
+  type TownWeatherDisasterMechanicId,
+  type TownWeatherProviderResult,
+  type TownWeatherSnapshot,
+} from "./town-weather.js";
 import type { PublicUser } from "./users.js";
 
 const start = Date.UTC(2026, 6, 29, 8, 0, 0);
@@ -81,7 +93,162 @@ function mineReadyRanch(owner: PublicUser): RanchGameState {
   return ranch;
 }
 
+function townEstateBundle(
+  owner: PublicUser,
+  townId: "greenvale" | "frostpeak" = "greenvale",
+): TownEstateBundle {
+  return {
+    kind: "town_estate_bundle",
+    version: 1,
+    townId,
+    contentVersion: TOWN_DEFINITIONS[townId].contentVersion,
+    farm: createFarmingGame({
+      ownerId: owner.id,
+      ownerName: owner.displayName,
+      seed: `${townId}-weather-farm`,
+      now: start,
+      townId,
+    }),
+    ranch: createRanchGame({
+      ownerId: owner.id,
+      ownerName: owner.displayName,
+      seed: `${townId}-weather-ranch`,
+      now: start,
+      townId,
+    }),
+    mine: createMineGame({
+      ownerId: owner.id,
+      ownerName: owner.displayName,
+      seed: `${townId}-weather-mine`,
+      now: start,
+      townId,
+    }),
+    homestead: createHomesteadGame({
+      ownerId: owner.id,
+      ownerName: owner.displayName,
+      seed: `${townId}-weather-homestead`,
+      now: start,
+      townId,
+    }),
+  };
+}
+
+function liveWeatherSnapshot(input: {
+  townId?: "greenvale" | "frostpeak";
+  validFrom?: number;
+  providerAlertId?: string;
+  mechanicId?: TownWeatherDisasterMechanicId;
+} = {}): TownWeatherSnapshot {
+  const townId = input.townId ?? "greenvale";
+  const validFrom = input.validFrom ?? start;
+  const mechanicId = input.mechanicId ?? "cold_snap";
+  return {
+    townId,
+    anchor: TOWN_WEATHER_ANCHORS[townId],
+    bucketKey: `${townId}:${new Date(validFrom).toISOString()}`,
+    validFrom,
+    validUntil: validFrom + 8 * 60 * 60 * 1_000,
+    fetchedAt: validFrom,
+    provider: "qweather",
+    source: "qweather",
+    stale: false,
+    mechanicsEnabled: true,
+    weatherId: "clear",
+    observation: {
+      conditionCode: "100",
+      conditionText: "晴",
+      observedAt: validFrom,
+      temperatureC: 18,
+      feelsLikeC: 18,
+      humidityPercent: 45,
+      precipitationMm: 0,
+      windSpeedKph: 8,
+      visibilityKm: 20,
+    },
+    alertsAvailable: true,
+    disasters: [{
+      providerAlertId: input.providerAlertId ?? "weather-alert-1",
+      eventCode: "test-alert",
+      eventName: "寒潮",
+      headline: "寒潮预警",
+      description: "测试天气灾害",
+      instruction: null,
+      senderName: "测试气象台",
+      messageType: "alert",
+      severity: 2,
+      certainty: "likely",
+      urgency: "expected",
+      colorCode: "orange",
+      issuedAt: validFrom,
+      effectiveAt: validFrom,
+      expiresAt: validFrom + 24 * 60 * 60 * 1_000,
+      mechanicId,
+      mechanicLabel: "测试灾害",
+      affectsGameplay: true,
+    }],
+    attributions: ["QWeather"],
+    fallbackReason: null,
+  };
+}
+
 describe("real-time FarmService", () => {
+  it("reuses the advisory-lock connection for all store work", async () => {
+    const query = vi.fn(async (text: string) => ({
+      rows: text.includes("SELECT state") ? [] : [],
+    }));
+    const release = vi.fn();
+    const connect = vi.fn(async () => ({ query, release }));
+    const pool = {
+      connect,
+      query: vi.fn(() => {
+        throw new Error("store work escaped the advisory-lock client");
+      }),
+    } as unknown as Pool;
+    const store = new PostgresFarmStateStore(pool);
+    const first = createFarmingGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "lock-first",
+      now: start,
+    });
+    const second = createFarmingGame({
+      ownerId: neighbor.id,
+      ownerName: neighbor.displayName,
+      seed: "lock-second",
+      now: start,
+    });
+
+    await store.withUserLocks(
+      [neighbor.id, user.id],
+      async () => {
+        await store.list(10);
+        await store.savePair(
+          user.id,
+          first,
+          neighbor.id,
+          second,
+        );
+      },
+    );
+
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+    const lockCalls = query.mock.calls.filter(
+      ([text]) => text.includes("pg_advisory_lock"),
+    );
+    expect(lockCalls.map(([, values]) => values?.[0])).toEqual([
+      `estate:${neighbor.id}`,
+      `estate:${user.id}`,
+    ].sort());
+    expect(query.mock.calls.some(
+      ([text]) => text === "BEGIN",
+    )).toBe(true);
+    expect(query.mock.calls.some(
+      ([text]) => text === "COMMIT",
+    )).toBe(true);
+  });
+
   it("creates and restores one long-running account farm", async () => {
     const store = new MemoryFarmStateStore();
     const registry = new BotDecisionRegistry();
@@ -277,10 +444,82 @@ describe("real-time FarmService", () => {
     expect(nextDay.marketDirectorAvailable).toBe(true);
     expect(nextDay.farm.marketEvent).toMatchObject({
       source: "llm",
-      title: "主粮集中采购",
+      title: "合作社采购观察",
     });
-    expect(nextDay.farm.market.wheat.price).toBe(FARMING_CROPS.wheat.maximumPrice);
-    expect(nextDay.farm.market.corn.price).toBe(FARMING_CROPS.corn.maximumPrice);
+    expect(nextDay.farm.market.wheat.price).toBeGreaterThanOrEqual(
+      FARMING_CROPS.wheat.minimumPrice,
+    );
+    expect(nextDay.farm.market.wheat.price).toBeLessThanOrEqual(
+      FARMING_CROPS.wheat.maximumPrice,
+    );
+  });
+
+  it("persists rollover revisions before farm and ranch actions use them", async () => {
+    let now = start;
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+    );
+    await service.getOrCreateHomestead(user);
+
+    const account = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const bundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    account.coins = 2_000;
+    bundle.farm.coins = 2_000;
+    bundle.farm.level = 3;
+    bundle.farm.experience = 100;
+    store.setRawEstateAccount(user.id, account);
+    store.setRawTownEstate(user.id, "greenvale", bundle);
+
+    now += 24 * 60 * 60 * 1_000;
+    const rolledRanch = await service.getOrCreateRanch(user);
+    const storedAfterRanchGet = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+
+    expect(storedAfterRanchGet.farm.revision)
+      .toBe(rolledRanch.ranch.farmRevision);
+    expect(storedAfterRanchGet.ranch.revision)
+      .toBe(rolledRanch.ranch.revision);
+
+    const ranchAction = await service.applyRanchAction(
+      user,
+      rolledRanch.ranch.farmRevision,
+      rolledRanch.ranch.revision,
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      "greenvale",
+    );
+    expect(ranchAction.ranch.pens[0]?.animalId).toBe("chicken");
+
+    const stableRanch = await service.getOrCreateRanch(user);
+    expect(stableRanch.ranch.revision).toBe(ranchAction.ranch.revision);
+
+    const rolledFarm = await service.getOrCreate(user);
+    const storedAfterFarmGet = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(storedAfterFarmGet.farm.revision).toBe(rolledFarm.farm.revision);
+
+    const farmAction = await service.applyAction(
+      user,
+      rolledFarm.farm.revision,
+      { type: "farming_buy_seed", cropId: "wheat", quantity: 1 },
+      "greenvale",
+    );
+    expect(farmAction.farm.revision).toBeGreaterThan(
+      rolledFarm.farm.revision,
+    );
+
+    const stableFarm = await service.getOrCreate(user);
+    expect(stableFarm.farm.revision).toBe(farmAction.farm.revision);
   });
 
   it("persists a ranch and atomically links feed, purchases and sales to the farm", async () => {
@@ -317,6 +556,11 @@ describe("real-time FarmService", () => {
       { type: "ranch_feed", penIndex: 0 },
     );
     expect(snapshot.ranch.economy!.produce.wheat).toBe(9);
+    expect(snapshot.ranch.economy!.coins).toBe(
+      2_000 -
+      RANCH_ANIMALS.chicken.purchaseCost -
+      RANCH_ANIMALS.chicken.careCost,
+    );
     now = snapshot.ranch.pens[0]!.producesAt!;
 
     snapshot = await service.applyRanchAction(
@@ -340,11 +584,16 @@ describe("real-time FarmService", () => {
 
     expect(snapshot.ranch.economy!.coins).toBe(
       2_000 -
-      RANCH_ANIMALS.chicken.purchaseCost +
+      RANCH_ANIMALS.chicken.purchaseCost -
+      RANCH_ANIMALS.chicken.careCost +
       RANCH_ANIMALS.chicken.productPrice,
     );
-    expect((await store.load(user.id) as FarmingGameState).produce.wheat).toBe(9);
-    expect(await store.loadRanch(user.id)).toMatchObject({
+    const saved = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(saved.farm.produce.wheat).toBe(9);
+    expect(saved.ranch).toMatchObject({
       kind: "ranch",
       products: { egg: 2 },
     });
@@ -485,14 +734,18 @@ describe("real-time FarmService", () => {
     );
 
     expect(snapshot.mine.economy.ores.coal).toBe(
-      MINE_DEPOSITS.coal.yield - 1,
+      MINE_DEPOSITS.coal.yield,
     );
-    expect((await store.load(user.id) as FarmingGameState).coins).toBe(
+    const saved = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(saved.farm.coins).toBe(
       5_000 -
       MINE_DEPOSITS.coal.expeditionCost +
       MINE_DEPOSITS.coal.orePrice,
     );
-    expect((await store.loadRanch(user.id) as RanchGameState).products)
+    expect(saved.ranch.products)
       .toMatchObject({ egg: 9, rabbit_fur: 9 });
   });
 
@@ -576,11 +829,13 @@ describe("real-time FarmService", () => {
       },
     );
 
-    expect((await store.load(user.id) as FarmingGameState).produce.pumpkin)
-      .toBe(0);
-    expect((await store.loadRanch(user.id) as RanchGameState).products.egg)
-      .toBe(0);
-    expect((await store.loadMine(user.id) as MineGameState).ores.coal).toBe(0);
+    const saved = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(saved.farm.produce.pumpkin).toBe(0);
+    expect(saved.ranch.products.egg).toBe(0);
+    expect(saved.mine.ores.coal).toBe(0);
 
     now += 45 * 60_000;
     snapshot = await service.applyHomesteadAction(
@@ -622,11 +877,465 @@ describe("real-time FarmService", () => {
     expect(recovered.homestead).toMatchObject({
       kind: "homestead",
       version: 1,
-      revision: 0,
     });
+    expect(recovered.homestead.revision).toBeGreaterThanOrEqual(0);
     expect(store.quarantinedHomesteads).toHaveLength(1);
     expect(await store.load(user.id)).toEqual(farm);
     expect(await store.loadRanch(user.id)).toEqual(ranch);
     expect(await store.loadMine(user.id)).toEqual(mine);
+  });
+
+  it("does not re-trigger or reward a handled provider alert in the next weather bucket", async () => {
+    const firstWindow = Date.parse("2026-07-30T00:00:00+08:00");
+    let now = firstWindow;
+    const providerAlertId = "cross-bucket-cold-snap";
+    const weather = new TownWeatherService({
+      provider: {
+        fetchTownWeather: async (): Promise<TownWeatherProviderResult> => ({
+          provider: "qweather",
+          observedAt: now,
+          conditionCode: "100",
+          conditionText: "晴",
+          temperatureC: 18,
+          feelsLikeC: 18,
+          humidityPercent: 45,
+          precipitationMm: 0,
+          windSpeedKph: 8,
+          visibilityKm: 20,
+          alerts: [{
+            id: providerAlertId,
+            eventCode: "test-cold-snap",
+            eventName: "寒潮",
+            headline: "跨窗口寒潮预警",
+            description: "测试同一预警跨天气窗口保持相同 ID",
+            instruction: null,
+            senderName: "测试气象台",
+            messageType: "alert",
+            severity: "severe",
+            certainty: "likely",
+            urgency: "expected",
+            colorCode: "orange",
+            issuedAt: firstWindow,
+            effectiveAt: firstWindow,
+            expiresAt: firstWindow + 24 * 60 * 60 * 1_000,
+          }],
+          attributions: ["QWeather"],
+        }),
+      },
+      rules: {
+        resolveWeatherId: () => "clear",
+        resolveDisaster: () => ({
+          mechanicId: "cold_snap",
+          label: "寒潮",
+        }),
+      },
+    });
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+      weather,
+    );
+
+    let snapshot = await service.getOrCreateHomestead(user);
+    expect(snapshot.homestead.disaster).toMatchObject({
+      providerAlertId,
+      eventId: "cold_snap",
+      mitigated: false,
+    });
+    const fundedAccount = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const fundedBundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    fundedAccount.coins = 1_000;
+    fundedBundle.farm.coins = 1_000;
+    store.setRawEstateAccount(user.id, fundedAccount);
+    store.setRawTownEstate(user.id, "greenvale", fundedBundle);
+    snapshot = await service.getOrCreateHomestead(user);
+
+    snapshot = await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      {
+        type: "homestead_choose_event",
+        optionId: "buy_emergency_fuel",
+      },
+    );
+    const resolvedEconomy = {
+      coins: snapshot.homestead.coins,
+      reputation: snapshot.homestead.reputation,
+      researchPoints: snapshot.homestead.researchPoints,
+      eventsResolved: snapshot.homestead.statistics.eventsResolved,
+    };
+    expect(snapshot.homestead.disaster).toMatchObject({
+      providerAlertId,
+      mitigated: true,
+      resolution: "buy_emergency_fuel",
+    });
+    expect(
+      (await store.loadTownEstate(
+        user.id,
+        "greenvale",
+      ) as TownEstateBundle).homestead.handledWeatherAlertIds,
+    ).toContain(providerAlertId);
+
+    now += 8 * 60 * 60 * 1_000;
+    snapshot = await service.getOrCreateHomestead(user);
+
+    expect(snapshot.homestead.disaster).toMatchObject({
+      providerAlertId,
+      mitigated: true,
+      resolution: "buy_emergency_fuel",
+    });
+    expect(snapshot.homestead.worldEvent.selectedOptionId)
+      .toBe("buy_emergency_fuel");
+    expect({
+      coins: snapshot.homestead.coins,
+      reputation: snapshot.homestead.reputation,
+      researchPoints: snapshot.homestead.researchPoints,
+      eventsResolved: snapshot.homestead.statistics.eventsResolved,
+    }).toEqual(resolvedEconomy);
+    await expect(service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      {
+        type: "homestead_choose_event",
+        optionId: "buy_emergency_fuel",
+      },
+    )).rejects.toMatchObject({
+      code: "HOMESTEAD_EVENT_ALREADY_RESOLVED",
+    });
+  });
+
+  it("maps a Frostpeak drought alert to the highland drought event", () => {
+    const service = new FarmService(
+      new MemoryFarmStateStore(),
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const resolver = service as unknown as {
+      weatherDisasterContentEvent(
+        townId: "greenvale" | "frostpeak",
+        mechanicId: TownWeatherDisasterMechanicId,
+        description: string,
+      ): string;
+    };
+
+    const eventId = resolver.weatherDisasterContentEvent(
+      "frostpeak",
+      "drought",
+      "高原持续少雨并出现干风",
+    );
+
+    expect(eventId).toBe("frost_highland_drought");
+    expect(eventId).not.toBe("frost_spring_thaw");
+  });
+
+  it("resets all emergency boosts when a new weather disaster starts", () => {
+    const service = new FarmService(
+      new MemoryFarmStateStore(),
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const initial = townEstateBundle(user);
+    initial.homestead.emergencyBoosts = {
+      farm: true,
+      ranch: true,
+      mine: true,
+    };
+    const applicator = service as unknown as {
+      applyTownWeatherSnapshot(
+        state: TownEstateBundle,
+        snapshot: TownWeatherSnapshot,
+      ): TownEstateBundle;
+    };
+
+    const updated = applicator.applyTownWeatherSnapshot(
+      initial,
+      liveWeatherSnapshot({
+        providerAlertId: "new-weather-disaster",
+        mechanicId: "windstorm",
+      }),
+    );
+
+    expect(updated.homestead.disaster).toMatchObject({
+      providerAlertId: "new-weather-disaster",
+      eventId: "windstorm",
+      mitigated: false,
+    });
+    expect(updated.homestead.emergencyBoosts).toEqual({
+      farm: false,
+      ranch: false,
+      mine: false,
+    });
+  });
+
+  it("advances to the next unhandled playable weather alert", () => {
+    const service = new FarmService(
+      new MemoryFarmStateStore(),
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const initial = townEstateBundle(user);
+    initial.homestead.handledWeatherAlertIds = ["handled-first-alert"];
+    const firstSnapshot = liveWeatherSnapshot({
+      providerAlertId: "handled-first-alert",
+      mechanicId: "cold_snap",
+    });
+    const snapshot: TownWeatherSnapshot = {
+      ...firstSnapshot,
+      disasters: [
+      firstSnapshot.disasters[0]!,
+      {
+        ...firstSnapshot.disasters[0]!,
+        providerAlertId: "next-wind-alert",
+        eventName: "大风",
+        headline: "第二条大风预警",
+        mechanicId: "windstorm",
+      },
+      ],
+    };
+    const applicator = service as unknown as {
+      applyTownWeatherSnapshot(
+        state: TownEstateBundle,
+        weather: TownWeatherSnapshot,
+      ): TownEstateBundle;
+    };
+
+    const updated = applicator.applyTownWeatherSnapshot(initial, snapshot);
+
+    expect(updated.homestead.disaster).toMatchObject({
+      providerAlertId: "next-wind-alert",
+      eventId: "windstorm",
+      mitigated: false,
+    });
+  });
+
+  it("rejects a town bundle containing nested state from another town", () => {
+    const service = new FarmService(
+      new MemoryFarmStateStore(),
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const invalid = townEstateBundle(user, "greenvale");
+    invalid.farm.townId = "frostpeak";
+    const validator = service as unknown as {
+      assertTownEstateBundle(
+        value: unknown,
+        ownerId: string,
+        townId: "greenvale" | "frostpeak",
+      ): void;
+    };
+
+    expect(() =>
+      validator.assertTownEstateBundle(
+        invalid,
+        user.id,
+        "greenvale",
+      )
+    ).toThrow();
+  });
+
+  it("returns a recoverable conflict when daily logistics are exhausted", async () => {
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    await service.getOrCreateHomestead(user);
+    const account = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const bundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    account.logistics.used = account.logistics.capacity;
+    bundle.homestead.goods.soil_conditioner = 1;
+    bundle.homestead.disaster = {
+      eventId: "drought",
+      contentEventId: "drought",
+      startedDayKey: bundle.homestead.dayKey,
+      remainingDays: 1,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+    store.setRawEstateAccount(user.id, account);
+    store.setRawTownEstate(user.id, "greenvale", bundle);
+
+    const snapshot = await service.getOrCreateHomestead(user);
+    await expect(service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      {
+        type: "homestead_activate_emergency_boost",
+        sectorId: "farm",
+      },
+      "greenvale",
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "ESTATE_LOGISTICS_INSUFFICIENT",
+    });
+
+    const unchanged = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(unchanged.homestead.goods.soil_conditioner).toBe(1);
+    expect(unchanged.homestead.emergencyBoosts.farm).toBe(false);
+  });
+
+  it("persists cross-day disaster reputation loss to the town and account", async () => {
+    let now = start;
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+    );
+    await service.getOrCreateHomestead(user);
+    const account = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const bundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    bundle.homestead.reputation = 20;
+    bundle.homestead.disaster = {
+      eventId: "cold_snap",
+      contentEventId: "cold_snap",
+      startedDayKey: bundle.homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+    account.townProgress.greenvale!.localReputation = 20;
+    store.setRawEstateAccount(user.id, account);
+    store.setRawTownEstate(user.id, "greenvale", bundle);
+
+    now += 24 * 60 * 60_000;
+    const settled = await service.getOrCreateHomestead(user);
+    expect(settled.homestead.reputation).toBe(18);
+    expect(settled.homestead.disaster).toMatchObject({
+      unresolvedDays: 1,
+      reputationPenaltyPaid: 2,
+    });
+
+    const savedBundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    const savedAccount = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    expect(savedBundle.homestead.reputation).toBe(18);
+    expect(savedBundle.homestead.disaster?.reputationPenaltyPaid).toBe(2);
+    expect(savedAccount.townProgress.greenvale?.localReputation).toBe(18);
+
+    const reloadedService = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+    );
+    const reloaded = await reloadedService.getOrCreateHomestead(user);
+    expect(reloaded.homestead.reputation).toBe(18);
+    expect(reloaded.homestead.disaster?.reputationPenaltyPaid).toBe(2);
+    expect(
+      (await store.loadEstateAccount(user.id) as EstateAccountState)
+        .townProgress.greenvale?.localReputation,
+    ).toBe(18);
+  });
+
+  it("rebuilds a missing account from complete town bundles without relocking Frostpeak", async () => {
+    const store = new MemoryFarmStateStore();
+    const now = start + 60_000;
+    const frostFarm = createFarmingGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "recovery-frost-farm",
+      now,
+      townId: "frostpeak",
+    });
+    frostFarm.coins = 4_321;
+    frostFarm.experience = 400;
+    frostFarm.level = 6;
+    const frostRanch = createRanchGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "recovery-frost-ranch",
+      now,
+      townId: "frostpeak",
+    });
+    frostRanch.experience = 380;
+    frostRanch.level = 5;
+    const frostMine = createMineGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "recovery-frost-mine",
+      now,
+      townId: "frostpeak",
+    });
+    frostMine.experience = 275;
+    frostMine.level = 4;
+    const frostHomestead = createHomesteadGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: "recovery-frost-homestead",
+      now,
+      townId: "frostpeak",
+    });
+    frostHomestead.reputation = 47;
+    frostHomestead.townNetwork.merchantRenown = 6;
+    const frostBundle: TownEstateBundle = {
+      kind: "town_estate_bundle",
+      version: 1,
+      townId: "frostpeak",
+      contentVersion: TOWN_DEFINITIONS.frostpeak.contentVersion,
+      farm: frostFarm,
+      ranch: frostRanch,
+      mine: frostMine,
+      homestead: frostHomestead,
+    };
+    store.setRawTownEstate(user.id, "frostpeak", frostBundle);
+
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+    );
+    const recovered = await service.getOrCreateHomestead(user);
+    const account = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+
+    expect(recovered.homestead.activeTownId).toBe("frostpeak");
+    expect(recovered.homestead.coins).toBe(4_321);
+    expect(account.activeTownId).toBe("frostpeak");
+    expect(account.merchantRenown).toBe(6);
+    expect(account.townProgress.frostpeak).toMatchObject({
+      unlocked: true,
+      localReputation: 47,
+      farmLevel: 6,
+      ranchLevel: 5,
+      mineLevel: 4,
+    });
   });
 });

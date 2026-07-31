@@ -21,6 +21,8 @@ export const MINE_REQUIRED_RANCH_LEVEL = 1;
 export const MINE_STARTING_SHAFTS = 2;
 export const MINE_MAX_SHAFTS = 6;
 export const MINE_MAX_LOGS = 80;
+export const MINE_UNREINFORCED_YIELD_PENALTY = 1;
+export const MINE_REINFORCED_YIELD_BONUS = 1;
 
 /** @deprecated Greenvale-only compatibility catalog. Prefer a state's town catalog. */
 export const MINE_DEPOSIT_IDS = GREENVALE_DEPOSIT_IDS;
@@ -550,7 +552,8 @@ function shaftYield(
     1,
     deposit.yield +
       pickaxeYieldBonus(game.pickaxeLevel) -
-      (hasHazard(shaft, now) ? 1 : 0),
+      (hasHazard(shaft, now) ? MINE_UNREINFORCED_YIELD_PENALTY : 0) +
+      (shaft.reinforced ? MINE_REINFORCED_YIELD_BONUS : 0),
   );
   return Math.max(
     1,
@@ -744,7 +747,7 @@ export function applyMineAction(
       mine,
       effectiveNow,
       "care",
-      `${shaft.index + 1} 号矿井完成支护加固，避免产量损失。`,
+      `${shaft.index + 1} 号矿井完成支护加固，避免产量损失并回收 1 份额外矿料。`,
     );
   } else if (action.type === "mine_collect") {
     const shaft = requireShaft(mine, action.shaftIndex);
@@ -777,7 +780,9 @@ export function applyMineAction(
       effectiveNow,
       "collect",
       `${shaft.index + 1} 号矿井带回 ${amount} 份${deposit.name}${
-        hasHazard(shaft, effectiveNow) ? "，因未加固损失 1 份产量" : ""
+        hasHazard(shaft, effectiveNow)
+          ? `，因未加固损失 ${MINE_UNREINFORCED_YIELD_PENALTY} 份产量`
+          : ""
       }。`,
     );
     Object.assign(shaft, emptyShaft(shaft.index, shaft.cycle));

@@ -167,7 +167,7 @@ describe("town weather failure isolation", () => {
   it("uses a successful snapshot for at most 72 hours", async () => {
     const source = provider(
       vi.fn()
-        .mockResolvedValueOnce(providerResult())
+        .mockResolvedValueOnce(providerResult({ alerts: [alert()] }))
         .mockRejectedValue(new Error("provider unavailable")),
     );
     const service = new TownWeatherService({ provider: source });
@@ -186,10 +186,11 @@ describe("town weather failure isolation", () => {
     expect(recent).toMatchObject({
       source: "last_known_good",
       stale: true,
-      mechanicsEnabled: true,
+      mechanicsEnabled: false,
       weatherId: "gentle_rain",
       fallbackReason: "provider_error",
     });
+    expect(recent.disasters[0]?.affectsGameplay).toBe(false);
     expect(expired).toMatchObject({
       source: "deterministic_fallback",
       mechanicsEnabled: false,
@@ -327,6 +328,108 @@ describe("QWeather normalization", () => {
     });
   });
 
+  it("keeps current weather when the warning endpoint is unavailable", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("/v7/weather/now")) {
+        return new Response(JSON.stringify({
+          code: "200",
+          now: {
+            obsTime: "2026-07-30T00:00+08:00",
+            temp: "24",
+            feelsLike: "25",
+            icon: "100",
+            text: "晴",
+            windSpeed: "5",
+            humidity: "50",
+            precip: "0",
+            vis: "20",
+          },
+        }), { status: 200 });
+      }
+      return new Response("warning service unavailable", { status: 503 });
+    });
+    const service = createTownWeatherService({
+      apiHost: "https://abcxyz.qweatherapi.com",
+      apiKey: "secret",
+    }, {
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+
+    const snapshot = await service.getTownWeather("greenvale", localMidnight);
+
+    expect(snapshot).toMatchObject({
+      source: "qweather",
+      mechanicsEnabled: true,
+      alertsAvailable: false,
+      disasters: [],
+      weatherId: "clear",
+    });
+  });
+
+  it("keeps current weather when the warning endpoint exceeds its independent timeout", async () => {
+    let rejectLateWarning!: (reason: unknown) => void;
+    const lateWarning = new Promise<Response>((_resolve, reject) => {
+      rejectLateWarning = reject;
+    });
+    const fetcher = vi.fn(
+      async (input: string | URL | Request): Promise<Response> => {
+        if (String(input).includes("/v7/weather/now")) {
+          return new Response(JSON.stringify({
+            code: "200",
+            now: {
+              obsTime: "2026-07-30T00:00+08:00",
+              temp: "24",
+              feelsLike: "25",
+              icon: "100",
+              text: "晴",
+              windSpeed: "5",
+              humidity: "50",
+              precip: "0",
+              vis: "20",
+            },
+          }), { status: 200 });
+        }
+        return await lateWarning;
+      },
+    );
+    const service = createTownWeatherService({
+      apiHost: "https://abcxyz.qweatherapi.com",
+      apiKey: "secret",
+      timeoutMs: 40,
+    }, {
+      fetcher: fetcher as unknown as typeof fetch,
+    });
+
+    const snapshot = await service.getTownWeather("greenvale", localMidnight);
+
+    expect(snapshot).toMatchObject({
+      source: "qweather",
+      mechanicsEnabled: true,
+      alertsAvailable: false,
+      disasters: [],
+      weatherId: "clear",
+    });
+    rejectLateWarning(new Error("late warning rejection"));
+    await Promise.resolve();
+  });
+
+  it("does not enable mechanics for stale provider observations", async () => {
+    const source = provider(async () =>
+      providerResult({
+        observedAt: localMidnight - 13 * 60 * 60 * 1_000,
+      })
+    );
+    const service = new TownWeatherService({ provider: source });
+
+    const snapshot = await service.getTownWeather("greenvale", localMidnight);
+
+    expect(snapshot).toMatchObject({
+      source: "deterministic_fallback",
+      mechanicsEnabled: false,
+      fallbackReason: "provider_error",
+    });
+  });
+
   it("keeps unknown alerts visible without enabling gameplay effects", async () => {
     const source = provider(async () =>
       providerResult({
@@ -351,6 +454,103 @@ describe("QWeather normalization", () => {
       mechanicLabel: null,
       affectsGameplay: false,
     });
+  });
+
+  it("re-evaluates alert effective and expiry times inside a cached bucket", async () => {
+    const source = provider(async () =>
+      providerResult({
+        alerts: [
+          alert({
+            id: "expires-early",
+            expiresAt: localMidnight + 60 * 60 * 1_000,
+          }),
+          alert({
+            id: "starts-later",
+            effectiveAt: localMidnight + 2 * 60 * 60 * 1_000,
+            expiresAt: localMidnight + 7 * 60 * 60 * 1_000,
+          }),
+        ],
+      })
+    );
+    const service = new TownWeatherService({ provider: source });
+
+    const initial = await service.getTownWeather("greenvale", localMidnight);
+    const later = await service.getTownWeather(
+      "greenvale",
+      localMidnight + 3 * 60 * 60 * 1_000,
+    );
+
+    expect(source.fetchTownWeather).toHaveBeenCalledTimes(1);
+    expect(initial.disasters.map(({ providerAlertId }) => providerAlertId))
+      .toEqual(["expires-early"]);
+    expect(later.disasters.map(({ providerAlertId }) => providerAlertId))
+      .toEqual(["starts-later"]);
+  });
+
+  it("orders simultaneous gameplay alerts by severity", async () => {
+    const source = provider(async () =>
+      providerResult({
+        alerts: [
+          alert({ id: "minor", severity: "minor", colorCode: "yellow" }),
+          alert({ id: "severe", severity: "severe", colorCode: "red" }),
+        ],
+      })
+    );
+    const service = new TownWeatherService({ provider: source });
+
+    const snapshot = await service.getTownWeather(
+      "greenvale",
+      localMidnight,
+    );
+
+    expect(snapshot.disasters.map(({ providerAlertId }) => providerAlertId))
+      .toEqual(["severe", "minor"]);
+  });
+
+  it("deduplicates provider alert IDs using severity and recency", async () => {
+    const source = provider(async () =>
+      providerResult({
+        alerts: [
+          alert({
+            id: "duplicate",
+            headline: "较旧的严重预警",
+            severity: "severe",
+            issuedAt: localMidnight,
+          }),
+          alert({
+            id: "duplicate",
+            headline: "较新的低级预警",
+            severity: "minor",
+            issuedAt: localMidnight + 2 * 60 * 60 * 1_000,
+          }),
+          alert({
+            id: "duplicate",
+            headline: "较新的严重预警",
+            severity: "severe",
+            issuedAt: localMidnight + 60 * 60 * 1_000,
+          }),
+          alert({
+            id: "unique",
+            headline: "另一条独立预警",
+            severity: "moderate",
+          }),
+        ],
+      })
+    );
+    const service = new TownWeatherService({ provider: source });
+
+    const snapshot = await service.getTownWeather(
+      "greenvale",
+      localMidnight,
+    );
+
+    expect(snapshot.disasters).toHaveLength(2);
+    expect(snapshot.disasters[0]).toMatchObject({
+      providerAlertId: "duplicate",
+      headline: "较新的严重预警",
+      severity: 3,
+    });
+    expect(snapshot.disasters[1]?.providerAlertId).toBe("unique");
   });
 
   it("accepts injected normalization rules", async () => {

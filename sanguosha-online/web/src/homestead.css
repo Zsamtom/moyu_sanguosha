@@ -79,19 +79,32 @@
   margin-bottom: 12px;
 }
 
-.homestead-town-switcher {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+.homestead-town-network {
   margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--estate-line);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f3f7f3, #f8f8f5);
 }
 
-.homestead-town-switcher > button,
-.homestead-town-switcher__future {
+.homestead-town-network .homestead-section__heading {
+  margin-bottom: 12px;
+}
+
+.homestead-town-switcher {
   display: grid;
-  min-height: 102px;
-  gap: 4px;
-  padding: 13px 15px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.homestead-town-switcher > article,
+.homestead-town-switcher__future {
+  display: flex;
+  min-width: 0;
+  min-height: 290px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 15px;
   border: 1px solid var(--estate-line);
   border-radius: 8px;
   background: #fff;
@@ -99,16 +112,15 @@
   text-align: left;
 }
 
-.homestead-town-switcher > button {
-  cursor: pointer;
+.homestead-town-switcher > article > p {
+  min-height: 58px;
+  margin: 0;
+  color: #4f5d55;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
-.homestead-town-switcher > button:hover {
-  border-color: #789381;
-  background: #f4f8f4;
-}
-
-.homestead-town-switcher > button.is-active {
+.homestead-town-switcher > article.is-active {
   border-color: var(--estate-green);
   background: var(--estate-soft-green);
   box-shadow: inset 4px 0 var(--estate-green);
@@ -129,6 +141,59 @@
 .homestead-town-switcher__future {
   border-style: dashed;
   opacity: .7;
+}
+
+.homestead-town-card__status,
+.homestead-town-card__meta,
+.homestead-travel-fare,
+.homestead-unlock-requirements {
+  display: flex;
+  gap: 5px;
+}
+
+.homestead-town-card__status {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.homestead-town-card__status .ant-tag {
+  margin: 0;
+}
+
+.homestead-town-card__meta,
+.homestead-travel-fare,
+.homestead-unlock-requirements {
+  flex-direction: column;
+}
+
+.homestead-town-card__meta {
+  margin-bottom: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgb(240 244 240 / 80%);
+}
+
+.homestead-travel-fare,
+.homestead-unlock-requirements {
+  min-height: 62px;
+  padding: 8px;
+  border: 1px solid #d9e0da;
+  border-radius: 6px;
+  background: #fafbf9;
+}
+
+.homestead-travel-fare > strong {
+  color: var(--estate-green);
+  font-size: 15px;
+}
+
+.homestead-unlock-requirements > strong {
+  font-size: 12px;
+}
+
+.homestead-disabled-reason {
+  color: #a04e3b !important;
+  line-height: 1.45;
 }
 
 .homestead-local-nav {
@@ -245,6 +310,71 @@
   color: #4d5952;
   font-size: 14px;
   line-height: 1.7;
+}
+
+.homestead-weather-live-grid,
+.homestead-logistics-costs,
+.homestead-merchant-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.homestead-weather-live-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.homestead-weather-live-grid > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d8e1db;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.homestead-weather-live-grid span,
+.homestead-weather-live-grid strong,
+.homestead-weather-live-grid small {
+  display: block;
+}
+
+.homestead-weather-live-grid span,
+.homestead-weather-live-grid small {
+  color: #6b7770;
+  font-size: 11px;
+}
+
+.homestead-weather-live-grid strong {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+
+.homestead-weather-attribution {
+  margin: -8px 0 14px;
+  color: #78827c;
+  font-size: 11px;
+}
+
+.homestead-logistics-costs {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.homestead-logistics-costs > span {
+  padding: 11px;
+  border: 1px solid var(--estate-line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.homestead-logistics-costs strong,
+.homestead-logistics-costs small {
+  display: block;
+}
+
+.homestead-logistics-costs small {
+  margin-top: 3px;
+  color: #68736d;
 }
 
 .homestead-weather-alert {
@@ -556,6 +686,87 @@
   margin: 0;
 }
 
+.homestead-heading-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.homestead-heading-tags .ant-tag {
+  margin: 0;
+}
+
+.homestead-merchant-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homestead-merchant-grid > article {
+  display: flex;
+  min-width: 0;
+  min-height: 278px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--estate-line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.homestead-merchant-grid > article.is-recommended {
+  border-color: #8b79ad;
+  box-shadow: inset 0 3px #8b79ad;
+}
+
+.homestead-merchant-grid > article > p {
+  min-height: 44px;
+  margin: 0;
+  color: #526059;
+  line-height: 1.55;
+}
+
+.homestead-merchant-effect {
+  color: var(--estate-green);
+  font-size: 12px;
+}
+
+.homestead-merchant-stock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.homestead-merchant-stock span {
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: #f0f3f0;
+  color: #5f6b64;
+  font-size: 10px;
+}
+
+.homestead-travel-history {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--estate-line);
+  background: #fff;
+}
+
+.homestead-travel-history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.homestead-travel-history p {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: 10px;
+  margin: 9px 0 0;
+  color: #68736d;
+  font-size: 12px;
+}
+
 .homestead-complete-label {
   color: #61806e;
   font-size: 12px;
@@ -775,6 +986,13 @@
   .homestead-resilience-grid {
     grid-template-columns: 1fr;
   }
+
+  .homestead-town-switcher,
+  .homestead-weather-live-grid,
+  .homestead-logistics-costs,
+  .homestead-merchant-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -793,11 +1011,24 @@
   .homestead-recipe-grid,
   .homestead-research-grid,
   .homestead-collection-grid,
-  .homestead-ledger,
-  .homestead-town-switcher,
-  .homestead-town-inventory,
-  .homestead-town-goal-grid {
+    .homestead-ledger,
+    .homestead-town-switcher,
+    .homestead-town-inventory,
+    .homestead-town-goal-grid,
+    .homestead-weather-live-grid,
+    .homestead-logistics-costs,
+    .homestead-merchant-grid {
     grid-template-columns: 1fr;
+  }
+
+  .homestead-town-network,
+  .homestead-section {
+    padding: 13px;
+  }
+
+  .homestead-town-switcher > article,
+  .homestead-town-switcher__future {
+    min-height: 0;
   }
 
   .homestead-local-nav {
@@ -830,5 +1061,10 @@
   .homestead-ledger > div + div {
     border-top: 1px solid var(--estate-line);
     border-left: 0;
+  }
+
+  .homestead-travel-history p {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }

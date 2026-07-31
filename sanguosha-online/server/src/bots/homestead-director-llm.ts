@@ -1,7 +1,11 @@
 import {
+  ESTATE_MERCHANT_ITEM_IDS,
+  ESTATE_MERCHANT_ITEMS,
   HOMESTEAD_WEATHER,
   HOMESTEAD_WORLD_EVENTS,
   getHomesteadProductionRules,
+  getTownDefinition,
+  type EstateMerchantItemId,
   type FarmingGameState,
   type HomesteadGameState,
   type HomesteadWorldEventId,
@@ -23,13 +27,53 @@ export interface HomesteadDirectorCandidate {
   readonly tone: "calm" | "opportunity" | "risk";
 }
 
+export interface HomesteadDirectorMerchantCandidate {
+  readonly itemId: EstateMerchantItemId;
+  readonly owned?: number;
+  readonly purchasedThisWeek?: number;
+  /**
+   * The caller should set this from authoritative account validation.
+   * Candidates marked unavailable are still useful as context, but can never
+   * be returned as the recommendation.
+   */
+  readonly canBuy?: boolean;
+  readonly disabledReason?: string | null;
+}
+
+export interface HomesteadDirectorContext {
+  readonly coins?: number;
+  readonly localReputation?: number;
+  readonly merchantRenown?: number;
+  readonly logistics?: {
+    readonly used: number;
+    readonly capacity: number;
+  };
+  readonly merchantCandidates?: readonly HomesteadDirectorMerchantCandidate[];
+  readonly economicBottlenecks?: readonly string[];
+}
+
+interface CompactMerchantCandidate {
+  readonly itemId: EstateMerchantItemId;
+  readonly name: string;
+  readonly category: string;
+  readonly coinPrice: number;
+  readonly owned: number | null;
+  readonly purchasedThisWeek: number | null;
+}
+
 export interface HomesteadDirectorCompactState {
   readonly day: string;
+  readonly activeTown: string;
+  readonly townName: string;
+  readonly townClimate: string;
+  readonly townLandmark: string;
   readonly farmLevel: number;
   readonly ranchLevel: number;
   readonly mineLevel: number;
   readonly coins: number;
   readonly reputation: number;
+  readonly localReputation: number;
+  readonly merchantRenown: number;
   readonly researchPoints: number;
   readonly builtFacilities: readonly string[];
   readonly farmStock: number;
@@ -41,15 +85,48 @@ export interface HomesteadDirectorCompactState {
   readonly seasonScore: number;
   readonly npcTrust: readonly string[];
   readonly recentOperations: readonly string[];
-  readonly weather: string;
-  readonly disaster: string | null;
-  readonly productionEffects: readonly string[];
+  readonly weather: {
+    readonly weatherId: string;
+    readonly ruleName: string;
+    readonly source: string;
+    readonly anchorCity: string | null;
+    readonly observedAt: number | null;
+    readonly condition: string | null;
+    readonly temperatureC: number | null;
+    readonly humidityPercent: number | null;
+    readonly precipitationMm: number | null;
+    readonly windKph: number | null;
+    readonly stale: boolean;
+    readonly mechanicsEnabled: boolean;
+  };
+  readonly liveHazards: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly headline: string;
+    readonly severity: number;
+    readonly affectsGameplay: boolean;
+  }[];
+  readonly disaster: {
+    readonly eventId: HomesteadWorldEventId;
+    readonly severity: number;
+    readonly remainingDays: number;
+    readonly unresolvedDays: number;
+    readonly mitigated: boolean;
+  } | null;
+  readonly productionEffects: readonly {
+    readonly sector: "farm" | "ranch" | "mine";
+    readonly yieldPercent: number;
+    readonly durationPercent: number;
+  }[];
   readonly resilience: readonly string[];
-  readonly activeTown: string;
-  readonly localReputation: number;
-  readonly merchantRenown: number;
+  readonly logistics: {
+    readonly used: number;
+    readonly capacity: number;
+    readonly remaining: number;
+  } | null;
+  readonly merchantCandidates: readonly CompactMerchantCandidate[];
+  readonly economicBottlenecks: readonly string[];
   readonly townResources: readonly string[];
-  readonly townProblem: string | null;
   readonly townLandmarkStage: number;
 }
 
@@ -58,6 +135,10 @@ export interface HomesteadDirectorRequest {
     HomesteadDirectorCompactState,
     HomesteadDirectorCandidate
   >;
+  /**
+   * This is the server-selected event, not an LLM-selected alternative.
+   * Keeping the fallback field preserves the previous caller contract.
+   */
   readonly fallback: HomesteadDirectorCandidate;
 }
 
@@ -65,12 +146,115 @@ function total(values: Record<string, number>): number {
   return Object.values(values).reduce((sum, value) => sum + value, 0);
 }
 
+function compactText(value: string, limit: number): string {
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+}
+
+function isMerchantItemId(value: unknown): value is EstateMerchantItemId {
+  return typeof value === "string" &&
+    (ESTATE_MERCHANT_ITEM_IDS as readonly string[]).includes(value);
+}
+
+function merchantCandidates(
+  context: HomesteadDirectorContext | undefined,
+  coins: number,
+  merchantRenown: number,
+): CompactMerchantCandidate[] {
+  const supplied: readonly HomesteadDirectorMerchantCandidate[] =
+    context?.merchantCandidates ??
+      ESTATE_MERCHANT_ITEM_IDS.map((itemId) => ({ itemId }));
+  const seen = new Set<EstateMerchantItemId>();
+  const result: CompactMerchantCandidate[] = [];
+  for (const candidate of supplied) {
+    if (
+      !isMerchantItemId(candidate.itemId) ||
+      seen.has(candidate.itemId) ||
+      candidate.canBuy === false
+    ) {
+      continue;
+    }
+    const definition = ESTATE_MERCHANT_ITEMS[candidate.itemId];
+    // With no authoritative account context, only expose recommendations that
+    // are at least affordable and renown-eligible. Purchase validation remains
+    // entirely server-side.
+    if (
+      context?.merchantCandidates === undefined &&
+      (
+        coins < definition.coinPrice ||
+        merchantRenown < definition.requiredRenown
+      )
+    ) {
+      continue;
+    }
+    seen.add(candidate.itemId);
+    result.push({
+      itemId: candidate.itemId,
+      name: definition.name,
+      category: definition.category,
+      coinPrice: definition.coinPrice,
+      owned: Number.isSafeInteger(candidate.owned)
+        ? Math.max(0, candidate.owned ?? 0)
+        : null,
+      purchasedThisWeek: Number.isSafeInteger(candidate.purchasedThisWeek)
+        ? Math.max(0, candidate.purchasedThisWeek ?? 0)
+        : null,
+    });
+  }
+  return result.slice(0, ESTATE_MERCHANT_ITEM_IDS.length);
+}
+
+function economicBottlenecks(input: {
+  readonly farmStock: number;
+  readonly ranchStock: number;
+  readonly mineStock: number;
+  readonly production: ReturnType<typeof getHomesteadProductionRules>;
+  readonly logistics: HomesteadDirectorContext["logistics"];
+  readonly disasterActive: boolean;
+  readonly supplied?: readonly string[];
+}): string[] {
+  const result: string[] = [];
+  for (const item of input.supplied ?? []) {
+    const safe = compactText(item, 64);
+    if (safe && !result.includes(safe)) result.push(safe);
+  }
+  if (input.farmStock === 0) result.push("农场基础库存为空");
+  if (input.ranchStock === 0) result.push("牧场基础库存为空");
+  if (input.mineStock === 0) result.push("矿山基础库存为空");
+  if (input.production.farm.yieldPercent < 0) {
+    result.push("农场正承受减产压力");
+  }
+  if (input.production.ranch.yieldPercent < 0) {
+    result.push("牧场正承受减产压力");
+  }
+  if (input.production.mine.yieldPercent < 0) {
+    result.push("矿山正承受减产压力");
+  }
+  if (
+    input.logistics &&
+    input.logistics.used >= input.logistics.capacity
+  ) {
+    result.push("今日物流容量已经用尽");
+  }
+  if (input.disasterActive) result.push("当前灾害尚未完成处置");
+  return [...new Set(result)].slice(0, 8);
+}
+
+/**
+ * Projects authoritative game/account state into a bounded, privacy-safe
+ * prompt. The current event is the only event candidate, so the model cannot
+ * select weather, disasters, rewards, prices, or any other rules outcome.
+ */
 export function createHomesteadDirectorDecision(
   homestead: HomesteadGameState,
   farm: FarmingGameState,
   ranch: RanchGameState,
   mine: MineGameState,
   playerId: string,
+  context?: HomesteadDirectorContext,
 ): HomesteadDirectorRequest | null {
   if (
     homestead.ownerId !== playerId ||
@@ -80,25 +264,43 @@ export function createHomesteadDirectorDecision(
   ) {
     return null;
   }
-  const candidateIds: readonly HomesteadWorldEventId[] = homestead.disaster
-    ? [homestead.disaster.eventId]
-    : ["steady_weather", "harvest_festival"];
-  const candidates = candidateIds.map((eventId) => {
-    const event = HOMESTEAD_WORLD_EVENTS[eventId];
-    return { eventId, title: event.title, tone: event.tone };
-  });
-  const fallback = candidates.find(
-    ({ eventId }) => eventId === homestead.worldEvent.eventId,
-  ) ?? candidates[0]!;
+
+  const eventDefinition =
+    HOMESTEAD_WORLD_EVENTS[homestead.worldEvent.eventId];
+  const fixedEvent: HomesteadDirectorCandidate = {
+    eventId: eventDefinition.id,
+    title: eventDefinition.title,
+    tone: eventDefinition.tone,
+  };
   const production = getHomesteadProductionRules(homestead);
-  const activeTownId = homestead.townNetwork?.activeTownId ?? "greenvale";
+  const activeTownId = homestead.townId ??
+    homestead.townNetwork?.activeTownId ??
+    "greenvale";
+  const townDefinition = getTownDefinition(activeTownId);
   const activeTown = homestead.townNetwork?.towns[activeTownId];
-  const frostTown = homestead.townNetwork?.towns.frostpeak;
-  const townProblem = activeTownId === "frostpeak"
-    ? ["blocked_supply_road", "frozen_waterworks", "avalanche_mine"].find(
-      (id) => !frostTown?.resolvedProblemIds.includes(id),
-    ) ?? null
+  const farmStock = total(farm.produce);
+  const ranchStock = total(ranch.products);
+  const mineStock = total(mine.ores);
+  const coins = context?.coins ?? farm.coins;
+  const merchantRenown = context?.merchantRenown ??
+    homestead.townNetwork?.merchantRenown ??
+    0;
+  const shopCandidates = merchantCandidates(
+    context,
+    coins,
+    merchantRenown,
+  );
+  const logistics = context?.logistics
+    ? {
+        used: Math.max(0, context.logistics.used),
+        capacity: Math.max(0, context.logistics.capacity),
+        remaining: Math.max(
+          0,
+          context.logistics.capacity - context.logistics.used,
+        ),
+      }
     : null;
+
   return {
     input: {
       roomId: "persistent-homestead",
@@ -106,18 +308,26 @@ export function createHomesteadDirectorDecision(
       intelligence: 7,
       state: {
         day: homestead.dayKey,
+        activeTown: activeTownId,
+        townName: townDefinition.name,
+        townClimate: townDefinition.climate,
+        townLandmark: townDefinition.landmarkName,
         farmLevel: farm.level,
         ranchLevel: ranch.level,
         mineLevel: mine.level,
-        coins: farm.coins,
+        coins,
         reputation: homestead.reputation,
+        localReputation: context?.localReputation ??
+          activeTown?.reputation ??
+          homestead.reputation,
+        merchantRenown,
         researchPoints: homestead.researchPoints,
         builtFacilities: homestead.facilities
           .filter(({ built }) => built)
           .map(({ id }) => id),
-        farmStock: total(farm.produce),
-        ranchStock: total(ranch.products),
-        mineStock: total(mine.ores),
+        farmStock,
+        ranchStock,
+        mineStock,
         soilHealth: homestead.specializations.farm.soilHealth,
         herdHealth: homestead.specializations.ranch.herdHealth,
         mineProtection: homestead.specializations.mine.protectionLevel,
@@ -127,38 +337,92 @@ export function createHomesteadDirectorDecision(
         ),
         recentOperations: homestead.logs
           .slice(0, 6)
-          .map(({ message }) => message.replaceAll(homestead.ownerName, "庄主")),
-        weather: HOMESTEAD_WEATHER[homestead.weather.weatherId].name,
+          .map(({ message }) =>
+            compactText(message.replaceAll(homestead.ownerName, "庄主"), 120)
+          ),
+        weather: {
+          weatherId: homestead.weather.weatherId,
+          ruleName: HOMESTEAD_WEATHER[homestead.weather.weatherId].name,
+          source: homestead.weather.source ?? "rules",
+          anchorCity: homestead.weather.anchorCity ?? null,
+          observedAt: homestead.weather.observedAt ?? null,
+          condition: homestead.weather.conditionText ?? null,
+          temperatureC: homestead.weather.temperatureC ?? null,
+          humidityPercent: homestead.weather.humidityPercent ?? null,
+          precipitationMm: homestead.weather.precipitationMm ?? null,
+          windKph: homestead.weather.windKph ?? null,
+          stale: homestead.weather.stale ?? false,
+          mechanicsEnabled: homestead.weather.mechanicsEnabled ?? true,
+        },
+        liveHazards: (homestead.weather.liveHazards ?? [])
+          .slice(0, 6)
+          .map((hazard) => ({
+            id: compactText(hazard.id, 48),
+            name: compactText(hazard.name, 64),
+            headline: compactText(hazard.headline, 120),
+            severity: hazard.severity,
+            affectsGameplay: hazard.affectsGameplay,
+          })),
         disaster: homestead.disaster
-          ? `${homestead.disaster.eventId}:severity-${homestead.disaster.severity}:resolved-${homestead.disaster.mitigated}`
+          ? {
+              eventId: homestead.disaster.eventId,
+              severity: homestead.disaster.severity,
+              remainingDays: homestead.disaster.remainingDays,
+              unresolvedDays: homestead.disaster.unresolvedDays,
+              mitigated: homestead.disaster.mitigated,
+            }
           : null,
         productionEffects: [
-          `farm:${production.farm.yieldPercent}/${production.farm.durationPercent}`,
-          `ranch:${production.ranch.yieldPercent}/${production.ranch.durationPercent}`,
-          `mine:${production.mine.yieldPercent}/${production.mine.durationPercent}`,
+          {
+            sector: "farm",
+            yieldPercent: production.farm.yieldPercent,
+            durationPercent: production.farm.durationPercent,
+          },
+          {
+            sector: "ranch",
+            yieldPercent: production.ranch.yieldPercent,
+            durationPercent: production.ranch.durationPercent,
+          },
+          {
+            sector: "mine",
+            yieldPercent: production.mine.yieldPercent,
+            durationPercent: production.mine.durationPercent,
+          },
         ],
         resilience: Object.entries(homestead.resilience)
           .map(([id, level]) => `${id}:${level}`),
-        activeTown: activeTownId,
-        localReputation: activeTownId === "greenvale"
-          ? homestead.reputation
-          : activeTown?.reputation ?? 0,
-        merchantRenown: homestead.townNetwork?.merchantRenown ?? 0,
-        townResources: activeTownId === "frostpeak" && activeTown
+        logistics,
+        merchantCandidates: shopCandidates,
+        economicBottlenecks: economicBottlenecks({
+          farmStock,
+          ranchStock,
+          mineStock,
+          production,
+          logistics: context?.logistics,
+          disasterActive: homestead.disaster !== null,
+          supplied: context?.economicBottlenecks,
+        }),
+        townResources: activeTown
           ? Object.entries(activeTown.inventory)
             .map(([id, quantity]) => `${id}:${quantity}`)
+            .slice(0, 24)
           : [],
-        townProblem,
         townLandmarkStage: activeTown?.landmarkStage ?? 0,
       },
-      candidates,
+      candidates: [fixedEvent],
     },
-    fallback,
+    fallback: fixedEvent,
   };
 }
 
-const SYSTEM_PROMPT =
-  "你是多城镇三业庄园的每日世界导演。农场、牧场和矿山必须被同等考虑；叙事和建议应结合当前城镇、当地声望、待解决问题、地标阶段与本地库存。根据结构化状态和最近操作，从给定候选事件中选择最能产生跨产业取舍的一项。不得编造事件、奖励、成本、物品或任何数值；LLM只负责选择和表达，服务器负责全部规则结算。只返回 JSON：{\"i\":0,\"t\":\"短标题\",\"n\":\"不超过120字的叙事\",\"a\":\"不超过80字且不含数值的经营建议\",\"l\":\"不超过50字的NPC台词\"}。";
+const SYSTEM_PROMPT = [
+  "你是多城镇三业庄园的每日叙事导演。",
+  "服务器已经决定了当前事件、真实天气、灾害、数值倍率、价格、成本和奖励；你不得改选、改写或新增这些规则。",
+  "你只能依据当前城镇、农场、牧场、矿山、天气与灾害、物流容量、经济瓶颈和最近操作，生成展示用叙事与经营建议。",
+  "商店建议只能填写 shopOptions 中的索引 s；它只是展示建议，不会自动购买或生效。",
+  "不得编造物品、NPC、城镇、灾害、奖励、成本、价格、倍率或产量数字。",
+  "只返回 JSON：{\"i\":0,\"t\":\"短标题\",\"n\":\"不超过120字的叙事\",\"a\":\"不超过80字的经营建议\",\"l\":\"不超过50字的NPC台词\",\"s\":0}。没有合适商店建议时省略 s。",
+].join("");
 
 function compactPrompt(
   input: BotDecisionInput<
@@ -166,13 +430,27 @@ function compactPrompt(
     HomesteadDirectorCandidate
   >,
 ): string {
+  const fixedEvent = input.candidates[0];
   return JSON.stringify({
-    ...input.state,
-    options: input.candidates.map((candidate, index) => ({
-      i: index,
-      id: candidate.eventId,
-      title: candidate.title,
-      tone: candidate.tone,
+    authority: {
+      event: "server_fixed",
+      weather: "server_fixed",
+      disaster: "server_fixed",
+      economy: "server_fixed",
+      llmOutput: "presentation_only",
+    },
+    state: input.state,
+    fixedEvent: fixedEvent
+      ? {
+          i: 0,
+          id: fixedEvent.eventId,
+          title: fixedEvent.title,
+          tone: fixedEvent.tone,
+        }
+      : null,
+    shopOptions: input.state.merchantCandidates.map((candidate, index) => ({
+      s: index,
+      ...candidate,
     })),
   });
 }
@@ -193,7 +471,7 @@ function estimateTokens(value: string): number {
 
 function parseCandidate(
   completion: string,
-  candidateCount: number,
+  merchantCandidateIds: readonly EstateMerchantItemId[],
 ): {
   index: number | null;
   reason?: BotDecisionFailureReason;
@@ -209,27 +487,36 @@ function parseCandidate(
       n?: unknown;
       a?: unknown;
       l?: unknown;
+      s?: unknown;
     };
-    if (!Number.isSafeInteger(value.i)) {
+    // The event has already been fixed by the server. Index zero is the only
+    // legal value even if a future caller accidentally supplies more events.
+    if (value.i !== 0) {
       return { index: null, reason: "invalid_candidate" };
     }
-    const index = Number(value.i);
     const safeText = (candidate: unknown, limit: number): string | undefined => {
       if (typeof candidate !== "string") return undefined;
-      const text = candidate.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
-      return text ? text.slice(0, limit) : undefined;
+      const text = compactText(candidate, limit);
+      return text || undefined;
     };
-    return index >= 0 && index < candidateCount
-      ? {
-          index,
-          presentation: {
-            title: safeText(value.t, 60),
-            narrative: safeText(value.n, 160),
-            recommendation: safeText(value.a, 100),
-            npcLine: safeText(value.l, 80),
-          },
-        }
-      : { index: null, reason: "invalid_candidate" };
+    const merchantRecommendationId =
+      Number.isSafeInteger(value.s) &&
+        Number(value.s) >= 0 &&
+        Number(value.s) < merchantCandidateIds.length
+        ? merchantCandidateIds[Number(value.s)]
+        : undefined;
+    return {
+      index: 0,
+      presentation: {
+        title: safeText(value.t, 60),
+        narrative: safeText(value.n, 160),
+        recommendation: safeText(value.a, 100),
+        npcLine: safeText(value.l, 80),
+        ...(merchantRecommendationId
+          ? { merchantRecommendationId }
+          : {}),
+      },
+    };
   } catch {
     return { index: null, reason: "invalid_json" };
   }
@@ -253,21 +540,31 @@ export class OpenAiCompatibleHomesteadDirectorProvider implements
       HomesteadDirectorCandidate
     >,
   ): Promise<BotDecisionResult> {
+    if (input.candidates.length === 0) {
+      return {
+        candidateIndex: null,
+        usage: { promptTokens: 0, completionTokens: 0 },
+        failureReason: "invalid_candidate",
+      };
+    }
     const prompt = compactPrompt(input);
+    const merchantCandidateIds = input.state.merchantCandidates
+      .map(({ itemId }) => itemId)
+      .filter(isMerchantItemId);
     const usage = { promptTokens: 0, completionTokens: 0 };
     let failureReason: BotDecisionFailureReason = "invalid_json";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const instruction = attempt === 0
         ? SYSTEM_PROMPT
-        : `${SYSTEM_PROMPT} 上一次输出无效，请只输出一个 JSON 对象。`;
+        : `${SYSTEM_PROMPT} 上一次输出无效，请只输出一个 JSON 对象，且 i 必须为 0。`;
       const payload = await this.request(instruction, prompt);
       const completion = responseText(payload) ?? "";
       usage.promptTokens += estimateTokens(`${instruction}\n${prompt}`);
       usage.completionTokens += estimateTokens(completion);
-      const parsed = parseCandidate(completion, input.candidates.length);
+      const parsed = parseCandidate(completion, merchantCandidateIds);
       if (parsed.index !== null) {
         return {
-          candidateIndex: parsed.index,
+          candidateIndex: 0,
           usage,
           presentation: parsed.presentation,
         };

@@ -4,6 +4,7 @@ import { mineActionEnvelopeSchema } from "./mine.js";
 describe("mine HTTP schemas", () => {
   it("requires all three optimistic revisions", () => {
     expect(mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedRanchRevision: 5,
       expectedMineRevision: 2,
@@ -14,11 +15,13 @@ describe("mine HTTP schemas", () => {
       },
     })).toBeTruthy();
     expect(() => mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedMineRevision: 2,
       action: { type: "mine_collect", shaftIndex: 0 },
     })).toThrow();
     expect(mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 8,
       expectedRanchRevision: 5,
       expectedMineRevision: 2,
@@ -28,6 +31,7 @@ describe("mine HTTP schemas", () => {
 
   it("rejects unsupported deposits, injected owners and invalid quantities", () => {
     expect(() => mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 0,
       expectedRanchRevision: 0,
       expectedMineRevision: 0,
@@ -38,6 +42,7 @@ describe("mine HTTP schemas", () => {
       },
     })).toThrow();
     expect(() => mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
       expectedFarmRevision: 0,
       expectedRanchRevision: 0,
       expectedMineRevision: 0,

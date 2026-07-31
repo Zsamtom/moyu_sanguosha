@@ -92,6 +92,7 @@ export interface TownAnimalDefinition {
   readonly resalePrice: number;
   readonly feedCropId: string;
   readonly feedAmount: number;
+  readonly careCost: number;
   readonly productionSeconds: number;
   readonly yield: number;
   readonly productPrice: number;

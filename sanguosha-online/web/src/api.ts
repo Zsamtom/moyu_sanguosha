@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -205,10 +205,11 @@ export const api = {
   async applyFarmAction(
     expectedRevision: number,
     action: FarmClientAction,
+    townId: EstateTownId,
   ): Promise<FarmActionSnapshot> {
     return request<FarmActionSnapshot>('/api/farm/actions', {
       method: 'POST',
-      ...jsonBody({ expectedRevision, action }),
+      ...jsonBody({ townId, expectedRevision, action }),
     });
   },
 
@@ -229,12 +230,18 @@ export const api = {
     expectedRevision: number,
     expectedNeighborRevision: number,
     action: FarmVisitClientAction,
+    townId: EstateTownId,
   ): Promise<FarmVisitSnapshot> {
     return request<FarmVisitSnapshot>(
       `/api/farm/neighbors/${encodeURIComponent(neighborId)}/actions`,
       {
       method: 'POST',
-        ...jsonBody({ expectedRevision, expectedNeighborRevision, action }),
+        ...jsonBody({
+          townId,
+          expectedRevision,
+          expectedNeighborRevision,
+          action,
+        }),
       },
     );
   },
@@ -247,10 +254,16 @@ export const api = {
     expectedFarmRevision: number,
     expectedRanchRevision: number,
     action: RanchClientAction,
+    townId: EstateTownId,
   ): Promise<RanchActionSnapshot> {
     return request<RanchActionSnapshot>('/api/ranch/actions', {
       method: 'POST',
-      ...jsonBody({ expectedFarmRevision, expectedRanchRevision, action }),
+      ...jsonBody({
+        townId,
+        expectedFarmRevision,
+        expectedRanchRevision,
+        action,
+      }),
     });
   },
 
@@ -273,12 +286,14 @@ export const api = {
     expectedRanchRevision: number,
     expectedNeighborRevision: number,
     action: RanchVisitClientAction,
+    townId: EstateTownId,
   ): Promise<RanchVisitSnapshot> {
     return request<RanchVisitSnapshot>(
       `/api/ranch/neighbors/${encodeURIComponent(neighborId)}/actions`,
       {
         method: 'POST',
         ...jsonBody({
+          townId,
           expectedRanchRevision,
           expectedNeighborRevision,
           action,
@@ -296,10 +311,12 @@ export const api = {
     expectedRanchRevision: number,
     expectedMineRevision: number,
     action: MineClientAction,
+    townId: EstateTownId,
   ): Promise<MineSnapshot> {
     return request<MineSnapshot>('/api/mine/actions', {
       method: 'POST',
       ...jsonBody({
+        townId,
         expectedFarmRevision,
         expectedRanchRevision,
         expectedMineRevision,
@@ -319,10 +336,12 @@ export const api = {
     return request<HomesteadSnapshot>('/api/homestead/actions', {
       method: 'POST',
       ...jsonBody({
+        townId: snapshot.homestead.activeTownId,
         expectedFarmRevision: snapshot.homestead.revisions.farm,
         expectedRanchRevision: snapshot.homestead.revisions.ranch,
         expectedMineRevision: snapshot.homestead.revisions.mine,
         expectedHomesteadRevision: snapshot.homestead.revision,
+        expectedAccountRevision: snapshot.homestead.accountRevision,
         action,
       }),
     });

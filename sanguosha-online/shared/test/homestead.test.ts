@@ -21,6 +21,7 @@ import {
 } from "../src/index.js";
 
 const start = Date.UTC(2026, 6, 30, 8);
+const day = 24 * 60 * 60_000;
 const ownerId = "owner";
 
 function setup() {
@@ -83,88 +84,43 @@ describe("homestead linked economy", () => {
     }
   });
 
-  it("keeps Frostpeak recoverable at zero coins and closes its three-sector loop", () => {
+  it("keeps unlock, travel, and merchant mutations inside account transactions", () => {
     const { homestead, economy } = setup();
-    economy.coins = 0;
-    const switched = applyHomesteadAction(
+    expect(() => applyHomesteadAction(
       homestead,
       economy,
       { type: "homestead_switch_town", townId: "frostpeak" },
       start,
-    );
-    const farmStarted = applyHomesteadAction(
-      switched.homestead,
-      switched.economy,
-      { type: "homestead_start_town_sector", sectorId: "farm" },
-      start + 1,
-    );
-    const farmCollected = applyHomesteadAction(
-      farmStarted.homestead,
-      farmStarted.economy,
-      { type: "homestead_collect_town_sector", sectorId: "farm" },
-      start + 8 * 60_000 + 1,
-    );
-    expect(
-      farmCollected.homestead.townNetwork.towns.frostpeak.inventory.snow_potato,
-    ).toBe(3);
-
-    const ranchStarted = applyHomesteadAction(
-      farmCollected.homestead,
-      farmCollected.economy,
-      { type: "homestead_start_town_sector", sectorId: "ranch" },
-      start + 8 * 60_000 + 2,
-    );
-    const ranchCollected = applyHomesteadAction(
-      ranchStarted.homestead,
-      ranchStarted.economy,
-      { type: "homestead_collect_town_sector", sectorId: "ranch" },
-      start + 24 * 60_000 + 2,
-    );
-    const mineStarted = applyHomesteadAction(
-      ranchCollected.homestead,
-      ranchCollected.economy,
-      { type: "homestead_start_town_sector", sectorId: "mine" },
-      start + 24 * 60_000 + 3,
-    );
-    const mineCollected = applyHomesteadAction(
-      mineStarted.homestead,
-      mineStarted.economy,
-      { type: "homestead_collect_town_sector", sectorId: "mine" },
-      start + 48 * 60_000 + 3,
-    );
-    expect(
-      mineCollected.homestead.townNetwork.towns.frostpeak.inventory.frost_crystal,
-    ).toBe(2);
-  });
-
-  it("awards local reputation for town problems and global renown for landmarks", () => {
-    const { homestead, economy } = setup();
-    homestead.townNetwork.activeTownId = "frostpeak";
-    const town = homestead.townNetwork.towns.frostpeak;
-    town.inventory.snow_potato = 20;
-    town.inventory.yak_milk = 10;
-    town.inventory.frost_crystal = 10;
-
-    const resolved = applyHomesteadAction(
+    )).toThrowError(HomesteadRuleError);
+    expect(() => applyHomesteadAction(
       homestead,
       economy,
-      {
-        type: "homestead_resolve_town_problem",
-        problemId: "blocked_supply_road",
-      },
+      { type: "homestead_buy_merchant_item", itemId: "rail_pass" },
       start,
-    );
-    expect(resolved.homestead.townNetwork.towns.frostpeak.reputation).toBe(10);
-    expect(resolved.homestead.reputation).toBe(0);
+    )).toThrowError(HomesteadRuleError);
+  });
 
-    const restored = applyHomesteadAction(
-      resolved.homestead,
-      resolved.economy,
-      { type: "homestead_restore_town_landmark" },
-      start + 1,
+  it("stores only a display-only whitelisted LLM merchant recommendation", () => {
+    const { homestead } = setup();
+    const directed = applyHomesteadWorldEventDecision(
+      homestead,
+      homestead.worldEvent.eventId,
+      "llm",
+      start,
+      {
+        narrative: "三业库存已经形成新的调度压力。",
+        recommendation: "若今天需要跨镇，再考虑购买联运票。",
+        npcLine: "先确认行程，再花这笔钱。",
+        merchantRecommendationId: "rail_pass",
+      },
     );
-    expect(restored.homestead.townNetwork.towns.frostpeak.landmarkStage).toBe(1);
-    expect(restored.homestead.townNetwork.merchantRenown).toBe(2);
+    expect(directed.worldEvent.eventId).toBe(
+      homestead.worldEvent.eventId,
+    );
+    expect(directed.advice).toMatchObject({
+      source: "llm",
+      merchantRecommendationId: "rail_pass",
+    });
   });
 
   it("completes value-added projects atomically and only once per day", () => {
@@ -353,6 +309,52 @@ describe("homestead linked economy", () => {
     ).toThrowError(HomesteadRuleError);
   });
 
+  it("requires enough reputation for reputation-cost event options", () => {
+    const { homestead, economy } = setup();
+    homestead.reputation = 2;
+    homestead.worldEvent = {
+      eventId: "harvest_festival",
+      dayKey: homestead.dayKey,
+      selectedOptionId: null,
+      narrative: "城镇正在筹备丰收庆典。",
+      source: "rules",
+      startedDayKey: homestead.dayKey,
+      durationDays: 1,
+      unresolvedDays: 0,
+      severity: 0,
+    };
+
+    const option = getHomesteadGameView(homestead, economy, start)
+      .worldEvent.definition.options.find(
+        ({ id }) => id === "open_market_stall",
+      )!;
+    expect(option.missingReputation).toBe(1);
+    expect(option.canChoose).toBe(false);
+    expect(() =>
+      applyHomesteadAction(
+        homestead,
+        economy,
+        {
+          type: "homestead_choose_event",
+          optionId: "open_market_stall",
+        },
+        start,
+      )
+    ).toThrowError("当地声望不足，还差 1");
+
+    homestead.reputation = 3;
+    const result = applyHomesteadAction(
+      homestead,
+      economy,
+      {
+        type: "homestead_choose_event",
+        optionId: "open_market_stall",
+      },
+      start,
+    );
+    expect(result.homestead.reputation).toBe(0);
+  });
+
   it("rotates orders and events on the next UTC day", () => {
     const { homestead } = setup();
     const next = refreshHomesteadGame(homestead, start + 24 * 60 * 60_000);
@@ -375,8 +377,72 @@ describe("homestead linked economy", () => {
     expect(next.logs[0]?.message).toContain("离线结算 30 天");
   });
 
+  it("fails closed unless trusted weather explicitly enables mechanics", () => {
+    const { homestead } = setup();
+    homestead.specializations.farm.yieldBonusPercent = 7;
+    homestead.specializations.ranch.productBonusPercent = 0;
+    homestead.specializations.mine.oreBonusPercent = 0;
+
+    for (const [source, mechanicsEnabled] of [
+      ["last_known_good", true],
+      ["fallback", true],
+      ["live", undefined],
+      ["rules", undefined],
+      [undefined, true],
+    ] as const) {
+      const state = structuredClone(homestead);
+      state.weather = {
+        weatherId: "heatwave",
+        dayKey: state.dayKey,
+        ...(source === undefined ? {} : { source }),
+        ...(mechanicsEnabled === undefined ? {} : { mechanicsEnabled }),
+      };
+
+      const rules = getHomesteadProductionRules(state);
+
+      expect(rules.farm).toMatchObject({
+        yieldPercent: 7,
+        durationPercent: 0,
+      });
+      expect(rules.ranch).toMatchObject({
+        yieldPercent: 0,
+        durationPercent: 0,
+      });
+      expect(rules.mine).toMatchObject({
+        yieldPercent: 0,
+        durationPercent: 0,
+      });
+      expect(rules.farm.label).toContain("数据回退");
+    }
+
+    for (const source of ["live", "rules"] as const) {
+      const state = structuredClone(homestead);
+      state.weather = {
+        weatherId: "heatwave",
+        dayKey: state.dayKey,
+        source,
+        mechanicsEnabled: true,
+      };
+
+      const rules = getHomesteadProductionRules(state);
+
+      expect(rules.farm.yieldPercent).toBeLessThan(7);
+      expect(rules.farm.durationPercent).toBeGreaterThan(0);
+    }
+  });
+
   it("applies unresolved disasters to production and clears them after repair", () => {
     const { homestead, economy } = setup();
+    homestead.disaster = {
+      eventId: "mountain_seepage",
+      contentEventId: "mountain_seepage",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+    };
     const seepage = applyHomesteadWorldEventDecision(
       homestead,
       "mountain_seepage",
@@ -418,8 +484,301 @@ describe("homestead linked economy", () => {
     expect(repaired.homestead.specializations.farm.soilHealth).toBe(68);
   });
 
+  it("reduces local reputation for ignored disasters without going below zero", () => {
+    const { homestead } = setup();
+    homestead.reputation = 5;
+    homestead.disaster = {
+      eventId: "mountain_seepage",
+      contentEventId: "mountain_seepage",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+    };
+
+    const ignored = refreshHomesteadGame(
+      homestead,
+      start + 24 * 60 * 60_000,
+    );
+    expect(ignored.reputation).toBeLessThan(5);
+    expect(ignored.reputation).toBeGreaterThanOrEqual(0);
+    expect(ignored.logs.some((entry) =>
+      entry.message.includes("声望下降")
+    )).toBe(true);
+
+    ignored.reputation = 1;
+    const ignoredAgain = refreshHomesteadGame(
+      ignored,
+      start + 2 * 24 * 60 * 60_000,
+    );
+    expect(ignoredAgain.reputation).toBe(0);
+  });
+
+  it("does not invent persistent disasters without a trusted live alert", () => {
+    const { homestead } = setup();
+    let refreshed = homestead;
+    for (let elapsedDays = 1; elapsedDays <= 60; elapsedDays += 1) {
+      refreshed = refreshHomesteadGame(
+        refreshed,
+        start + elapsedDays * day,
+      );
+      expect(refreshed.disaster).toBeNull();
+    }
+  });
+
+  it("settles only active disaster days and preserves the starting severity", () => {
+    const { homestead } = setup();
+    homestead.reputation = 100;
+    homestead.disaster = {
+      eventId: "cold_snap",
+      contentEventId: "cold_snap",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 1,
+      unresolvedDays: 0,
+      severity: 3,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+
+    const settled = refreshHomesteadGame(homestead, start + 30 * day);
+    expect(settled.reputation).toBe(94);
+    expect(settled.logs.some(({ message }) =>
+      message.includes("连续 1 个生效日")
+    )).toBe(true);
+  });
+
+  it("produces the same disaster penalty for daily and offline refreshes", () => {
+    const { homestead } = setup();
+    homestead.reputation = 100;
+    homestead.disaster = {
+      eventId: "mountain_seepage",
+      contentEventId: "mountain_seepage",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+
+    const offline = refreshHomesteadGame(homestead, start + 2 * day);
+    const daily = refreshHomesteadGame(
+      refreshHomesteadGame(homestead, start + day),
+      start + 2 * day,
+    );
+    expect(offline.reputation).toBe(94);
+    expect(offline.reputation).toBe(daily.reputation);
+    expect(offline.disaster).toMatchObject({
+      remainingDays: 1,
+      unresolvedDays: 2,
+      severity: 2,
+      reputationPenaltyPaid: 6,
+    });
+    expect(offline.disaster).toMatchObject({
+      remainingDays: daily.disaster?.remainingDays,
+      unresolvedDays: daily.disaster?.unresolvedDays,
+      severity: daily.disaster?.severity,
+      reputationPenaltyPaid: daily.disaster?.reputationPenaltyPaid,
+    });
+  });
+
+  it("does not settle a disaster when the clock moves backward", () => {
+    const { homestead } = setup();
+    homestead.reputation = 50;
+    homestead.disaster = {
+      eventId: "mountain_seepage",
+      contentEventId: "mountain_seepage",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+
+    const rolledBack = refreshHomesteadGame(homestead, start - day);
+    expect(rolledBack.dayKey).toBe(homestead.dayKey);
+    expect(rolledBack.reputation).toBe(50);
+    expect(rolledBack.disaster).toMatchObject({
+      remainingDays: 3,
+      unresolvedDays: 0,
+      reputationPenaltyPaid: 0,
+    });
+  });
+
+  it("caps reputation loss across one persistent disaster lifecycle", () => {
+    const { economy } = setup();
+    const homestead = createHomesteadGame({
+      ownerId,
+      ownerName: "庄主",
+      seed: "frost-cap-seed",
+      now: start,
+      townId: "frostpeak",
+    });
+    homestead.reputation = 100;
+    homestead.disaster = {
+      eventId: "cold_snap",
+      contentEventId: "frost_rail_icing",
+      providerAlertId: "provider-alert-cap",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+
+    const initialView = getHomesteadGameView(homestead, economy, start);
+    expect(initialView.disaster).toMatchObject({
+      nextReputationLoss: 2,
+      reputationPenaltyContinues: true,
+    });
+
+    const capped = refreshHomesteadGame(homestead, start + 10 * day);
+    expect(capped.reputation).toBe(88);
+    expect(capped.disaster).toMatchObject({
+      providerAlertId: "provider-alert-cap",
+      remainingDays: 1,
+      reputationPenaltyPaid: 12,
+    });
+    const cappedView = getHomesteadGameView(
+      capped,
+      economy,
+      start + 10 * day,
+    );
+    expect(cappedView.disaster).toMatchObject({
+      nextReputationLoss: 0,
+      reputationPenaltyContinues: false,
+    });
+
+    const later = refreshHomesteadGame(capped, start + 11 * day);
+    expect(later.reputation).toBe(88);
+    expect(later.disaster?.reputationPenaltyPaid).toBe(12);
+  });
+
+  it("allows one temporary disaster plan without progression credit", () => {
+    const { economy } = setup();
+    const homestead = createHomesteadGame({
+      ownerId,
+      ownerName: "庄主",
+      seed: "frost-temporary-seed",
+      now: start,
+      townId: "frostpeak",
+    });
+    homestead.reputation = 100;
+    homestead.statistics.eventsResolved = 9;
+    homestead.disaster = {
+      eventId: "cold_snap",
+      contentEventId: "frost_rail_icing",
+      providerAlertId: "provider-alert-rail",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+    const directed = applyHomesteadWorldEventDecision(
+      homestead,
+      "frost_rail_icing",
+      "rules",
+      start,
+    );
+    const temporary = applyHomesteadAction(
+      directed,
+      economy,
+      {
+        type: "homestead_choose_event",
+        optionId: "hold_rail_shipments",
+      },
+      start + 1,
+    );
+    expect(temporary.homestead.disaster).toMatchObject({
+      mitigated: false,
+      temporaryOptionId: "hold_rail_shipments",
+    });
+    expect(temporary.homestead.statistics.eventsResolved).toBe(9);
+    expect(temporary.homestead.season.counters.community).toBe(0);
+    expect(temporary.homestead.season.score).toBe(0);
+    expect(temporary.homestead.collections.some(
+      ({ id }) => id === "renown:events:10",
+    )).toBe(false);
+
+    const nextDay = refreshHomesteadGame(
+      temporary.homestead,
+      start + day,
+    );
+    const nextView = getHomesteadGameView(
+      nextDay,
+      temporary.economy,
+      start + day,
+    );
+    expect(
+      nextView.worldEvent.definition.options.find(
+        ({ id }) => id === "hold_rail_shipments",
+      ),
+    ).toMatchObject({
+      canChoose: false,
+      temporaryAlreadyUsed: true,
+    });
+    expect(() =>
+      applyHomesteadAction(
+        nextDay,
+        temporary.economy,
+        {
+          type: "homestead_choose_event",
+          optionId: "hold_rail_shipments",
+        },
+        start + day,
+      )
+    ).toThrowError("本次灾害已经执行过临时方案");
+
+    nextDay.goods.frost_alloy = 1;
+    temporary.economy.mineOres.lignite = 3;
+    const resolved = applyHomesteadAction(
+      nextDay,
+      temporary.economy,
+      {
+        type: "homestead_choose_event",
+        optionId: "supply_rail_deicing",
+      },
+      start + day + 1,
+    );
+    expect(resolved.homestead.disaster?.mitigated).toBe(true);
+    expect(resolved.homestead.statistics.eventsResolved).toBe(10);
+    expect(resolved.homestead.season.counters.community).toBe(1);
+    expect(resolved.homestead.collections.some(
+      ({ id }) => id === "renown:events:10",
+    )).toBe(true);
+    expect(resolved.homestead.handledWeatherAlertIds).toContain(
+      "provider-alert-rail",
+    );
+  });
+
   it("projects event affordability and supports repeatable resilience sinks", () => {
     const { homestead, economy } = setup();
+    homestead.disaster = {
+      eventId: "mountain_seepage",
+      contentEventId: "mountain_seepage",
+      startedDayKey: homestead.dayKey,
+      remainingDays: 3,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+    };
     const seepage = applyHomesteadWorldEventDecision(
       homestead,
       "mountain_seepage",
@@ -543,7 +902,7 @@ describe("homestead linked economy", () => {
     const job = started.homestead.facilities.find(
       ({ id }) => id === "mill",
     )?.job;
-    expect(job?.outputQuantity).toBe(3);
+    expect(job?.outputQuantity).toBe(2);
     expect(job!.completesAt - job!.startedAt).toBeLessThan(10 * 60_000);
   });
 

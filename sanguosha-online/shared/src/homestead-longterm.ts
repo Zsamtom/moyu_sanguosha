@@ -102,7 +102,7 @@ export const HOMESTEAD_RESEARCH: Readonly<
   automation: {
     id: "automation",
     name: "三业自动化",
-    description: "允许设施升级到三级，并进一步提高加工产量。",
+    description: "允许设施升级到三级，并进一步缩短加工工期。",
     branch: "estate",
     researchCost: 12,
     requiredReputation: 80,

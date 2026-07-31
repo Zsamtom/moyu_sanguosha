@@ -53,7 +53,7 @@ describe("farm market LLM", () => {
     const body = String(fetcher.mock.calls[0]![1]?.body);
     expect(body).not.toContain(playerId);
     expect(body).not.toContain(playerName);
-    expect(body).toContain("鲜食订单增长");
+    expect(body).toContain("鲜食渠道简报");
   });
 
   it("falls back after two invalid model replies", async () => {
