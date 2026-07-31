@@ -91,6 +91,15 @@
   margin-bottom: 12px;
 }
 
+.homestead-town-network__summary {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+  color: #68736d;
+  text-align: right;
+}
+
 .homestead-town-switcher {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -271,6 +280,79 @@
   flex-wrap: wrap;
   gap: 6px;
   margin-top: auto;
+}
+
+.homestead-town-requirements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.homestead-town-requirements .ant-tag {
+  margin: 0;
+}
+
+.homestead-advice-plan {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.homestead-ai-profile {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.2fr) repeat(3, minmax(140px, 1fr));
+  align-items: end;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 10px;
+  border: 1px solid var(--estate-line);
+  border-radius: 7px;
+  background: var(--estate-soft-green);
+}
+
+.homestead-ai-profile label,
+.homestead-ai-profile label > span {
+  display: block;
+}
+
+.homestead-ai-profile label > span {
+  margin-bottom: 4px;
+  color: #68736d;
+  font-size: 11px;
+}
+
+.homestead-ai-profile .ant-select {
+  width: 100%;
+}
+
+.homestead-advice-plan article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--estate-line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.homestead-advice-plan article > span {
+  color: var(--estate-green);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.homestead-advice-plan strong,
+.homestead-advice-plan small {
+  display: block;
+}
+
+.homestead-advice-plan small {
+  margin-top: 3px;
+  color: #68736d;
+  line-height: 1.45;
 }
 
 .homestead-town-goal-grid {
@@ -996,6 +1078,10 @@
 }
 
 @media (max-width: 680px) {
+  .homestead-page {
+    padding-bottom: 76px;
+  }
+
   .homestead-hero,
   .homestead-metrics {
     align-items: flex-start;
@@ -1026,13 +1112,39 @@
     padding: 13px;
   }
 
+  .homestead-town-network .homestead-section__heading,
+  .homestead-town-network__summary {
+    align-items: flex-start;
+    flex-direction: column;
+    text-align: left;
+  }
+
+  .homestead-advice-plan {
+    grid-template-columns: 1fr;
+  }
+
+  .homestead-ai-profile {
+    grid-template-columns: 1fr;
+  }
+
   .homestead-town-switcher > article,
   .homestead-town-switcher__future {
     min-height: 0;
   }
 
   .homestead-local-nav {
+    position: sticky;
+    top: auto;
+    bottom: 8px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     overflow-x: auto;
+    box-shadow: 0 8px 24px rgb(28 42 36 / 18%);
+  }
+
+  .homestead-local-nav .ant-btn {
+    min-width: 0;
+    padding-inline: 8px;
   }
 
   .homestead-page .ant-btn {

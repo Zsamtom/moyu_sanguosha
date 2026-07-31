@@ -506,6 +506,12 @@ export function FarmScreen() {
         toast.success(
           `已在 ${action.plotIndex + 1} 号田播种${farmCropName(next.farm, action.cropId)}`,
         );
+      } else if (action.type === 'farming_batch_plant') {
+        toast.success(
+          `已在 ${action.plotIndices.length} 块田批量播种${farmCropName(next.farm, action.cropId)}`,
+        );
+      } else if (action.type === 'farming_batch_harvest') {
+        toast.success(`已批量收获 ${action.plotIndices.length} 块成熟田地`);
       } else if (action.type === 'farming_clear_plot') {
         toast.success(`已铲除 ${action.plotIndex + 1} 号田的作物`);
       } else if (action.type === 'farming_redeem_mutation') {
@@ -688,6 +694,23 @@ export function FarmScreen() {
     ownGame.nextDogUpgrade !== null &&
     ownGame.level >= ownGame.nextDogUpgrade.requiredFarmLevel &&
     inventory.coins >= ownGame.nextDogUpgrade.coinCost;
+  const emptyPlotIndices = ownGame.plots
+    .filter((plot) => plot.unlocked && plot.cropId === null)
+    .map(({ index }) => index);
+  const batchPlantIndices = emptyPlotIndices.slice(
+    0,
+    inventoryCount(inventory.seeds, activeCropId),
+  );
+  const readyPlotIndices = ownGame.plots
+    .filter(
+      (plot) =>
+        plot.unlocked &&
+        plot.cropId !== null &&
+        plot.maturesAt !== null &&
+        now >= plot.maturesAt,
+    )
+    .map(({ index }) => index);
+  const batchOperationsUnlocked = ownGame.level >= 3;
 
   return (
     <main className="farm-page">
@@ -780,6 +803,39 @@ export function FarmScreen() {
                   <small>×{inventoryCount(inventory.seeds, cropId)}</small>
                 </Button>
               ))}
+              <Button
+                disabled={
+                  busy ||
+                  !batchOperationsUnlocked ||
+                  batchPlantIndices.length < 2
+                }
+                size="small"
+                onClick={() => void runAction({
+                  type: 'farming_batch_plant',
+                  cropId: activeCropId,
+                  plotIndices: batchPlantIndices,
+                })}
+              >
+                {batchOperationsUnlocked
+                  ? `播满空田 (${batchPlantIndices.length})`
+                  : 'LV 3 解锁批量播种'}
+              </Button>
+              <Button
+                disabled={
+                  busy ||
+                  !batchOperationsUnlocked ||
+                  readyPlotIndices.length < 2
+                }
+                size="small"
+                onClick={() => void runAction({
+                  type: 'farming_batch_harvest',
+                  plotIndices: readyPlotIndices,
+                })}
+              >
+                {batchOperationsUnlocked
+                  ? `收取全部成熟 (${readyPlotIndices.length})`
+                  : 'LV 3 解锁批量收获'}
+              </Button>
               <Button
                 danger
                 aria-pressed={toolMode === 'shovel'}

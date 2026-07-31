@@ -9,6 +9,11 @@ import {
   LlmSettingsService,
   PostgresLlmSettingsStore,
 } from "./llm-settings.js";
+import {
+  LlmGovernanceService,
+  PostgresLlmGovernanceStore,
+} from "./llm-governance.js";
+import { PostgresHomesteadDirectorJobStore } from "./homestead-director-jobs.js";
 import { attachRealtimeServer } from "./realtime.js";
 import {
   loadRoomSnapshot,
@@ -47,12 +52,18 @@ async function main(): Promise<void> {
       config.doudizhuLlm,
     );
     await llmSettings.initialize();
+    const llmGovernance = new LlmGovernanceService(
+      new PostgresLlmGovernanceStore(pool),
+    );
+    const directorJobs = new PostgresHomesteadDirectorJobStore(pool);
     const townWeather = createTownWeatherService(config.townWeather);
     const farm = new FarmService(
       new PostgresFarmStateStore(pool),
       botDecisions,
       Date.now,
       townWeather,
+      llmGovernance,
+      directorJobs,
     );
     const rooms = new RoomService(
       90_000,
@@ -91,6 +102,8 @@ async function main(): Promise<void> {
       rooms,
       securityEvents,
       llmSettings,
+      llmGovernance,
+      directorJobs,
       farm,
     });
     const httpServer = createServer(app);
@@ -111,6 +124,9 @@ async function main(): Promise<void> {
       });
     });
     console.log(`Sanguosha server listening on port ${config.port}`);
+    void farm.resumeHomesteadDirectorJobs().catch((error) => {
+      console.error("Failed to resume homestead director jobs", error);
+    });
 
     let shuttingDown = false;
     const shutdown = async (signal: string): Promise<void> => {

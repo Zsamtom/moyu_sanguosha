@@ -6898,6 +6898,15 @@ button.ddz-card {
   font-family: ui-rounded, "Arial Rounded MT Bold", "PingFang SC", system-ui, sans-serif;
 }
 
+.llm-governance-section {
+  display: grid;
+  gap: 20px;
+}
+
+.llm-governance-stats {
+  margin: 0;
+}
+
 .splendor-board > * {
   position: relative;
   z-index: 1;

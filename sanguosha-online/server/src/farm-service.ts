@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type {
   Pool,
   PoolClient,
@@ -50,6 +50,7 @@ import {
   HomesteadRuleError,
   applyHomesteadAction as applyHomesteadLinkedAction,
   applyHomesteadWorldEventDecision,
+  compileHomesteadGeneratedEvent,
   assertRestorableHomesteadGameState,
   createHomesteadGame,
   getHomesteadGameView,
@@ -78,7 +79,10 @@ import {
   TOWN_DEFINITIONS,
   getTownRoute,
 } from "@sanguosha/shared";
-import type { BotDecisionRegistry } from "./bots/decision-registry.js";
+import {
+  botDecisionFailureReason,
+  type BotDecisionRegistry,
+} from "./bots/decision-registry.js";
 import { createFarmMarketDecision } from "./bots/farm-market-llm.js";
 import {
   createHomesteadDirectorDecision,
@@ -91,6 +95,15 @@ import {
   type TownWeatherSnapshot,
 } from "./town-weather.js";
 import type { PublicUser } from "./users.js";
+import type {
+  LlmGovernanceReason,
+  LlmGovernanceService,
+} from "./llm-governance.js";
+import type {
+  HomesteadDirectorJob,
+  HomesteadDirectorJobInput,
+  HomesteadDirectorJobStore,
+} from "./homestead-director-jobs.js";
 
 export type FarmClientAction = FarmingAction;
 export type FarmVisitClientAction = FarmingVisitAction;
@@ -1254,6 +1267,8 @@ export class MemoryFarmStateStore implements FarmStateStore {
 
 export class FarmService {
   private readonly queues = new Map<string, Promise<void>>();
+  private directorWorker: Promise<void> | null = null;
+  private directorKickRequested = false;
 
   constructor(
     private readonly store: FarmStateStore,
@@ -1261,12 +1276,40 @@ export class FarmService {
     private readonly clock: () => number = Date.now,
     private readonly townWeather: TownWeatherService =
       createTownWeatherService(),
+    private readonly llmGovernance?: LlmGovernanceService,
+    private readonly directorJobs?: HomesteadDirectorJobStore,
   ) {}
 
   get marketDirectorAvailable(): boolean {
     return this.decisions.supports("farm");
   }
 
+
+  async resumeHomesteadDirectorJobs(): Promise<number> {
+    if (!this.directorJobs) return 0;
+    const recovered = await this.directorJobs.recoverInterrupted();
+    await this.runHomesteadDirectorJobs();
+    return recovered;
+  }
+
+  async runHomesteadDirectorJobs(): Promise<void> {
+    if (!this.directorJobs) return;
+    this.directorKickRequested = true;
+    if (this.directorWorker) {
+      await this.directorWorker;
+      return;
+    }
+    const worker = this.drainHomesteadDirectorJobs();
+    this.directorWorker = worker;
+    try {
+      await worker;
+    } finally {
+      if (this.directorWorker === worker) this.directorWorker = null;
+    }
+    if (this.directorKickRequested) {
+      await this.runHomesteadDirectorJobs();
+    }
+  }
   async getOrCreate(user: PublicUser): Promise<FarmSnapshot> {
     await this.prefetchTownWeather(user.id);
     return this.serializedMany([user.id], async () => {
@@ -1656,6 +1699,7 @@ export class FarmService {
     await this.prefetchTownWeather(user.id);
     return this.serializedMany([user.id], async () => {
       const { account, bundle } = await this.loadActiveEstate(user);
+      this.scheduleHomesteadDirector(user, bundle);
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -1805,6 +1849,12 @@ export class FarmService {
         account.activeTownId,
         bundle,
       );
+      if (
+        action.type === "homestead_update_ai_profile" &&
+        action.enabled
+      ) {
+        this.scheduleHomesteadDirector(user, bundle);
+      }
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2368,13 +2418,6 @@ export class FarmService {
     );
     bundle = this.applyTownWeatherSnapshot(bundle, weather);
     account = this.syncAccountFromBundle(account, bundle);
-    if (dayChanged) {
-      this.scheduleHomesteadDirector(
-        user,
-        bundle,
-        account,
-      );
-    }
     bundle = this.syncBundleFromAccount(bundle, account);
     await this.store.saveAccountAndTownEstate(
       user.id,
@@ -2382,64 +2425,239 @@ export class FarmService {
       account.activeTownId,
       bundle,
     );
+    if (dayChanged) {
+      this.scheduleHomesteadDirector(user, bundle);
+    }
     return { account, bundle };
   }
 
   private scheduleHomesteadDirector(
     user: PublicUser,
     bundle: TownEstateBundle,
-    account: EstateAccountState,
   ): void {
-    const baseRevision = bundle.homestead.revision;
-    const baseDayKey = bundle.homestead.dayKey;
-    const townId = bundle.townId;
-    const operation = this.applyHomesteadDirector(
-      structuredClone(bundle.homestead),
-      structuredClone(bundle.farm),
-      structuredClone(bundle.ranch),
-      structuredClone(bundle.mine),
-      user.id,
-      this.homesteadDirectorContext(account),
-    );
-    void operation.then(async (directed) => {
-      if (directed.revision === baseRevision) return;
-      await this.serializedMany([user.id], async () => {
-        const loadedAccount = await this.store.loadEstateAccount(user.id);
-        const loadedBundle = await this.store.loadTownEstate(
-          user.id,
-          townId,
-        );
-        if (loadedAccount === undefined || loadedBundle === undefined) return;
-        try {
-          assertRestorableEstateAccount(loadedAccount);
-          this.assertTownEstateBundle(loadedBundle, user.id, townId);
-        } catch {
-          return;
-        }
-        if (
-          loadedAccount.activeTownId !== townId ||
-          loadedBundle.homestead.revision !== baseRevision ||
-          loadedBundle.homestead.dayKey !== baseDayKey
-        ) return;
-        const nextBundle = structuredClone(loadedBundle);
-        nextBundle.homestead = directed;
-        const nextAccount = this.syncAccountFromBundle(
-          structuredClone(loadedAccount),
-          nextBundle,
-        );
-        await this.store.saveAccountAndTownEstate(
-          user.id,
-          nextAccount,
-          townId,
-          this.syncBundleFromAccount(nextBundle, nextAccount),
-        );
-      });
-    }).catch((error) => {
+    if (!this.decisions.supports("homestead") || !bundle.homestead.aiProfile.enabled) {
+      return;
+    }
+    const continuingGeneratedEvent =
+      bundle.homestead.worldEvent.source === "llm" &&
+      bundle.homestead.worldEvent.rulesVersion === 2 &&
+      bundle.homestead.worldEvent.parameters?.pacingId ===
+        "two_day_follow_up" &&
+      bundle.homestead.worldEvent.startedDayKey !==
+        bundle.homestead.worldEvent.dayKey &&
+      bundle.homestead.worldEvent.selectedOptionId === null;
+    if (continuingGeneratedEvent) {
+      return;
+    }
+    const profile = structuredClone(bundle.homestead.aiProfile);
+    const disasterId =
+      bundle.homestead.disaster?.contentEventId ??
+      bundle.homestead.disaster?.eventId ??
+      null;
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify([
+        user.id,
+        bundle.townId,
+        bundle.homestead.dayKey,
+        profile,
+        disasterId,
+      ]))
+      .digest("hex")
+      .slice(0, 32);
+    const job: HomesteadDirectorJobInput = {
+      jobKey: `homestead:v2:${fingerprint}`,
+      userId: user.id,
+      townId: bundle.townId,
+      dayKey: bundle.homestead.dayKey,
+      profile,
+      disasterId,
+    };
+    const operation = this.directorJobs
+      ? this.directorJobs.enqueue(job)
+        .then(() => this.runHomesteadDirectorJobs())
+      : this.executeHomesteadDirectorJob(job).then(() => undefined);
+    void operation.catch((error) => {
       console.error(
         "Homestead director background update failed; rules remain active",
         error,
       );
     });
+  }
+
+  private async drainHomesteadDirectorJobs(): Promise<void> {
+    if (!this.directorJobs) return;
+    do {
+      this.directorKickRequested = false;
+      let job: HomesteadDirectorJob | undefined;
+      while ((job = await this.directorJobs.claimNext())) {
+        try {
+          const status = await this.executeHomesteadDirectorJob(job);
+          await this.directorJobs.complete(job.id, status);
+        } catch (error) {
+          const message = error instanceof Error
+            ? error.message
+            : String(error);
+          await this.directorJobs.complete(job.id, "failed", message);
+          console.error(
+            "Homestead director queued job failed; rules remain active",
+            error,
+          );
+        }
+      }
+    } while (this.directorKickRequested);
+  }
+
+  private async executeHomesteadDirectorJob(
+    job: HomesteadDirectorJobInput,
+  ): Promise<"applied" | "obsolete"> {
+    const prepared = await this.serializedMany(
+      [job.userId],
+      async (): Promise<{
+        account: EstateAccountState;
+        bundle: TownEstateBundle;
+        baseRevision: number;
+      } | null> => {
+        const loadedAccount = await this.store.loadEstateAccount(job.userId);
+        const loadedBundle = await this.store.loadTownEstate(
+          job.userId,
+          job.townId as EstateTownId,
+        );
+        if (loadedAccount === undefined || loadedBundle === undefined) {
+          return null;
+        }
+        try {
+          assertRestorableEstateAccount(loadedAccount);
+          this.assertTownEstateBundle(
+            loadedBundle,
+            job.userId,
+            job.townId as EstateTownId,
+          );
+        } catch {
+          return null;
+        }
+        if (!this.directorJobMatches(job, loadedAccount, loadedBundle)) {
+          return null;
+        }
+        return {
+          account: structuredClone(loadedAccount),
+          bundle: structuredClone(loadedBundle),
+          baseRevision: loadedBundle.homestead.revision,
+        };
+      },
+    );
+    if (!prepared) return "obsolete";
+
+    const directed = await this.applyHomesteadDirector(
+      structuredClone(prepared.bundle.homestead),
+      structuredClone(prepared.bundle.farm),
+      structuredClone(prepared.bundle.ranch),
+      structuredClone(prepared.bundle.mine),
+      job.userId,
+      this.homesteadDirectorContext(prepared.account),
+    );
+    if (directed.revision === prepared.baseRevision) return "obsolete";
+
+    const applied = await this.serializedMany([job.userId], async () => {
+      const loadedAccount = await this.store.loadEstateAccount(job.userId);
+      const loadedBundle = await this.store.loadTownEstate(
+        job.userId,
+        job.townId as EstateTownId,
+      );
+      if (loadedAccount === undefined || loadedBundle === undefined) {
+        return false;
+      }
+      try {
+        assertRestorableEstateAccount(loadedAccount);
+        this.assertTownEstateBundle(
+          loadedBundle,
+          job.userId,
+          job.townId as EstateTownId,
+        );
+      } catch {
+        return false;
+      }
+      if (!this.directorJobMatches(job, loadedAccount, loadedBundle)) {
+        return false;
+      }
+      let nextHomestead = directed;
+      if (loadedBundle.homestead.revision !== prepared.baseRevision) {
+        nextHomestead = applyHomesteadWorldEventDecision(
+          loadedBundle.homestead,
+          directed.worldEvent.eventId,
+          "llm",
+          this.clock(),
+          {
+            narrative: directed.worldEvent.narrative,
+            recommendation: directed.advice.recommendation,
+            npcLine: directed.advice.npcLine,
+            ...(directed.advice.steps?.length === 3
+              ? { planSteps: directed.advice.steps }
+              : {}),
+            ...(directed.worldEvent.instanceId
+              ? {
+                  eventInstanceId: directed.worldEvent.instanceId,
+                  eventRulesVersion: directed.worldEvent.rulesVersion ?? 1,
+                  ...(directed.worldEvent.parameters
+                    ? { eventParameters: directed.worldEvent.parameters }
+                    : {}),
+                }
+              : {}),
+            llmUsage: {
+              promptTokens: Math.max(
+                0,
+                directed.statistics.llmPromptTokens -
+                  prepared.bundle.homestead.statistics.llmPromptTokens,
+              ),
+              completionTokens: Math.max(
+                0,
+                directed.statistics.llmCompletionTokens -
+                  prepared.bundle.homestead.statistics.llmCompletionTokens,
+              ),
+            },
+            ...(directed.advice.merchantRecommendationId
+              ? {
+                  merchantRecommendationId:
+                    directed.advice.merchantRecommendationId,
+                }
+              : {}),
+          },
+        );
+      }
+      const nextBundle = structuredClone(loadedBundle);
+      nextBundle.homestead = nextHomestead;
+      const nextAccount = this.syncAccountFromBundle(
+        structuredClone(loadedAccount),
+        nextBundle,
+      );
+      await this.store.saveAccountAndTownEstate(
+        job.userId,
+        nextAccount,
+        job.townId as EstateTownId,
+        this.syncBundleFromAccount(nextBundle, nextAccount),
+      );
+      return true;
+    });
+    return applied ? "applied" : "obsolete";
+  }
+
+  private directorJobMatches(
+    job: HomesteadDirectorJobInput,
+    account: EstateAccountState,
+    bundle: TownEstateBundle,
+  ): boolean {
+    const disasterId =
+      bundle.homestead.disaster?.contentEventId ??
+      bundle.homestead.disaster?.eventId ??
+      null;
+    return (
+      account.activeTownId === job.townId &&
+      bundle.townId === job.townId &&
+      bundle.homestead.dayKey === job.dayKey &&
+      bundle.homestead.worldEvent.selectedOptionId === null &&
+      JSON.stringify(bundle.homestead.aiProfile) ===
+        JSON.stringify(job.profile) &&
+      disasterId === job.disasterId
+    );
   }
 
   private async loadOrCreateEstateAccount(
@@ -3161,13 +3379,16 @@ export class FarmService {
   ): Promise<HomesteadGameState> {
     const loaded = await this.store.loadHomesteadState(user.id);
     if (loaded === undefined) {
-      const homestead = await this.applyHomesteadDirector(
-        this.createHomestead(user),
-        farm,
-        ranch,
-        mine,
-        user.id,
-      );
+      const initial = this.createHomestead(user);
+      const homestead = this.directorJobs
+        ? initial
+        : await this.applyHomesteadDirector(
+            initial,
+            farm,
+            ranch,
+            mine,
+            user.id,
+          );
       await this.store.saveHomesteadState(user.id, homestead);
       return homestead;
     }
@@ -3200,13 +3421,15 @@ export class FarmService {
     let refreshed = refreshHomesteadGame(homestead, this.clock());
     if (refreshed.revision !== homestead.revision) changed = true;
     if (refreshed.dayKey !== previousDay) {
-      refreshed = await this.applyHomesteadDirector(
-        refreshed,
-        farm,
-        ranch,
-        mine,
-        user.id,
-      );
+      if (!this.directorJobs) {
+        refreshed = await this.applyHomesteadDirector(
+          refreshed,
+          farm,
+          ranch,
+          mine,
+          user.id,
+        );
+      }
       changed = true;
     }
     if (changed) {
@@ -3402,6 +3625,7 @@ export class FarmService {
     playerId: string,
     context?: HomesteadDirectorContext,
   ): Promise<HomesteadGameState> {
+    if (!this.decisions.supports("homestead")) return homestead;
     const request = createHomesteadDirectorDecision(
       homestead,
       farm,
@@ -3411,6 +3635,18 @@ export class FarmService {
       context,
     );
     if (!request) return homestead;
+    const townId =
+      homestead.townId ?? homestead.townNetwork.activeTownId;
+    const authorization = this.llmGovernance
+      ? await this.llmGovernance.authorize({
+          userId: playerId,
+          feature: "homestead",
+          townId,
+          dayKey: homestead.dayKey,
+        })
+      : { allowed: true as const };
+    if (!authorization.allowed) return homestead;
+    const startedAt = Date.now();
     try {
       const result = await this.decisions.decide(
         "homestead",
@@ -3419,31 +3655,124 @@ export class FarmService {
       const selected = result?.candidateIndex === null || result === null
         ? undefined
         : request.input.candidates[result.candidateIndex];
-      return selected
-          ? applyHomesteadWorldEventDecision(
-            homestead,
-            selected.eventId,
-            "llm",
-            this.clock(),
+      const planSteps = result?.presentation?.planStepIndices
+        ?.map((index) => request.input.state.planCandidates[index])
+        .filter((candidate) => candidate !== undefined);
+      const compiled = selected
+        ? compileHomesteadGeneratedEvent(
             {
+              townId:
+                homestead.townId ??
+                homestead.townNetwork.activeTownId,
+              dayKey: homestead.dayKey,
+              templateId: selected.eventId,
               narrative: result?.presentation?.narrative,
-              recommendation: result?.presentation?.recommendation,
-              npcLine: result?.presentation?.npcLine,
-              ...(result?.presentation?.merchantRecommendationId
-                ? {
-                    merchantRecommendationId:
-                      result.presentation.merchantRecommendationId,
-                  }
-                : {}),
+              pacingId: result?.presentation?.eventPacingId,
+            },
+            request.input.candidates.map(({ eventId }) => eventId),
+            {
+              allowHazard: homestead.disaster !== null,
+              candidateWasPrevalidated: true,
+              allowedPacingIds: request.input.state.pacingCandidates
+                .map(({ id }) => id),
             },
           )
-        : homestead;
+        : undefined;
+      if (!compiled) {
+        if (result === null) {
+          await this.llmGovernance?.record({
+            userId: playerId,
+            feature: "homestead",
+            townId,
+            dayKey: homestead.dayKey,
+            status: "failure",
+            failureReason: "provider_unavailable",
+            candidateCount: request.input.candidates.length,
+            latencyMs: Math.max(0, Date.now() - startedAt),
+          });
+          return homestead;
+        }
+        await this.llmGovernance?.record({
+          userId: playerId,
+          feature: "homestead",
+          townId,
+          dayKey: homestead.dayKey,
+          status: "fallback",
+          failureReason:
+            result.failureReason as LlmGovernanceReason | undefined ??
+              "compile_rejected",
+          candidateCount: request.input.candidates.length,
+          promptTokens: result.usage.promptTokens,
+          completionTokens: result.usage.completionTokens,
+          latencyMs: Math.max(0, Date.now() - startedAt),
+        });
+        const fallback = structuredClone(homestead);
+        fallback.statistics.llmCalls += 1;
+        fallback.statistics.llmFallbacks += 1;
+        fallback.statistics.llmPromptTokens += result.usage.promptTokens;
+        fallback.statistics.llmCompletionTokens +=
+          result.usage.completionTokens;
+        fallback.updatedAt = Math.max(fallback.updatedAt, this.clock());
+        fallback.revision += 1;
+        return fallback;
+      }
+      const directed = applyHomesteadWorldEventDecision(
+        homestead,
+        compiled.eventId,
+        "llm",
+        this.clock(),
+        {
+          narrative: compiled.narrative,
+          recommendation: result?.presentation?.recommendation,
+          npcLine: result?.presentation?.npcLine,
+          ...(planSteps?.length === 3 ? { planSteps } : {}),
+          eventInstanceId: compiled.instanceId,
+          eventRulesVersion: compiled.rulesVersion,
+          llmUsage: result!.usage,
+          eventParameters: compiled.parameters,
+          ...(result?.presentation?.merchantRecommendationId
+            ? {
+                merchantRecommendationId:
+                  result.presentation.merchantRecommendationId,
+              }
+            : {}),
+        },
+      );
+      await this.llmGovernance?.record({
+        userId: playerId,
+        feature: "homestead",
+        townId,
+        dayKey: homestead.dayKey,
+        status: "success",
+        candidateCount: request.input.candidates.length,
+        selectedEventId: compiled.eventId,
+        eventInstanceId: compiled.instanceId,
+        promptTokens: result!.usage.promptTokens,
+        completionTokens: result!.usage.completionTokens,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+      });
+      return directed;
     } catch (error) {
+      await this.llmGovernance?.record({
+        userId: playerId,
+        feature: "homestead",
+        townId,
+        dayKey: homestead.dayKey,
+        status: "failure",
+        failureReason: botDecisionFailureReason(error),
+        candidateCount: request.input.candidates.length,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+      });
       console.error(
         "Homestead world director failed; using rules fallback",
         error,
       );
-      return homestead;
+      const fallback = structuredClone(homestead);
+      fallback.statistics.llmCalls += 1;
+      fallback.statistics.llmFallbacks += 1;
+      fallback.updatedAt = Math.max(fallback.updatedAt, this.clock());
+      fallback.revision += 1;
+      return fallback;
     }
   }
 

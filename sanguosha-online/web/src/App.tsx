@@ -25,6 +25,7 @@ import type {
   GameLogEntry,
   GameType,
   LlmFailureReason,
+  LlmGovernanceSnapshot,
   LlmSettings,
   PlayableFaction,
   RoomDetail,
@@ -113,6 +114,8 @@ export default function App() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
   const [llmSettingsLoading, setLlmSettingsLoading] = useState(false);
+  const [llmUsage, setLlmUsage] = useState<LlmGovernanceSnapshot>();
+  const [llmUsageLoading, setLlmUsageLoading] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string>();
@@ -177,6 +180,17 @@ export default function App() {
       toast.error(errorMessage(error));
     } finally {
       setLlmSettingsLoading(false);
+    }
+  }, [toast]);
+
+  const refreshLlmUsage = useCallback(async () => {
+    setLlmUsageLoading(true);
+    try {
+      setLlmUsage(await api.getLlmUsage());
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setLlmUsageLoading(false);
     }
   }, [toast]);
 
@@ -251,6 +265,7 @@ export default function App() {
     setRawGame(null);
     setRooms([]);
     setUsers([]);
+    setLlmUsage(undefined);
     setWorkspaceView('lobby');
     setPasswordOpen(false);
     setPasswordError(undefined);
@@ -688,8 +703,11 @@ export default function App() {
             loading={usersLoading}
             llmSettings={llmSettings}
             llmSettingsLoading={llmSettingsLoading}
+            llmUsage={llmUsage}
+            llmUsageLoading={llmUsageLoading}
             onRefresh={refreshUsers}
             onRefreshLlmSettings={refreshLlmSettings}
+            onRefreshLlmUsage={refreshLlmUsage}
             onSaveLlmSettings={saveLlmSettings}
             onTestLlmConnection={testLlmConnection}
             onCreate={createUser}

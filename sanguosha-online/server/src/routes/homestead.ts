@@ -11,6 +11,8 @@ import {
   HOMESTEAD_RECIPE_IDS,
   HOMESTEAD_RESILIENCE_IDS,
   HOMESTEAD_SEASON_MILESTONE_IDS,
+  HOMESTEAD_TOWN_RESOURCE_IDS,
+  HOMESTEAD_TOWN_SECTOR_IDS,
   HOMESTEAD_VALUE_ROUTE_IDS,
   ESTATE_MERCHANT_ITEM_IDS,
   ESTATE_TOWN_IDS,
@@ -102,6 +104,37 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("homestead_use_acceleration_card"),
     facilityId: facilityIdSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_update_ai_profile"),
+    enabled: z.boolean(),
+    goal: z.enum(["balanced", "wealth", "reputation", "research"]),
+    risk: z.enum(["safe", "balanced", "bold"]),
+    focus: z.enum(["farm", "ranch", "mine", "processing"]),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_start_town_sector"),
+    sectorId: z.enum(HOMESTEAD_TOWN_SECTOR_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_collect_town_sector"),
+    sectorId: z.enum(HOMESTEAD_TOWN_SECTOR_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_upgrade_town_sector"),
+    sectorId: z.enum(HOMESTEAD_TOWN_SECTOR_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_sell_town_resource"),
+    resourceId: z.enum(HOMESTEAD_TOWN_RESOURCE_IDS),
+    quantity: z.number().int().positive().max(1_000_000),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_resolve_town_problem"),
+    problemId: z.string().min(1).max(80),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_restore_town_landmark"),
   }).strict(),
   z.object({
     type: z.literal("homestead_complete_value_route"),

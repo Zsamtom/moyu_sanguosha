@@ -1,7 +1,14 @@
 import { AutoComplete, Button, Form, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
-import type { AuthUser, DeepSeekModel, LlmSettings, UpdateLlmSettings } from '../types';
+import type {
+  AuthUser,
+  DeepSeekModel,
+  LlmDecisionAuditEntry,
+  LlmGovernanceSnapshot,
+  LlmSettings,
+  UpdateLlmSettings,
+} from '../types';
 
 interface CreateUserValues {
   username: string;
@@ -29,8 +36,11 @@ interface AdminUsersScreenProps {
   loading: boolean;
   llmSettings?: LlmSettings;
   llmSettingsLoading: boolean;
+  llmUsage?: LlmGovernanceSnapshot;
+  llmUsageLoading: boolean;
   onRefresh: () => Promise<void>;
   onRefreshLlmSettings: () => Promise<void>;
+  onRefreshLlmUsage: () => Promise<void>;
   onSaveLlmSettings: (values: UpdateLlmSettings) => Promise<void>;
   onTestLlmConnection: (apiKey?: string, model?: DeepSeekModel) => Promise<void>;
   onCreate: (values: Pick<CreateUserValues, 'username' | 'displayName' | 'password'>) => Promise<void>;
@@ -46,8 +56,11 @@ export function AdminUsersScreen({
   loading,
   llmSettings,
   llmSettingsLoading,
+  llmUsage,
+  llmUsageLoading,
   onRefresh,
   onRefreshLlmSettings,
+  onRefreshLlmUsage,
   onSaveLlmSettings,
   onTestLlmConnection,
   onCreate,
@@ -87,7 +100,8 @@ export function AdminUsersScreen({
   useEffect(() => {
     void onRefresh();
     void onRefreshLlmSettings();
-  }, [onRefresh, onRefreshLlmSettings]);
+    void onRefreshLlmUsage();
+  }, [onRefresh, onRefreshLlmSettings, onRefreshLlmUsage]);
 
   useEffect(() => {
     if (!llmSettings) return;
@@ -266,6 +280,64 @@ export function AdminUsersScreen({
     },
   ];
 
+  const llmAuditColumns: ColumnsType<LlmDecisionAuditEntry> = [
+    {
+      title: '时间',
+      dataIndex: 'createdAt',
+      width: 170,
+      render: (createdAt: string) =>
+        new Date(createdAt).toLocaleString('zh-CN', { hour12: false }),
+    },
+    {
+      title: '玩家',
+      dataIndex: 'userId',
+      width: 150,
+      render: (userId: string | null) =>
+        users.find((candidate) => candidate.id === userId)?.displayName ??
+          userId?.slice(0, 8) ??
+          '已删除账号',
+    },
+    {
+      title: '结果',
+      dataIndex: 'status',
+      width: 100,
+      render: (status: LlmDecisionAuditEntry['status']) => {
+        const labels = {
+          success: ['成功', 'green'],
+          fallback: ['已回退', 'orange'],
+          failure: ['失败', 'red'],
+          skipped: ['已拦截', 'default'],
+        } as const;
+        const [label, color] = labels[status];
+        return <Tag color={color}>{label}</Tag>;
+      },
+    },
+    {
+      title: '事件',
+      dataIndex: 'selectedEventId',
+      width: 180,
+      render: (eventId: string | null) => eventId ?? '—',
+    },
+    {
+      title: 'Token',
+      width: 120,
+      render: (_, entry) =>
+        `${entry.promptTokens + entry.completionTokens}`,
+    },
+    {
+      title: '耗时',
+      dataIndex: 'latencyMs',
+      width: 100,
+      render: (latencyMs: number) => `${latencyMs} ms`,
+    },
+    {
+      title: '原因',
+      dataIndex: 'failureReason',
+      width: 180,
+      render: (reason: string | null) => reason ?? '—',
+    },
+  ];
+
   const passwordRules = [
     { required: true, message: '请输入密码' },
     { min: 8, message: '密码至少 8 位' },
@@ -380,6 +452,73 @@ export function AdminUsersScreen({
             </Space>
           </div>
         </Form>
+      </section>
+
+      <section className="paper-card llm-governance-section">
+        <div className="section-toolbar">
+          <div>
+            <h2>庄园 LLM 治理与审计</h2>
+            <p>仅保存调用结果、Token、耗时和失败原因，不保存 Prompt、密钥或完整玩家状态。</p>
+          </div>
+          <Space>
+            <Tag color={llmUsage?.circuit.open ? 'red' : 'green'}>
+              {llmUsage?.circuit.open ? '熔断中' : '服务正常'}
+            </Tag>
+            <Button
+              loading={llmUsageLoading}
+              onClick={() => void onRefreshLlmUsage()}
+            >
+              刷新
+            </Button>
+          </Space>
+        </div>
+
+        <div className="admin-stats llm-governance-stats">
+          <div className="paper-card">
+            <span>24 小时调用</span>
+            <strong>{llmUsage?.rolling24Hours.calls ?? 0}</strong>
+          </div>
+          <div className="paper-card">
+            <span>成功</span>
+            <strong>{llmUsage?.rolling24Hours.successes ?? 0}</strong>
+          </div>
+          <div className="paper-card">
+            <span>回退 / 失败</span>
+            <strong>
+              {(llmUsage?.rolling24Hours.fallbacks ?? 0) +
+                (llmUsage?.rolling24Hours.failures ?? 0)}
+            </strong>
+          </div>
+          <div className="paper-card">
+            <span>Token</span>
+            <strong>
+              {(llmUsage?.rolling24Hours.promptTokens ?? 0) +
+                (llmUsage?.rolling24Hours.completionTokens ?? 0)}
+            </strong>
+          </div>
+        </div>
+        {llmUsage && (
+          <p className="form-note">
+            {`\u5355\u73a9\u5bb6\u6bcf\u65e5\u6700\u5927 ${llmUsage.policy.dailyCallLimitPerUser} \u6b21\u3001${llmUsage.policy.dailyTokenLimitPerUser.toLocaleString('zh-CN')} Token\uff1b\u8fde\u7eed\u5931\u8d25 ${llmUsage.policy.circuitFailureThreshold} \u6b21\u540e\u7194\u65ad ${Math.round(llmUsage.policy.circuitCooldownMs / 60_000)} \u5206\u949f\u3002`}
+          </p>
+        )}
+
+        {llmUsage?.directorJobs && (
+          <p className="form-note">
+            {`\u6301\u4e45\u4efb\u52a1\u961f\u5217\uff1a\u5f85\u5904\u7406 ${llmUsage.directorJobs.counts.pending}\uff0c\u5904\u7406\u4e2d ${llmUsage.directorJobs.counts.processing}\uff0c\u5df2\u5e94\u7528 ${llmUsage.directorJobs.counts.applied}\uff0c\u5df2\u8fc7\u671f ${llmUsage.directorJobs.counts.obsolete}\uff0c\u5931\u8d25 ${llmUsage.directorJobs.counts.failed}\u3002`}
+          </p>
+        )}
+
+
+        <Table<LlmDecisionAuditEntry>
+          rowKey="id"
+          columns={llmAuditColumns}
+          dataSource={llmUsage?.recent ?? []}
+          loading={llmUsageLoading}
+          pagination={false}
+          scroll={{ x: 1_000 }}
+          locale={{ emptyText: '暂无庄园 LLM 调用记录' }}
+        />
       </section>
 
       <section className="admin-stats">

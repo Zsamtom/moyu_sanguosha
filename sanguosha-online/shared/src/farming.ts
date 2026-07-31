@@ -395,6 +395,11 @@ export type FarmingAction =
       readonly plotIndex: number;
     }
   | {
+      readonly type: "farming_batch_plant";
+      readonly cropId: FarmingCropId;
+      readonly plotIndices: readonly number[];
+    }
+  | {
       readonly type: "farming_tend";
       readonly care: FarmingCareKind;
       readonly plotIndex: number;
@@ -402,6 +407,10 @@ export type FarmingAction =
   | {
       readonly type: "farming_harvest";
       readonly plotIndex: number;
+    }
+  | {
+      readonly type: "farming_batch_harvest";
+      readonly plotIndices: readonly number[];
     }
   | {
       readonly type: "farming_clear_plot";
@@ -1025,6 +1034,68 @@ export function applyFarmingAction(
       "economy",
       `购入 ${action.quantity} 袋${crop.name}种子，支出 ${cost} 金币。`,
     );
+  } else if (action.type === "farming_batch_plant") {
+    if (game.level < 3) {
+      throw new FarmingRuleError(
+        "FARMING_LEVEL_REQUIRED",
+        "农场达到 3 级后解锁批量播种",
+      );
+    }
+    if (!isCropId(action.cropId, game.townId)) {
+      throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
+    }
+    const plotIndices = [...new Set(action.plotIndices)];
+    if (
+      plotIndices.length !== action.plotIndices.length ||
+      plotIndices.length < 2 ||
+      plotIndices.length > FARMING_MAX_PLOTS
+    ) {
+      throw new FarmingRuleError(
+        "FARMING_INVALID_QUANTITY",
+        "批量播种需要选择 2 至 12 块不同田地",
+      );
+    }
+    const crop = crops[action.cropId];
+    if (game.level < crop.unlockLevel) {
+      throw new FarmingRuleError("FARMING_CROP_LOCKED", "该作物尚未解锁");
+    }
+    if (game.seeds[action.cropId] < plotIndices.length) {
+      throw new FarmingRuleError(
+        "FARMING_NOT_ENOUGH_SEEDS",
+        "批量播种所需种子不足",
+      );
+    }
+    for (const plotIndex of plotIndices) {
+      const plot = requirePlot(game, plotIndex);
+      if (plot.cropId !== null) {
+        throw new FarmingRuleError(
+          "FARMING_PLOT_OCCUPIED",
+          "批量播种包含已有作物的田地",
+        );
+      }
+    }
+    const baseRevision = game.revision;
+    for (const plotIndex of plotIndices) {
+      game = applyFarmingAction(
+        game,
+        {
+          type: "farming_plant",
+          cropId: action.cropId,
+          plotIndex,
+        },
+        effectiveNow,
+        production,
+      );
+    }
+    addLog(
+      game,
+      effectiveNow,
+      "plant",
+      `批量播种${crop.name}，共安排 ${plotIndices.length} 块田地。`,
+    );
+    game.updatedAt = effectiveNow;
+    game.revision = baseRevision + 1;
+    return game;
   } else if (action.type === "farming_plant") {
     if (!isCropId(action.cropId, game.townId)) {
       throw new FarmingRuleError("FARMING_UNKNOWN_CROP", "作物不存在");
@@ -1097,6 +1168,55 @@ export function applyFarmingAction(
       ? "浇水"
       : action.care === "weed" ? "除草" : "除虫";
     addLog(game, effectiveNow, "care", `完成 ${plot.index + 1} 号田${label}。`);
+  } else if (action.type === "farming_batch_harvest") {
+    if (game.level < 3) {
+      throw new FarmingRuleError(
+        "FARMING_LEVEL_REQUIRED",
+        "农场达到 3 级后解锁批量收获",
+      );
+    }
+    const plotIndices = [...new Set(action.plotIndices)];
+    if (
+      plotIndices.length !== action.plotIndices.length ||
+      plotIndices.length < 2 ||
+      plotIndices.length > FARMING_MAX_PLOTS
+    ) {
+      throw new FarmingRuleError(
+        "FARMING_INVALID_QUANTITY",
+        "批量收获需要选择 2 至 12 块不同田地",
+      );
+    }
+    for (const plotIndex of plotIndices) {
+      const plot = requirePlot(game, plotIndex);
+      if (
+        !plot.cropId ||
+        plot.maturesAt === null ||
+        effectiveNow < plot.maturesAt
+      ) {
+        throw new FarmingRuleError(
+          "FARMING_NOT_READY",
+          "批量收获包含尚未成熟或空置的田地",
+        );
+      }
+    }
+    const baseRevision = game.revision;
+    for (const plotIndex of plotIndices) {
+      game = applyFarmingAction(
+        game,
+        { type: "farming_harvest", plotIndex },
+        effectiveNow,
+        production,
+      );
+    }
+    addLog(
+      game,
+      effectiveNow,
+      "harvest",
+      `批量收获完成，共处理 ${plotIndices.length} 块田地。`,
+    );
+    game.updatedAt = effectiveNow;
+    game.revision = baseRevision + 1;
+    return game;
   } else if (action.type === "farming_harvest") {
     const plot = requirePlot(game, action.plotIndex);
     if (!plot.cropId || plot.maturesAt === null) {

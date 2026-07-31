@@ -11,6 +11,11 @@ import {
   LlmSettingsService,
   MemoryLlmSettingsStore,
 } from "./llm-settings.js";
+import {
+  LlmGovernanceService,
+  MemoryLlmGovernanceStore,
+} from "./llm-governance.js";
+import { MemoryHomesteadDirectorJobStore } from "./homestead-director-jobs.js";
 import { attachRealtimeServer } from "./realtime.js";
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
@@ -152,7 +157,18 @@ async function main(): Promise<void> {
     config.sessionSecret,
   );
   await llmSettings.initialize();
-  const farm = new FarmService(new MemoryFarmStateStore(), botDecisions);
+  const llmGovernance = new LlmGovernanceService(
+    new MemoryLlmGovernanceStore(),
+  );
+  const directorJobs = new MemoryHomesteadDirectorJobStore();
+  const farm = new FarmService(
+    new MemoryFarmStateStore(),
+    botDecisions,
+    Date.now,
+    undefined,
+    llmGovernance,
+    directorJobs,
+  );
   const rooms = new RoomService(
     90_000,
     200,
@@ -186,6 +202,8 @@ async function main(): Promise<void> {
     rooms,
     securityEvents,
     llmSettings,
+    llmGovernance,
+    directorJobs,
     farm,
   });
   const httpServer = createServer(app);
@@ -204,6 +222,9 @@ async function main(): Promise<void> {
       httpServer.off("error", reject);
       resolve();
     });
+  });
+  void farm.resumeHomesteadDirectorJobs().catch((error) => {
+    console.error("Failed to resume local homestead director jobs", error);
   });
   console.log(`墨鱼本地测试站点：http://localhost:${port}`);
   console.log(`本地管理员：${adminUsername} / ${adminPassword}`);

@@ -140,6 +140,53 @@ export async function migrateDatabase(pool: Pool): Promise<void> {
       reason TEXT NOT NULL,
       quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS llm_decision_audit (
+      id UUID PRIMARY KEY,
+      user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      feature VARCHAR(32) NOT NULL CHECK (feature IN ('homestead')),
+      town_id TEXT,
+      day_key TEXT,
+      status VARCHAR(16) NOT NULL
+        CHECK (status IN ('success', 'fallback', 'failure', 'skipped')),
+      failure_reason VARCHAR(64),
+      candidate_count INTEGER NOT NULL DEFAULT 0 CHECK (candidate_count >= 0),
+      selected_event_id TEXT,
+      event_instance_id TEXT,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK (prompt_tokens >= 0),
+      completion_tokens INTEGER NOT NULL DEFAULT 0 CHECK (completion_tokens >= 0),
+      latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (latency_ms >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS llm_decision_audit_feature_created_idx
+      ON llm_decision_audit (feature, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS llm_decision_audit_user_day_idx
+      ON llm_decision_audit (user_id, feature, day_key);
+
+    CREATE TABLE IF NOT EXISTS homestead_director_job (
+      id UUID PRIMARY KEY,
+      job_key TEXT NOT NULL UNIQUE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      town_id TEXT NOT NULL,
+      day_key TEXT NOT NULL,
+      profile JSONB NOT NULL,
+      disaster_id TEXT,
+      status VARCHAR(16) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'applied', 'obsolete', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS homestead_director_job_status_created_idx
+      ON homestead_director_job (status, created_at);
+
+    CREATE INDEX IF NOT EXISTS homestead_director_job_user_created_idx
+      ON homestead_director_job (user_id, created_at DESC);
   `);
 }
 

@@ -467,3 +467,39 @@ describe('homestead API', () => {
     );
   });
 });
+
+describe('LLM governance API', () => {
+  it('loads the administrator usage snapshot without exposing prompts', async () => {
+    const usage = {
+      policy: {
+        dailyCallLimitPerUser: 8,
+        dailyTokenLimitPerUser: 40_000,
+        circuitFailureThreshold: 3,
+        circuitCooldownMs: 300_000,
+      },
+      rolling24Hours: {
+        calls: 1,
+        successes: 1,
+        fallbacks: 0,
+        failures: 0,
+        skipped: 0,
+        promptTokens: 120,
+        completionTokens: 20,
+      },
+      circuit: {
+        open: false,
+        retryAt: null,
+        consecutiveFailures: 0,
+      },
+      recent: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ usage }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.getLlmUsage()).resolves.toEqual(usage);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/llm-usage',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+});

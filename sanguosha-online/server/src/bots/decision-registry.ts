@@ -1,4 +1,7 @@
-import type { EstateMerchantItemId } from "@sanguosha/shared";
+import type {
+  EstateMerchantItemId,
+  HomesteadGeneratedEventPacingId,
+} from "@sanguosha/shared";
 
 export type BotGameKind =
   | "sanguosha"
@@ -40,10 +43,20 @@ export interface BotDecisionResult {
     readonly recommendation?: string;
     readonly npcLine?: string;
     /**
+     * Display navigation steps selected by index from a server-provided
+     * whitelist. They never contain an executable game mutation.
+     */
+    readonly planStepIndices?: readonly number[];
+    /**
      * Display-only merchant recommendation selected from a server-provided
      * whitelist. It never purchases or applies the item.
      */
     readonly merchantRecommendationId?: EstateMerchantItemId;
+    /**
+     * Applied only after the authoritative compiler verifies that this ID
+     * came from the server-provided pacing whitelist.
+     */
+    readonly eventPacingId?: HomesteadGeneratedEventPacingId;
   };
 }
 

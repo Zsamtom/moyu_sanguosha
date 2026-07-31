@@ -49,6 +49,23 @@ describe("real-time farm HTTP schemas", () => {
         quantity: 1,
       },
     })).toBeTruthy();
+    expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedRevision: 8,
+      action: {
+        type: "farming_batch_plant",
+        cropId: "wheat",
+        plotIndices: [0, 1, 2],
+      },
+    })).toBeTruthy();
+    expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedRevision: 9,
+      action: {
+        type: "farming_batch_harvest",
+        plotIndices: [0, 1],
+      },
+    })).toBeTruthy();
   });
 
   it("rejects injected player ids and invalid quantities", () => {
@@ -69,6 +86,14 @@ describe("real-time farm HTTP schemas", () => {
         type: "farming_buy_seed",
         cropId: "wheat",
         quantity: 100,
+      },
+    })).toThrow();
+    expect(() => farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedRevision: 0,
+      action: {
+        type: "farming_batch_harvest",
+        plotIndices: [0, 0],
       },
     })).toThrow();
   });

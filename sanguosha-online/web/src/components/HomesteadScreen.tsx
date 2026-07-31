@@ -4,6 +4,7 @@ import {
   Checkbox,
   Popconfirm,
   Progress,
+  Select,
   Spin,
   Tag,
   message,
@@ -155,6 +156,37 @@ const LIVE_MERCHANT_ITEMS = new Set([
   'rail_pass',
   'merchant_banner',
 ]);
+
+const DEFAULT_AI_PROFILE = {
+  enabled: true,
+  goal: 'balanced',
+  risk: 'balanced',
+  focus: 'processing',
+} satisfies HomesteadSnapshot['homestead']['aiProfile'];
+
+const DEFAULT_ADVICE_STEPS = [
+  {
+    id: 'review-event',
+    title: '处理今日事件',
+    reason: '先比较事件选项，确定今天的资源优先级。',
+    panel: 'today',
+    targetId: 'homestead-world-event',
+  },
+  {
+    id: 'stabilize-processing',
+    title: '检查加工队列',
+    reason: '让已建成设施保持运转，减少原料闲置。',
+    panel: 'operations',
+    targetId: 'homestead-processing',
+  },
+  {
+    id: 'prepare-growth',
+    title: '规划下一项研究',
+    reason: '根据当前瓶颈选择一个长期能力方向。',
+    panel: 'growth',
+    targetId: 'homestead-research',
+  },
+] satisfies HomesteadSnapshot['homestead']['advice']['steps'];
 
 export function formatHomesteadDuration(milliseconds: number): string {
   if (milliseconds <= 0) return '可收取';
@@ -332,6 +364,7 @@ export function HomesteadScreen() {
   const [legacyPanel, setLegacyPanel] = useState<
     'today' | 'operations' | 'growth'
   >('today');
+  const [showTownNetwork, setShowTownNetwork] = useState(false);
   const [toast, toastContext] = message.useMessage();
   const snapshotRef = useRef<HomesteadSnapshot>();
   const actionInFlight = useRef(false);
@@ -350,6 +383,7 @@ export function HomesteadScreen() {
     if (townChanged) {
       setUseFertilizer(false);
       setLegacyPanel('today');
+      setShowTownNetwork(false);
     }
     return true;
   };
@@ -429,6 +463,19 @@ export function HomesteadScreen() {
     }
   };
 
+  const openAdviceStep = (
+    panel: 'today' | 'operations' | 'growth',
+    targetId: string,
+  ) => {
+    setLegacyPanel(panel);
+    window.setTimeout(() => {
+      document.getElementById(targetId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 0);
+  };
+
   const completedGoods = useMemo(
     () => snapshot
       ? snapshot.homestead.activeGoodIds
@@ -470,6 +517,10 @@ export function HomesteadScreen() {
   }
 
   const { homestead } = snapshot;
+  const aiProfile = homestead.aiProfile ?? DEFAULT_AI_PROFILE;
+  const adviceSteps = homestead.advice.steps?.length === 3
+    ? homestead.advice.steps
+    : DEFAULT_ADVICE_STEPS;
   const actionsBusy = Boolean(busyKey);
   const unlockedResearch = new Set(
     homestead.research
@@ -498,6 +549,18 @@ export function HomesteadScreen() {
   const weatherMechanicsEnabled = isWeatherMechanicsEnabled(
     homestead.weather,
   );
+  const todayActionCount =
+    homestead.orders.filter(({ canComplete }) => canComplete).length +
+    homestead.valueRoutes.filter(({ canComplete }) => canComplete).length +
+    (
+      homestead.worldEvent.selectedOptionId === null &&
+      homestead.worldEvent.definition.options.some(({ canChoose }) => canChoose)
+        ? 1
+        : 0
+    );
+  const operationReadyCount =
+    homestead.facilities.filter(({ ready }) => ready).length +
+    (activeTown?.sectors.filter(({ ready }) => ready).length ?? 0);
   const townSwitcher = (
     <section className="homestead-town-network" aria-label="城镇交通与开发">
       <div className="homestead-section__heading">
@@ -505,9 +568,23 @@ export function HomesteadScreen() {
           <p className="farm-kicker">TOWN NETWORK</p>
           <h2>城镇庄园与交通</h2>
         </div>
-        <span>金币全局共享；三业库存、声望、天气与灾害各镇独立</span>
+        <div className="homestead-town-network__summary">
+          <span>
+            当前：{activeTown?.definition.name} ·
+            {' '}{homestead.towns.filter(({ unlocked }) => unlocked).length}
+            /{homestead.towns.length} 个城镇已开发
+          </span>
+          <Button
+            size="small"
+            aria-expanded={showTownNetwork}
+            onClick={() => setShowTownNetwork((value) => !value)}
+          >
+            {showTownNetwork ? '收起城镇网络' : '展开切换与开发'}
+          </Button>
+        </div>
       </div>
-      <div className="homestead-town-switcher">
+      {showTownNetwork && (
+        <div className="homestead-town-switcher">
         {homestead.towns.map((town) => {
           const travelDisabledReason = town.travel?.reason;
           const unlockReason = town.unlockMissing
@@ -644,7 +721,8 @@ export function HomesteadScreen() {
             <Button disabled block>尚未开放</Button>
           </article>
         ))}
-      </div>
+        </div>
+      )}
     </section>
   );
 
@@ -695,8 +773,6 @@ export function HomesteadScreen() {
         />
       )}
 
-      {townSwitcher}
-
       <nav
         className="homestead-local-nav"
         aria-label={`${activeTown?.definition.name ?? '当前城镇'}经营分区`}
@@ -705,13 +781,13 @@ export function HomesteadScreen() {
           type={legacyPanel === 'today' ? 'primary' : 'default'}
           onClick={() => setLegacyPanel('today')}
         >
-          今日决策
+          今日决策{todayActionCount > 0 ? ` (${todayActionCount})` : ''}
         </Button>
         <Button
           type={legacyPanel === 'operations' ? 'primary' : 'default'}
           onClick={() => setLegacyPanel('operations')}
         >
-          产业经营
+          产业经营{operationReadyCount > 0 ? ` (${operationReadyCount})` : ''}
         </Button>
         <Button
           type={legacyPanel === 'growth' ? 'primary' : 'default'}
@@ -720,6 +796,271 @@ export function HomesteadScreen() {
           长期成长
         </Button>
       </nav>
+
+      {townSwitcher}
+
+      {activeTown?.definition.id === 'frostpeak' && activeTown.sectors.length > 0 && (
+        <>
+          <section
+            id="homestead-town-local"
+            className="homestead-section homestead-panel-item homestead-panel-item--operations"
+          >
+            <div className="homestead-section__heading">
+              <div>
+                <p className="farm-kicker">FROSTPEAK LOCAL INDUSTRIES</p>
+                <h2>霜岭本地产业协作</h2>
+              </div>
+              <span>雪薯、牦牛奶与霜晶形成独立的民生生产链</span>
+            </div>
+            <div className="homestead-town-inventory" aria-label="霜岭本地库存">
+              {([
+                'snow_potato',
+                'yak_milk',
+                'frost_crystal',
+              ] as const).map((resourceId) => (
+                <article key={resourceId}>
+                  <span>{ITEM_NAMES[resourceId]}</span>
+                  <small>本地物资</small>
+                  <strong>{activeTown.inventory[resourceId]}</strong>
+                  <Popconfirm
+                    title={`出售 1 份${ITEM_NAMES[resourceId]}？`}
+                    description="出售所得进入全局共享金币账户。"
+                    disabled={actionsBusy || activeTown.inventory[resourceId] < 1}
+                    onConfirm={() => void act(
+                      {
+                        type: 'homestead_sell_town_resource',
+                        resourceId,
+                        quantity: 1,
+                      },
+                      `town-sell:${resourceId}`,
+                      `${ITEM_NAMES[resourceId]}已出售`,
+                    )}
+                  >
+                    <Button
+                      size="small"
+                      disabled={actionsBusy || activeTown.inventory[resourceId] < 1}
+                      loading={busyKey === `town-sell:${resourceId}`}
+                    >
+                      出售 1 份
+                    </Button>
+                  </Popconfirm>
+                </article>
+              ))}
+            </div>
+            <div className="homestead-town-sector-grid">
+              {activeTown.sectors.map((sector) => {
+                const jobReady = Boolean(
+                  sector.job && sector.job.completesAt <= now,
+                );
+                const liveProgress = !sector.job
+                  ? 0
+                  : Math.max(
+                      0,
+                      Math.min(
+                        1,
+                        (now - sector.job.startedAt) /
+                          Math.max(
+                            1,
+                            sector.job.completesAt - sector.job.startedAt,
+                          ),
+                      ),
+                    );
+                return (
+                  <article key={sector.definition.id}>
+                    <div className="homestead-card-title">
+                      <h3>{sector.definition.name}</h3>
+                      <Tag color={sector.job ? jobReady ? 'green' : 'blue' : 'default'}>
+                        LV {sector.level}
+                      </Tag>
+                    </div>
+                    <p>{sector.definition.actionName}</p>
+                    <small>
+                      产出 {ITEM_NAMES[sector.definition.output.itemId]}
+                      {' '}×{sector.outputQuantity}
+                      {sector.definition.input
+                        ? ` · 消耗 ${ITEM_NAMES[sector.definition.input.itemId]} ×${sector.definition.input.quantity}`
+                        : ' · 无前置物资'}
+                    </small>
+                    {sector.job && (
+                      <>
+                        <Progress
+                          percent={Math.round(liveProgress * 100)}
+                          size="small"
+                          status={jobReady ? 'success' : 'active'}
+                        />
+                        <small>
+                          {jobReady
+                            ? '本轮生产已经完成'
+                            : `剩余 ${formatHomesteadDuration(sector.job.completesAt - now)}`}
+                        </small>
+                      </>
+                    )}
+                    <div className="homestead-town-actions">
+                      {sector.job ? (
+                        <Button
+                          type={jobReady ? 'primary' : 'default'}
+                          disabled={actionsBusy || !jobReady}
+                          loading={busyKey === `town-collect:${sector.definition.id}`}
+                          onClick={() => void act(
+                            {
+                              type: 'homestead_collect_town_sector',
+                              sectorId: sector.definition.id,
+                            },
+                            `town-collect:${sector.definition.id}`,
+                            `${sector.definition.name}产物已收取`,
+                          )}
+                        >
+                          {jobReady ? '收取产物' : '生产中'}
+                        </Button>
+                      ) : (
+                        <Button
+                          type={sector.canStart ? 'primary' : 'default'}
+                          disabled={actionsBusy || !sector.canStart}
+                          loading={busyKey === `town-start:${sector.definition.id}`}
+                          onClick={() => void act(
+                            {
+                              type: 'homestead_start_town_sector',
+                              sectorId: sector.definition.id,
+                            },
+                            `town-start:${sector.definition.id}`,
+                            `${sector.definition.actionName}已开始`,
+                          )}
+                        >
+                          开始{sector.definition.actionName}
+                        </Button>
+                      )}
+                      {sector.nextUpgrade && (
+                        <Popconfirm
+                          title={`升级${sector.definition.name}到 LV ${sector.nextUpgrade.level}？`}
+                          description={
+                            `需要 ${sector.nextUpgrade.coinCost} 金币、` +
+                            `${sector.nextUpgrade.crystalCost} 霜晶，` +
+                            `并达到 ${sector.nextUpgrade.reputationRequired} 当地声望。`
+                          }
+                          disabled={actionsBusy || !sector.nextUpgrade.canUpgrade}
+                          onConfirm={() => void act(
+                            {
+                              type: 'homestead_upgrade_town_sector',
+                              sectorId: sector.definition.id,
+                            },
+                            `town-upgrade:${sector.definition.id}`,
+                            `${sector.definition.name}已升级`,
+                          )}
+                        >
+                          <Button
+                            disabled={actionsBusy || !sector.nextUpgrade.canUpgrade}
+                            loading={busyKey === `town-upgrade:${sector.definition.id}`}
+                          >
+                            升级产业
+                          </Button>
+                        </Popconfirm>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <div className="homestead-town-goal-grid homestead-panel-item homestead-panel-item--growth">
+            <section className="homestead-section">
+              <div className="homestead-section__heading">
+                <div>
+                  <p className="farm-kicker">LOCAL PROBLEM</p>
+                  <h2>{activeTown.currentProblem?.title ?? '霜岭民生稳定'}</h2>
+                </div>
+                <Tag color={activeTown.currentProblem ? 'orange' : 'green'}>
+                  {activeTown.currentProblem ? '待解决' : '全部完成'}
+                </Tag>
+              </div>
+              {activeTown.currentProblem ? (
+                <>
+                  <p>{activeTown.currentProblem.description}</p>
+                  <div className="homestead-town-requirements">
+                    {activeTown.currentProblem.requirementsView.map((requirement) => (
+                      <Tag
+                        key={requirement.itemId}
+                        color={requirement.sufficient ? 'green' : 'red'}
+                      >
+                        {ITEM_NAMES[requirement.itemId]}
+                        {' '}{requirement.available}/{requirement.quantity}
+                      </Tag>
+                    ))}
+                  </div>
+                  <p className="homestead-reward">
+                    金币 +{activeTown.currentProblem.coinReward}
+                    {' '}· 当地声望 +{activeTown.currentProblem.reputationReward}
+                    {' '}· 研究 +{activeTown.currentProblem.researchReward}
+                  </p>
+                  <Button
+                    type={activeTown.currentProblem.canResolve ? 'primary' : 'default'}
+                    disabled={actionsBusy || !activeTown.currentProblem.canResolve}
+                    loading={busyKey === `town-problem:${activeTown.currentProblem.id}`}
+                    onClick={() => void act(
+                      {
+                        type: 'homestead_resolve_town_problem',
+                        problemId: activeTown.currentProblem!.id,
+                      },
+                      `town-problem:${activeTown.currentProblem!.id}`,
+                      '霜岭民生问题已经解决',
+                    )}
+                  >
+                    提交物资并解决问题
+                  </Button>
+                </>
+              ) : (
+                <p>当前规划中的三项民生问题均已解决。</p>
+              )}
+            </section>
+
+            <section className="homestead-section">
+              <div className="homestead-section__heading">
+                <div>
+                  <p className="farm-kicker">LANDMARK RESTORATION</p>
+                  <h2>{activeTown.nextLandmark?.name ?? '山地热力站已修复'}</h2>
+                </div>
+                <Tag color={activeTown.landmarkComplete ? 'green' : 'blue'}>
+                  阶段 {activeTown.landmarkStage}/3
+                </Tag>
+              </div>
+              {activeTown.nextLandmark ? (
+                <>
+                  <p>
+                    需要解决 {activeTown.nextLandmark.requiredProblems} 项民生问题，
+                    达到 {activeTown.nextLandmark.requiredReputation} 当地声望，
+                    并支付 {activeTown.nextLandmark.coinCost} 金币。
+                  </p>
+                  <div className="homestead-town-requirements">
+                    {activeTown.nextLandmark.requirementsView.map((requirement) => (
+                      <Tag
+                        key={requirement.itemId}
+                        color={requirement.sufficient ? 'green' : 'red'}
+                      >
+                        {ITEM_NAMES[requirement.itemId]}
+                        {' '}{requirement.available}/{requirement.quantity}
+                      </Tag>
+                    ))}
+                  </div>
+                  <Button
+                    type={activeTown.nextLandmark.canRestore ? 'primary' : 'default'}
+                    disabled={actionsBusy || !activeTown.nextLandmark.canRestore}
+                    loading={busyKey === 'town-landmark'}
+                    onClick={() => void act(
+                      { type: 'homestead_restore_town_landmark' },
+                      'town-landmark',
+                      `${activeTown.nextLandmark!.name}已经完成`,
+                    )}
+                  >
+                    修复下一阶段
+                  </Button>
+                </>
+              ) : (
+                <p>热力站全部阶段已经恢复，霜岭公共服务进入稳定运行。</p>
+              )}
+            </section>
+          </div>
+        </>
+      )}
 
       <section className="homestead-section homestead-advice homestead-panel-item homestead-panel-item--today">
         <div className="homestead-section__heading">
@@ -733,6 +1074,105 @@ export function HomesteadScreen() {
         </div>
         <p>{homestead.advice.narrative}</p>
         <blockquote>{homestead.advice.recommendation}</blockquote>
+        <div className="homestead-ai-profile" aria-label="庄园管家偏好">
+          <Checkbox
+            checked={aiProfile.enabled}
+            disabled={actionsBusy}
+            onChange={(event) => void act(
+              {
+                type: 'homestead_update_ai_profile',
+                ...aiProfile,
+                enabled: event.target.checked,
+              },
+              'ai-profile:enabled',
+              event.target.checked ? '庄园管家已启用' : '庄园管家已暂停',
+            )}
+          >
+            启用个性化庄园管家
+          </Checkbox>
+          <label>
+            <span>经营目标</span>
+            <Select
+              value={aiProfile.goal}
+              disabled={actionsBusy || !aiProfile.enabled}
+              options={[
+                { value: 'balanced', label: '均衡发展' },
+                { value: 'wealth', label: '金币积累' },
+                { value: 'reputation', label: '城镇声望' },
+                { value: 'research', label: '研究成长' },
+              ]}
+              onChange={(goal) => void act(
+                {
+                  type: 'homestead_update_ai_profile',
+                  ...aiProfile,
+                  goal,
+                },
+                'ai-profile:goal',
+                '经营目标已更新',
+              )}
+            />
+          </label>
+          <label>
+            <span>风险偏好</span>
+            <Select
+              value={aiProfile.risk}
+              disabled={actionsBusy || !aiProfile.enabled}
+              options={[
+                { value: 'safe', label: '稳健保守' },
+                { value: 'balanced', label: '平衡取舍' },
+                { value: 'bold', label: '积极扩张' },
+              ]}
+              onChange={(risk) => void act(
+                {
+                  type: 'homestead_update_ai_profile',
+                  ...aiProfile,
+                  risk,
+                },
+                'ai-profile:risk',
+                '风险偏好已更新',
+              )}
+            />
+          </label>
+          <label>
+            <span>优先产业</span>
+            <Select
+              value={aiProfile.focus}
+              disabled={actionsBusy || !aiProfile.enabled}
+              options={[
+                { value: 'farm', label: '农场' },
+                { value: 'ranch', label: '牧场' },
+                { value: 'mine', label: '矿山' },
+                { value: 'processing', label: '加工协作' },
+              ]}
+              onChange={(focus) => void act(
+                {
+                  type: 'homestead_update_ai_profile',
+                  ...aiProfile,
+                  focus,
+                },
+                'ai-profile:focus',
+                '优先产业已更新',
+              )}
+            />
+          </label>
+        </div>
+        <div className="homestead-advice-plan" aria-label="今日三步经营计划">
+          {adviceSteps.map((step, index) => (
+            <article key={step.id}>
+              <span>{String(index + 1).padStart(2, '0')}</span>
+              <div>
+                <strong>{step.title}</strong>
+                <small>{step.reason}</small>
+              </div>
+              <Button
+                size="small"
+                onClick={() => openAdviceStep(step.panel, step.targetId)}
+              >
+                前往
+              </Button>
+            </article>
+          ))}
+        </div>
         <p className="homestead-npc-line">
           {homestead.npcs.find(({ npcId }) => npcId === homestead.advice.npcId)
             ?.definition.name ?? '庄园顾问'}：{homestead.advice.npcLine}
@@ -768,7 +1208,10 @@ export function HomesteadScreen() {
         </div>
       </section>
 
-      <section className="homestead-section homestead-panel-item homestead-panel-item--today">
+      <section
+        id="homestead-weather"
+        className="homestead-section homestead-panel-item homestead-panel-item--today"
+      >
         <div className="homestead-section__heading">
           <div>
             <p className="farm-kicker">WEATHER & RESILIENCE</p>
@@ -1090,11 +1533,21 @@ export function HomesteadScreen() {
         </div>
       </section>
 
-      <section className="homestead-section homestead-event homestead-panel-item homestead-panel-item--today">
+      <section
+        id="homestead-world-event"
+        className="homestead-section homestead-event homestead-panel-item homestead-panel-item--today"
+      >
         <div className="homestead-section__heading">
           <div>
             <p className="farm-kicker">WORLD EVENT</p>
             <h2>{homestead.worldEvent.definition.title}</h2>
+          </div>
+          <div className="homestead-heading-tags">
+            {homestead.worldEvent.parameters?.pacingId === 'two_day_follow_up' && (
+              <Tag color="purple">
+                {`\u4e24\u65e5\u8ddf\u8fdb \u00b7 \u7b2c ${Math.min(2, homestead.worldEvent.unresolvedDays + 1)}/2 \u65e5`}
+              </Tag>
+            )}
           </div>
           <Tag color={
             homestead.worldEvent.definition.tone === 'risk'
@@ -1295,7 +1748,10 @@ export function HomesteadScreen() {
         </div>
       </section>
 
-      <section className="homestead-section homestead-panel-item homestead-panel-item--growth">
+      <section
+        id="homestead-research"
+        className="homestead-section homestead-panel-item homestead-panel-item--growth"
+      >
         <div className="homestead-section__heading">
           <div>
             <p className="farm-kicker">RESEARCH TREE</p>
@@ -1639,7 +2095,10 @@ export function HomesteadScreen() {
         </div>
       </section>
 
-      <section className="homestead-section homestead-panel-item homestead-panel-item--operations">
+      <section
+        id="homestead-processing"
+        className="homestead-section homestead-panel-item homestead-panel-item--operations"
+      >
         <div className="homestead-section__heading">
           <div>
             <p className="farm-kicker">FACILITIES</p>
@@ -1871,7 +2330,10 @@ export function HomesteadScreen() {
         </div>
       </section>
 
-      <section className="homestead-section homestead-panel-item homestead-panel-item--operations">
+      <section
+        id="homestead-orders"
+        className="homestead-section homestead-panel-item homestead-panel-item--operations"
+      >
         <div className="homestead-section__heading">
           <div>
             <p className="farm-kicker">JOINT CONTRACTS</p>

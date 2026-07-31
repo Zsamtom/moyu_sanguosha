@@ -16,6 +16,13 @@ const cropIdSchema = z.enum(ALL_FARMING_CROP_IDS);
 const townIdSchema = z.enum(ESTATE_TOWN_IDS);
 const quantitySchema = z.number().int().min(1).max(99);
 const plotIndexSchema = z.number().int().min(0).max(11);
+const plotIndicesSchema = z.array(plotIndexSchema)
+  .min(2)
+  .max(12)
+  .refine(
+    (indices) => new Set(indices).size === indices.length,
+    "田块编号不能重复",
+  );
 const careSchema = z.enum(["water", "weed", "pest"]);
 
 const actionSchema = z.discriminatedUnion("type", [
@@ -30,6 +37,11 @@ const actionSchema = z.discriminatedUnion("type", [
     plotIndex: plotIndexSchema,
   }).strict(),
   z.object({
+    type: z.literal("farming_batch_plant"),
+    cropId: cropIdSchema,
+    plotIndices: plotIndicesSchema,
+  }).strict(),
+  z.object({
     type: z.literal("farming_tend"),
     care: careSchema,
     plotIndex: plotIndexSchema,
@@ -37,6 +49,10 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("farming_harvest"),
     plotIndex: plotIndexSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("farming_batch_harvest"),
+    plotIndices: plotIndicesSchema,
   }).strict(),
   z.object({
     type: z.literal("farming_clear_plot"),

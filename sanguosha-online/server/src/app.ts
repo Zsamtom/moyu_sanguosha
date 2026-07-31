@@ -9,6 +9,8 @@ import { checkDatabase } from "./db.js";
 import { errorHandler, HttpError, notFoundHandler } from "./errors.js";
 import type { FarmService } from "./farm-service.js";
 import type { LlmSettingsService } from "./llm-settings.js";
+import type { LlmGovernanceService } from "./llm-governance.js";
+import type { HomesteadDirectorJobStore } from "./homestead-director-jobs.js";
 import { requireAuth, requirePasswordChangeComplete } from "./middleware/auth.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createAuthRouter } from "./routes/auth.js";
@@ -29,6 +31,8 @@ export function createApplication(options: {
   rooms: RoomService;
   securityEvents: SecurityEvents;
   llmSettings?: LlmSettingsService;
+  llmGovernance?: LlmGovernanceService;
+  directorJobs?: HomesteadDirectorJobStore;
   farm?: FarmService;
 }): Express {
   const {
@@ -39,6 +43,8 @@ export function createApplication(options: {
     rooms,
     securityEvents,
     llmSettings,
+    llmGovernance,
+    directorJobs,
     farm,
   } = options;
   const app = express();
@@ -75,7 +81,17 @@ export function createApplication(options: {
   });
 
   app.use("/api/auth", createAuthRouter(users, securityEvents, rooms));
-  app.use("/api/admin", createAdminRouter(users, securityEvents, rooms, llmSettings));
+  app.use(
+    "/api/admin",
+    createAdminRouter(
+      users,
+      securityEvents,
+      rooms,
+      llmSettings,
+      llmGovernance,
+      directorJobs,
+    ),
+  );
   if (farm) {
     app.use("/api/farm", requireAuth(users), requirePasswordChangeComplete, createFarmRouter(farm));
     app.use("/api/ranch", requireAuth(users), requirePasswordChangeComplete, createRanchRouter(farm));

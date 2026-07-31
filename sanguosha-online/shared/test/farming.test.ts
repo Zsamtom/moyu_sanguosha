@@ -63,6 +63,50 @@ describe("real-time farming engine", () => {
     expect(after.plots[0]).toMatchObject({ ready: true, progress: 1 });
   });
 
+  it("unlocks atomic batch planting and harvesting at farm level 3", () => {
+    const locked = game();
+    expect(() => applyFarmingAction(
+      locked,
+      {
+        type: "farming_batch_plant",
+        cropId: "wheat",
+        plotIndices: [0, 1],
+      },
+      start,
+    )).toThrow("农场达到 3 级后解锁批量播种");
+
+    let state = game();
+    state.level = 3;
+    state.experience = FARMING_LEVEL_EXPERIENCE[2];
+    const revision = state.revision;
+    state = applyFarmingAction(
+      state,
+      {
+        type: "farming_batch_plant",
+        cropId: "wheat",
+        plotIndices: [0, 1, 2],
+      },
+      start,
+    );
+    expect(state.revision).toBe(revision + 1);
+    expect(state.seeds.wheat).toBe(3);
+    expect(state.plots.slice(0, 3).every(({ cropId }) => cropId === "wheat"))
+      .toBe(true);
+
+    state = applyFarmingAction(
+      state,
+      {
+        type: "farming_batch_harvest",
+        plotIndices: [0, 1, 2],
+      },
+      start + FARMING_CROPS.wheat.growthSeconds * 1_000,
+    );
+    expect(state.plots.slice(0, 3).every(({ cropId }) => cropId === null))
+      .toBe(true);
+    expect(state.statistics.harvests).toBe(3);
+    expect(state.logs.at(-1)?.text).toContain("批量收获");
+  });
+
   it("captures estate weather bonuses when a crop is planted", () => {
     let state = applyFarmingAction(
       game(),

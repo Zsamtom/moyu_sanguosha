@@ -195,8 +195,10 @@ export interface FarmGameView {
 export type FarmClientAction =
   | { type: 'farming_buy_seed'; cropId: FarmCropId; quantity: number }
   | { type: 'farming_plant'; cropId: FarmCropId; plotIndex: number }
+  | { type: 'farming_batch_plant'; cropId: FarmCropId; plotIndices: number[] }
   | { type: 'farming_tend'; care: 'water' | 'weed' | 'pest'; plotIndex: number }
   | { type: 'farming_harvest'; plotIndex: number }
+  | { type: 'farming_batch_harvest'; plotIndices: number[] }
   | { type: 'farming_clear_plot'; plotIndex: number }
   | { type: 'farming_sell'; cropId: FarmCropId; quantity: number }
   | { type: 'farming_redeem_mutation'; cropId: FarmCropId; quantity: number }
@@ -713,6 +715,16 @@ export interface HomesteadWorldEventView {
   selectedOptionId: string | null;
   narrative: string;
   source: 'rules' | 'llm';
+  instanceId?: string;
+  rulesVersion?: 1 | 2;
+  parameters?: {
+    pacingId: 'single_day' | 'two_day_follow_up';
+    durationDays: 1 | 2;
+  };
+  startedDayKey: string;
+  durationDays: number;
+  unresolvedDays: number;
+  severity: number;
   definition: {
     id: string;
     title: string;
@@ -1013,6 +1025,19 @@ export interface HomesteadAdviceView {
   npcId: HomesteadNpcId;
   npcLine: string;
   generatedAt: number;
+  steps: Array<{
+    id: string;
+    title: string;
+    reason: string;
+    panel: 'today' | 'operations' | 'growth';
+    targetId:
+      | 'homestead-world-event'
+      | 'homestead-weather'
+      | 'homestead-processing'
+      | 'homestead-orders'
+      | 'homestead-research'
+      | 'homestead-town-local';
+  }>;
 }
 
 export interface HomesteadTownEstateView {
@@ -1227,6 +1252,12 @@ export interface HomesteadGameView {
   season: HomesteadSeasonView;
   collections: HomesteadCollectionView[];
   advice: HomesteadAdviceView;
+  aiProfile: {
+    enabled: boolean;
+    goal: 'balanced' | 'wealth' | 'reputation' | 'research';
+    risk: 'safe' | 'balanced' | 'bold';
+    focus: 'farm' | 'ranch' | 'mine' | 'processing';
+  };
   statistics: {
     jobsStarted: number;
     jobsCollected: number;
@@ -1240,6 +1271,11 @@ export interface HomesteadGameView {
     surveysCompleted: number;
     npcConversations: number;
     seasonRewardsClaimed: number;
+    llmCalls: number;
+    llmFallbacks: number;
+    llmPromptTokens: number;
+    llmCompletionTokens: number;
+    generatedEventsApplied: number;
   };
   logs: Array<{
     id: string;
@@ -1310,6 +1346,35 @@ export type HomesteadClientAction =
       facilityId: HomesteadFacilityId;
     }
   | {
+      type: 'homestead_update_ai_profile';
+      enabled: boolean;
+      goal: 'balanced' | 'wealth' | 'reputation' | 'research';
+      risk: 'safe' | 'balanced' | 'bold';
+      focus: 'farm' | 'ranch' | 'mine' | 'processing';
+    }
+  | {
+      type: 'homestead_start_town_sector';
+      sectorId: HomesteadTownSectorId;
+    }
+  | {
+      type: 'homestead_collect_town_sector';
+      sectorId: HomesteadTownSectorId;
+    }
+  | {
+      type: 'homestead_upgrade_town_sector';
+      sectorId: HomesteadTownSectorId;
+    }
+  | {
+      type: 'homestead_sell_town_resource';
+      resourceId: HomesteadTownResourceId;
+      quantity: number;
+    }
+  | {
+      type: 'homestead_resolve_town_problem';
+      problemId: string;
+    }
+  | { type: 'homestead_restore_town_landmark' }
+  | {
       type: 'homestead_complete_value_route';
       routeId: HomesteadValueRouteId;
     };
@@ -1343,6 +1408,80 @@ export interface LlmSettings {
   timeoutMs: number;
   maximumOutputTokens: number;
   updatedAt: string | null;
+}
+
+export type LlmAuditStatus =
+  | 'success'
+  | 'fallback'
+  | 'failure'
+  | 'skipped';
+
+export interface LlmDecisionAuditEntry {
+  id: string;
+  userId: string | null;
+  feature: 'homestead';
+  townId: string | null;
+  dayKey: string | null;
+  status: LlmAuditStatus;
+  failureReason: string | null;
+  candidateCount: number;
+  selectedEventId: string | null;
+  eventInstanceId: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  latencyMs: number;
+  createdAt: string;
+}
+
+export type HomesteadDirectorJobStatus =
+  | 'pending'
+  | 'processing'
+  | 'applied'
+  | 'obsolete'
+  | 'failed';
+
+export interface HomesteadDirectorJobView {
+  id: string;
+  jobKey: string;
+  userId: string;
+  townId: string;
+  dayKey: string;
+  profile: HomesteadGameView['aiProfile'];
+  disasterId: string | null;
+  status: HomesteadDirectorJobStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface LlmGovernanceSnapshot {
+  policy: {
+    dailyCallLimitPerUser: number;
+    dailyTokenLimitPerUser: number;
+    circuitFailureThreshold: number;
+    circuitCooldownMs: number;
+  };
+  rolling24Hours: {
+    calls: number;
+    successes: number;
+    fallbacks: number;
+    failures: number;
+    skipped: number;
+    promptTokens: number;
+    completionTokens: number;
+  };
+  circuit: {
+    open: boolean;
+    retryAt: string | null;
+    consecutiveFailures: number;
+  };
+  recent: LlmDecisionAuditEntry[];
+  directorJobs?: {
+    counts: Record<HomesteadDirectorJobStatus, number>;
+    recent: HomesteadDirectorJobView[];
+  };
 }
 
 export interface UpdateLlmSettings {

@@ -19,8 +19,10 @@ describe('three-sector interface capability coverage', () => {
     expectActions('FarmScreen.tsx', [
       'farming_buy_seed',
       'farming_plant',
+      'farming_batch_plant',
       'farming_tend',
       'farming_harvest',
+      'farming_batch_harvest',
       'farming_clear_plot',
       'farming_sell',
       'farming_redeem_mutation',
@@ -79,6 +81,13 @@ describe('three-sector interface capability coverage', () => {
       'homestead_switch_town',
       'homestead_buy_merchant_item',
       'homestead_use_acceleration_card',
+      'homestead_update_ai_profile',
+      'homestead_start_town_sector',
+      'homestead_collect_town_sector',
+      'homestead_upgrade_town_sector',
+      'homestead_sell_town_resource',
+      'homestead_resolve_town_problem',
+      'homestead_restore_town_landmark',
       'homestead_complete_value_route',
     ]);
   });

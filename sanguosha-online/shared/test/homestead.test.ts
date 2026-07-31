@@ -4,6 +4,7 @@ import {
   HOMESTEAD_VALUE_ROUTES,
   HOMESTEAD_VALUE_ROUTE_IDS,
   HOMESTEAD_ORDER_TEMPLATES,
+  HOMESTEAD_WORLD_EVENTS,
   MINE_DEPOSIT_IDS,
   RANCH_PRODUCT_IDS,
   HomesteadRuleError,
@@ -13,6 +14,7 @@ import {
   createHomesteadGame,
   createMineGame,
   createRanchGame,
+  compileHomesteadGeneratedEvent,
   getHomesteadGameView,
   getHomesteadProductionRules,
   applyHomesteadWorldEventDecision,
@@ -98,6 +100,220 @@ describe("homestead linked economy", () => {
       { type: "homestead_buy_merchant_item", itemId: "rail_pass" },
       start,
     )).toThrowError(HomesteadRuleError);
+  });
+
+  it("exposes and executes the Frostpeak local industry and landmark chain", () => {
+    const homestead = createHomesteadGame({
+      ownerId,
+      ownerName: "庄主",
+      seed: "frostpeak-local-chain",
+      now: start,
+      townId: "frostpeak",
+    });
+    homestead.reputation = 8;
+    homestead.townNetwork.towns.frostpeak.inventory = {
+      snow_potato: 20,
+      yak_milk: 10,
+      frost_crystal: 10,
+    };
+    const { economy: baseEconomy } = setup();
+    const economy: HomesteadLinkedEconomy = {
+      ...baseEconomy,
+      activeTownId: "frostpeak",
+      unlockedTownIds: ["greenvale", "frostpeak"],
+    };
+
+    const initialView = getHomesteadGameView(homestead, economy, start);
+    const frostpeak = initialView.towns.find(
+      ({ definition }) => definition.id === "frostpeak",
+    )!;
+    expect(frostpeak.sectors).toHaveLength(3);
+    expect(frostpeak.currentProblem?.id).toBe("blocked_supply_road");
+    expect(frostpeak.inventory.snow_potato).toBe(20);
+
+    const started = applyHomesteadAction(
+      homestead,
+      economy,
+      { type: "homestead_start_town_sector", sectorId: "farm" },
+      start,
+    );
+    const collected = applyHomesteadAction(
+      started.homestead,
+      started.economy,
+      { type: "homestead_collect_town_sector", sectorId: "farm" },
+      start + 8 * 60_000,
+    );
+    expect(
+      collected.homestead.townNetwork.towns.frostpeak.inventory.snow_potato,
+    ).toBe(23);
+
+    const upgraded = applyHomesteadAction(
+      collected.homestead,
+      collected.economy,
+      { type: "homestead_upgrade_town_sector", sectorId: "farm" },
+      start + 8 * 60_000 + 1,
+    );
+    expect(
+      upgraded.homestead.townNetwork.towns.frostpeak.sectors.farm.level,
+    ).toBe(2);
+
+    const sold = applyHomesteadAction(
+      upgraded.homestead,
+      upgraded.economy,
+      {
+        type: "homestead_sell_town_resource",
+        resourceId: "snow_potato",
+        quantity: 1,
+      },
+      start + 8 * 60_000 + 2,
+    );
+    expect(sold.economy.coins).toBeGreaterThan(upgraded.economy.coins);
+
+    const resolved = applyHomesteadAction(
+      sold.homestead,
+      sold.economy,
+      {
+        type: "homestead_resolve_town_problem",
+        problemId: "blocked_supply_road",
+      },
+      start + 8 * 60_000 + 3,
+    );
+    expect(resolved.homestead.reputation).toBe(18);
+    expect(
+      resolved.homestead.townNetwork.towns.frostpeak.reputation,
+    ).toBe(18);
+
+    const restored = applyHomesteadAction(
+      resolved.homestead,
+      resolved.economy,
+      { type: "homestead_restore_town_landmark" },
+      start + 8 * 60_000 + 4,
+    );
+    expect(restored.homestead.reputation).toBe(23);
+    expect(
+      restored.homestead.townNetwork.towns.frostpeak.landmarkStage,
+    ).toBe(1);
+    expect(
+      getHomesteadGameView(
+        restored.homestead,
+        restored.economy,
+        start + 8 * 60_000 + 4,
+      ).towns.find(({ active }) => active)?.landmarkStage,
+    ).toBe(1);
+  });
+
+  it("gives new and late-joining estates a complete personal season", () => {
+    const { homestead, economy } = setup();
+    expect(homestead.season.id).toBe("P1");
+    expect(
+      homestead.season.endsAt - homestead.season.startsAt,
+    ).toBe(56 * day);
+
+    const nextSeason = refreshHomesteadGame(
+      homestead,
+      homestead.season.endsAt + 1,
+    );
+    expect(nextSeason.season.id).toBe("P2");
+    expect(nextSeason.season.startsAt).toBe(homestead.season.endsAt);
+
+    const legacyLateJoiner = createHomesteadGame({
+      ownerId,
+      ownerName: "迟到庄主",
+      seed: "late-joiner",
+      now: start,
+    });
+    legacyLateJoiner.season = {
+      id: "S4",
+      startsAt: start - 50 * day,
+      endsAt: start + 6 * day,
+      score: 0,
+      claimedMilestones: [],
+      counters: {
+        jobs: 0,
+        orders: 0,
+        specializations: 0,
+        community: 0,
+      },
+    };
+    const migrated = getHomesteadGameView(
+      legacyLateJoiner,
+      economy,
+      start,
+    );
+    expect(migrated.season.id).toBe("P1");
+    expect(migrated.season.endsAt - migrated.season.startsAt).toBe(56 * day);
+  });
+
+  it("persists player intent for the bounded manor manager", () => {
+    const { homestead, economy } = setup();
+    const updated = applyHomesteadAction(
+      homestead,
+      economy,
+      {
+        type: "homestead_update_ai_profile",
+        enabled: true,
+        goal: "research",
+        risk: "safe",
+        focus: "mine",
+      },
+      start,
+    );
+    expect(updated.homestead.aiProfile).toEqual({
+      enabled: true,
+      goal: "research",
+      risk: "safe",
+      focus: "mine",
+    });
+    expect(
+      getHomesteadGameView(updated.homestead, updated.economy, start)
+        .advice.steps,
+    ).toHaveLength(3);
+  });
+
+  it("compiles only solvable same-town generated event blueprints", () => {
+    const safeTemplate = Object.values(HOMESTEAD_WORLD_EVENTS).find(
+      (definition) =>
+        (definition.townId ?? "greenvale") === "greenvale" &&
+        definition.hazard === undefined &&
+        definition.options.some(
+          (option) =>
+            option.coinCost === 0 &&
+            option.costs.length === 0 &&
+            option.reputationReward >= 0,
+        ),
+    )!;
+    const blueprint = {
+      townId: "greenvale" as const,
+      dayKey: "2026-07-30",
+      templateId: safeTemplate.id,
+      narrative: "  商队根据当前库存，提出了新的合作安排。\n请庄主决定。  ",
+    };
+    const first = compileHomesteadGeneratedEvent(
+      blueprint,
+      [safeTemplate.id],
+    );
+    const second = compileHomesteadGeneratedEvent(
+      blueprint,
+      [safeTemplate.id],
+    );
+    expect(first).toEqual(second);
+    expect(first.instanceId).toContain("generated:greenvale:2026-07-30:");
+    expect(first.narrative).not.toContain("\n");
+    expect(() => compileHomesteadGeneratedEvent(
+      blueprint,
+      [],
+    )).toThrow("未通过候选白名单");
+    const hazardTemplate = Object.values(HOMESTEAD_WORLD_EVENTS).find(
+      (definition) => definition.hazard !== undefined,
+    )!;
+    expect(() => compileHomesteadGeneratedEvent(
+      {
+        ...blueprint,
+        townId: hazardTemplate.townId ?? "greenvale",
+        templateId: hazardTemplate.id,
+      },
+      [hazardTemplate.id],
+    )).toThrow("灾害事件只能由权威天气与规则系统触发");
   });
 
   it("stores only a display-only whitelisted LLM merchant recommendation", () => {
@@ -970,6 +1186,7 @@ describe("homestead linked economy", () => {
     delete legacy.season;
     delete legacy.collections;
     delete legacy.advice;
+    delete legacy.aiProfile;
     delete legacy.townNetwork;
     delete legacy.valueRouteDayKeys;
     delete legacy.weather;
@@ -989,6 +1206,13 @@ describe("homestead linked economy", () => {
     expect(view.research).toHaveLength(10);
     expect(view.specializations.farm.soilHealth).toBe(60);
     expect(view.npcs).toHaveLength(3);
+    expect(view.aiProfile).toEqual({
+      enabled: true,
+      goal: "balanced",
+      risk: "balanced",
+      focus: "processing",
+    });
+    expect(view.advice.steps).toHaveLength(3);
   });
 
   it("rejects malformed persisted state", () => {

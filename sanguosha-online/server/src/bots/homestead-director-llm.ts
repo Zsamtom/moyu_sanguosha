@@ -7,7 +7,11 @@ import {
   getTownDefinition,
   type EstateMerchantItemId,
   type FarmingGameState,
+  type HomesteadAdviceStep,
   type HomesteadGameState,
+  type HomesteadGeneratedEventPacingId,
+  type HomesteadResource,
+  type HomesteadWorldEventOption,
   type HomesteadWorldEventId,
   type MineGameState,
   type RanchGameState,
@@ -39,6 +43,14 @@ export interface HomesteadDirectorMerchantCandidate {
   readonly canBuy?: boolean;
   readonly disabledReason?: string | null;
 }
+
+export interface HomesteadDirectorPlanCandidate extends HomesteadAdviceStep {}
+export interface HomesteadDirectorPacingCandidate {
+  readonly id: HomesteadGeneratedEventPacingId;
+  readonly label: string;
+  readonly durationDays: 1 | 2;
+}
+
 
 export interface HomesteadDirectorContext {
   readonly coins?: number;
@@ -128,6 +140,13 @@ export interface HomesteadDirectorCompactState {
   readonly economicBottlenecks: readonly string[];
   readonly townResources: readonly string[];
   readonly townLandmarkStage: number;
+  readonly planCandidates: readonly HomesteadDirectorPlanCandidate[];
+  readonly pacingCandidates: readonly HomesteadDirectorPacingCandidate[];
+  readonly playerIntent: {
+    readonly goal: string;
+    readonly risk: string;
+    readonly focus: string;
+  };
 }
 
 export interface HomesteadDirectorRequest {
@@ -136,14 +155,45 @@ export interface HomesteadDirectorRequest {
     HomesteadDirectorCandidate
   >;
   /**
-   * This is the server-selected event, not an LLM-selected alternative.
-   * Keeping the fallback field preserves the previous caller contract.
+   * Deterministic server fallback used when the optional model is unavailable
+   * or returns an invalid candidate.
    */
   readonly fallback: HomesteadDirectorCandidate;
 }
 
 function total(values: Record<string, number>): number {
   return Object.values(values).reduce((sum, value) => sum + value, 0);
+}
+
+function eventOptionExecutable(
+  option: HomesteadWorldEventOption,
+  homestead: HomesteadGameState,
+  farm: FarmingGameState,
+  ranch: RanchGameState,
+  mine: MineGameState,
+  coins: number,
+): boolean {
+  if (
+    option.coinCost > coins ||
+    homestead.reputation + option.reputationReward < 0
+  ) {
+    return false;
+  }
+  const available = (resource: HomesteadResource): number => {
+    if (resource.source === "goods") {
+      return homestead.goods[resource.itemId] ?? 0;
+    }
+    if (resource.source === "farm") {
+      return farm.produce[resource.itemId] ?? 0;
+    }
+    if (resource.source === "ranch") {
+      return ranch.products[resource.itemId] ?? 0;
+    }
+    return mine.ores[resource.itemId] ?? 0;
+  };
+  return option.costs.every(
+    (resource) => available(resource) >= resource.quantity,
+  );
 }
 
 function compactText(value: string, limit: number): string {
@@ -245,8 +295,8 @@ function economicBottlenecks(input: {
 
 /**
  * Projects authoritative game/account state into a bounded, privacy-safe
- * prompt. The current event is the only event candidate, so the model cannot
- * select weather, disasters, rewards, prices, or any other rules outcome.
+ * prompt. Normal events may expose a small same-town template whitelist;
+ * weather, disasters, rewards, prices, and all option effects remain fixed.
  */
 export function createHomesteadDirectorDecision(
   homestead: HomesteadGameState,
@@ -264,7 +314,12 @@ export function createHomesteadDirectorDecision(
   ) {
     return null;
   }
+  if (homestead.aiProfile?.enabled === false) return null;
 
+  const activeTownId = homestead.townId ??
+    homestead.townNetwork?.activeTownId ??
+    "greenvale";
+  const availableCoins = context?.coins ?? farm.coins;
   const eventDefinition =
     HOMESTEAD_WORLD_EVENTS[homestead.worldEvent.eventId];
   const fixedEvent: HomesteadDirectorCandidate = {
@@ -272,16 +327,61 @@ export function createHomesteadDirectorDecision(
     title: eventDefinition.title,
     tone: eventDefinition.tone,
   };
+  const eventCandidates: HomesteadDirectorCandidate[] =
+    homestead.disaster || eventDefinition.hazard
+      ? [fixedEvent]
+      : [
+          fixedEvent,
+          ...Object.values(HOMESTEAD_WORLD_EVENTS)
+            .filter((candidate) => {
+              const candidateTownId =
+                candidate.townId ?? "greenvale";
+              return (
+                candidate.id !== fixedEvent.eventId &&
+                candidateTownId === activeTownId &&
+                candidate.hazard === undefined &&
+                candidate.options.some(
+                  (option) => eventOptionExecutable(
+                    option,
+                    homestead,
+                    farm,
+                    ranch,
+                    mine,
+                    availableCoins,
+                  ),
+                )
+              );
+            })
+            .slice(0, 3)
+            .map((candidate) => ({
+              eventId: candidate.id,
+              title: candidate.title,
+              tone: candidate.tone,
+            })),
+        ];
   const production = getHomesteadProductionRules(homestead);
-  const activeTownId = homestead.townId ??
-    homestead.townNetwork?.activeTownId ??
-    "greenvale";
+  const pacingCandidates: readonly HomesteadDirectorPacingCandidate[] = [
+    {
+      id: "single_day",
+      label: "single-day resolution",
+      durationDays: 1,
+    },
+    ...(
+      homestead.disaster || eventDefinition.hazard
+        ? []
+        : [{
+            id: "two_day_follow_up" as const,
+            label: "two-day follow-up",
+            durationDays: 2 as const,
+          }]
+    ),
+  ];
   const townDefinition = getTownDefinition(activeTownId);
   const activeTown = homestead.townNetwork?.towns[activeTownId];
   const farmStock = total(farm.produce);
   const ranchStock = total(ranch.products);
   const mineStock = total(mine.ores);
-  const coins = context?.coins ?? farm.coins;
+  const coins = availableCoins;
   const merchantRenown = context?.merchantRenown ??
     homestead.townNetwork?.merchantRenown ??
     0;
@@ -300,6 +400,61 @@ export function createHomesteadDirectorDecision(
         ),
       }
     : null;
+  const planCandidates: HomesteadDirectorPlanCandidate[] = [
+    {
+      id: "review-event",
+      title: "处理今日事件",
+      reason: homestead.disaster
+        ? "当前事件与持续灾害相关，应先确认可行处置方案。"
+        : "事件选择会影响今天的资源和发展节奏。",
+      panel: "today",
+      targetId: "homestead-world-event",
+    },
+    {
+      id: "review-weather",
+      title: "核对环境影响",
+      reason: homestead.disaster
+        ? "灾害正在影响产业与物流，需要确认减产和工期变化。"
+        : "天气效果会在生产开始时固化到本轮。",
+      panel: "today",
+      targetId: "homestead-weather",
+    },
+    {
+      id: "stabilize-processing",
+      title: "安排加工队列",
+      reason:
+        farmStock + ranchStock + mineStock < 12
+          ? "当前基础库存偏紧，先处理短链加工和已完成任务。"
+          : "基础库存能够支撑加工，适合减少设施空转。",
+      panel: "operations",
+      targetId: "homestead-processing",
+    },
+    {
+      id: "review-orders",
+      title: "检查联合订单",
+      reason: logistics?.remaining
+        ? `今日仍有 ${logistics.remaining} 点物流容量可分配。`
+        : "核对订单缺口，为下一次物流恢复提前备货。",
+      panel: "operations",
+      targetId: "homestead-orders",
+    },
+    {
+      id: "prepare-growth",
+      title: "规划下一项研究",
+      reason: "将研究点投入当前最明显的三业瓶颈。",
+      panel: "growth",
+      targetId: "homestead-research",
+    },
+    ...(activeTownId === "frostpeak"
+      ? [{
+          id: "frostpeak-local-chain",
+          title: "推进霜岭本地协作",
+          reason: "核对本地物资、民生问题和热力站修复进度。",
+          panel: "operations" as const,
+          targetId: "homestead-town-local" as const,
+        }]
+      : []),
+  ];
 
   return {
     input: {
@@ -408,8 +563,15 @@ export function createHomesteadDirectorDecision(
             .slice(0, 24)
           : [],
         townLandmarkStage: activeTown?.landmarkStage ?? 0,
+        planCandidates,
+        pacingCandidates,
+        playerIntent: {
+          goal: homestead.aiProfile?.goal ?? "balanced",
+          risk: homestead.aiProfile?.risk ?? "balanced",
+          focus: homestead.aiProfile?.focus ?? "processing",
+        },
       },
-      candidates: [fixedEvent],
+      candidates: eventCandidates,
     },
     fallback: fixedEvent,
   };
@@ -417,11 +579,14 @@ export function createHomesteadDirectorDecision(
 
 const SYSTEM_PROMPT = [
   "你是多城镇三业庄园的每日叙事导演。",
-  "服务器已经决定了当前事件、真实天气、灾害、数值倍率、价格、成本和奖励；你不得改选、改写或新增这些规则。",
-  "你只能依据当前城镇、农场、牧场、矿山、天气与灾害、物流容量、经济瓶颈和最近操作，生成展示用叙事与经营建议。",
+  "服务器已经提供了合法事件模板候选，并决定了真实天气、灾害、数值倍率、价格、成本和奖励；你只能选择候选索引，不得改写或新增规则。",
+  "若只有一个事件候选，i 必须为 0；若有多个候选，根据当前城镇状态选择最相关的一项。",
+  "你可以依据当前城镇、农场、牧场、矿山、天气与灾害、物流容量、玩家目标、经济瓶颈和最近操作，生成展示用叙事与经营建议。",
   "商店建议只能填写 shopOptions 中的索引 s；它只是展示建议，不会自动购买或生效。",
   "不得编造物品、NPC、城镇、灾害、奖励、成本、价格、倍率或产量数字。",
-  "只返回 JSON：{\"i\":0,\"t\":\"短标题\",\"n\":\"不超过120字的叙事\",\"a\":\"不超过80字的经营建议\",\"l\":\"不超过50字的NPC台词\",\"s\":0}。没有合适商店建议时省略 s。",
+  "从 planOptions 中选择三个不同索引，按执行顺序写入 p；这些索引只用于跳转到服务器已有功能。",
+  "只返回 JSON：{\"i\":0,\"t\":\"短标题\",\"n\":\"不超过120字的叙事\",\"a\":\"不超过80字的经营建议\",\"l\":\"不超过50字的NPC台词\",\"p\":[0,2,4],\"s\":0}。i 必须来自 eventOptions；没有合适商店建议时省略 s。",
+  " Set v to an index from pacingOptions. Never emit a raw duration, reward, cost, price, multiplier, or quantity.",
 ].join("");
 
 function compactPrompt(
@@ -433,23 +598,29 @@ function compactPrompt(
   const fixedEvent = input.candidates[0];
   return JSON.stringify({
     authority: {
-      event: "server_fixed",
+      event: "server_whitelisted_templates",
       weather: "server_fixed",
       disaster: "server_fixed",
       economy: "server_fixed",
-      llmOutput: "presentation_only",
+      llmOutput: "server_whitelist_indices_and_presentation",
     },
     state: input.state,
-    fixedEvent: fixedEvent
-      ? {
-          i: 0,
-          id: fixedEvent.eventId,
-          title: fixedEvent.title,
-          tone: fixedEvent.tone,
-        }
-      : null,
+    eventOptions: input.candidates.map((candidate, index) => ({
+      i: index,
+      id: candidate.eventId,
+      title: candidate.title,
+      tone: candidate.tone,
+    })),
+    pacingOptions: input.state.pacingCandidates.map((candidate, index) => ({
+      v: index,
+      ...candidate,
+    })),
     shopOptions: input.state.merchantCandidates.map((candidate, index) => ({
       s: index,
+      ...candidate,
+    })),
+    planOptions: input.state.planCandidates.map((candidate, index) => ({
+      p: index,
       ...candidate,
     })),
   });
@@ -472,6 +643,9 @@ function estimateTokens(value: string): number {
 function parseCandidate(
   completion: string,
   merchantCandidateIds: readonly EstateMerchantItemId[],
+  planCandidateCount: number,
+  pacingCandidateIds: readonly HomesteadGeneratedEventPacingId[],
+  eventCandidateCount: number,
 ): {
   index: number | null;
   reason?: BotDecisionFailureReason;
@@ -487,13 +661,27 @@ function parseCandidate(
       n?: unknown;
       a?: unknown;
       l?: unknown;
+      p?: unknown;
       s?: unknown;
+      v?: unknown;
     };
-    // The event has already been fixed by the server. Index zero is the only
-    // legal value even if a future caller accidentally supplies more events.
-    if (value.i !== 0) {
+    if (
+      !Number.isSafeInteger(value.i) ||
+      Number(value.i) < 0 ||
+      Number(value.i) >= eventCandidateCount
+    ) {
       return { index: null, reason: "invalid_candidate" };
     }
+    const rawPacingIndex = value.v === undefined ? 0 : value.v;
+    if (
+      !Number.isSafeInteger(rawPacingIndex) ||
+      Number(rawPacingIndex) < 0 ||
+      Number(rawPacingIndex) >= pacingCandidateIds.length
+    ) {
+      return { index: null, reason: "invalid_candidate" };
+    }
+    const eventPacingId = pacingCandidateIds[Number(rawPacingIndex)]!;
+
     const safeText = (candidate: unknown, limit: number): string | undefined => {
       if (typeof candidate !== "string") return undefined;
       const text = compactText(candidate, limit);
@@ -505,13 +693,31 @@ function parseCandidate(
         Number(value.s) < merchantCandidateIds.length
         ? merchantCandidateIds[Number(value.s)]
         : undefined;
+    const rawPlanStepIndices = value.p === undefined
+      ? [0, 1, 2]
+      : value.p;
+    if (
+      !Array.isArray(rawPlanStepIndices) ||
+      rawPlanStepIndices.length !== 3 ||
+      rawPlanStepIndices.some(
+        (index) =>
+          !Number.isSafeInteger(index) ||
+          Number(index) < 0 ||
+          Number(index) >= planCandidateCount,
+      ) ||
+      new Set(rawPlanStepIndices).size !== rawPlanStepIndices.length
+    ) {
+      return { index: null, reason: "invalid_candidate" };
+    }
     return {
-      index: 0,
+      index: Number(value.i),
       presentation: {
         title: safeText(value.t, 60),
         narrative: safeText(value.n, 160),
         recommendation: safeText(value.a, 100),
         npcLine: safeText(value.l, 80),
+        planStepIndices: rawPlanStepIndices.map(Number),
+        eventPacingId,
         ...(merchantRecommendationId
           ? { merchantRecommendationId }
           : {}),
@@ -552,6 +758,8 @@ export class OpenAiCompatibleHomesteadDirectorProvider implements
       .map(({ itemId }) => itemId)
       .filter(isMerchantItemId);
     const usage = { promptTokens: 0, completionTokens: 0 };
+    const pacingCandidateIds = input.state.pacingCandidates
+      .map(({ id }) => id);
     let failureReason: BotDecisionFailureReason = "invalid_json";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const instruction = attempt === 0
@@ -561,10 +769,16 @@ export class OpenAiCompatibleHomesteadDirectorProvider implements
       const completion = responseText(payload) ?? "";
       usage.promptTokens += estimateTokens(`${instruction}\n${prompt}`);
       usage.completionTokens += estimateTokens(completion);
-      const parsed = parseCandidate(completion, merchantCandidateIds);
+      const parsed = parseCandidate(
+        completion,
+        merchantCandidateIds,
+        input.state.planCandidates.length,
+        pacingCandidateIds,
+        input.candidates.length,
+      );
       if (parsed.index !== null) {
         return {
-          candidateIndex: 0,
+          candidateIndex: parsed.index,
           usage,
           presentation: parsed.presentation,
         };

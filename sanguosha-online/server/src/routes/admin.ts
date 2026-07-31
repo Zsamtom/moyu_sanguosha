@@ -8,6 +8,8 @@ import {
   requirePasswordChangeComplete,
 } from "../middleware/auth.js";
 import type { LlmSettingsService } from "../llm-settings.js";
+import type { LlmGovernanceService } from "../llm-governance.js";
+import type { HomesteadDirectorJobStore } from "../homestead-director-jobs.js";
 import type { SecurityEvents } from "../security-events.js";
 import type { RoomService } from "../rooms.js";
 import type { UserStore } from "../users.js";
@@ -52,6 +54,8 @@ export function createAdminRouter(
   securityEvents: SecurityEvents,
   rooms: RoomService,
   llmSettings?: LlmSettingsService,
+  llmGovernance?: LlmGovernanceService,
+  directorJobs?: HomesteadDirectorJobStore,
 ): Router {
   const router = Router();
   router.use(requireAuth(users), requirePasswordChangeComplete, requireAdmin);
@@ -114,6 +118,24 @@ export function createAdminRouter(
             : "DeepSeek 连接失败，请检查 API Key 和网络",
         );
       }
+    }));
+  }
+
+  if (llmGovernance) {
+    router.get("/llm-usage", asyncHandler(async (request, response) => {
+      const limit = z.coerce.number().int().min(1).max(100)
+        .default(25)
+        .parse(request.query.limit);
+      const [usage, jobs] = await Promise.all([
+        llmGovernance.snapshot(limit),
+        directorJobs?.snapshot(limit),
+      ]);
+      response.set("Cache-Control", "no-store").json({
+        usage: {
+          ...usage,
+          ...(jobs ? { directorJobs: jobs } : {}),
+        },
+      });
     }));
   }
 

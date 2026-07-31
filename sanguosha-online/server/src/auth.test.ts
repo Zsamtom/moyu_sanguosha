@@ -10,6 +10,11 @@ import {
   LlmSettingsService,
   MemoryLlmSettingsStore,
 } from "./llm-settings.js";
+import {
+  LlmGovernanceService,
+  MemoryLlmGovernanceStore,
+} from "./llm-governance.js";
+import { MemoryHomesteadDirectorJobStore } from "./homestead-director-jobs.js";
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
 import type {
@@ -172,6 +177,8 @@ describe("account allocation and authorization", () => {
   let users: MemoryUserStore;
   let app: ReturnType<typeof createApplication>;
   let botDecisions: BotDecisionRegistry;
+  let llmGovernance: LlmGovernanceService;
+  let directorJobs: MemoryHomesteadDirectorJobStore;
 
   beforeEach(async () => {
     users = new MemoryUserStore();
@@ -193,6 +200,10 @@ describe("account allocation and authorization", () => {
       })),
     );
     await llmSettings.initialize();
+    llmGovernance = new LlmGovernanceService(
+      new MemoryLlmGovernanceStore(),
+    );
+    directorJobs = new MemoryHomesteadDirectorJobStore();
     app = createApplication({
       config,
       pool: { query: async () => ({ rows: [{ "?column?": 1 }] }) } as never,
@@ -201,6 +212,8 @@ describe("account allocation and authorization", () => {
       rooms: new RoomService(),
       securityEvents: new SecurityEvents(),
       llmSettings,
+      llmGovernance,
+      directorJobs,
     });
   });
 
@@ -222,6 +235,74 @@ describe("account allocation and authorization", () => {
     await request(app).post("/api/auth/register").send({}).expect(404);
     const response = await request(app).get("/api/admin/users").expect(401);
     expect(response.body.error.code).toBe("UNAUTHENTICATED");
+    await request(app).get("/api/admin/llm-usage").expect(401);
+  });
+
+  it("exposes bounded LLM usage audits only to administrators", async () => {
+    await llmGovernance.record({
+      userId: PLAYER_ID,
+      feature: "homestead",
+      townId: "greenvale",
+      dayKey: "2026-07-31",
+      status: "success",
+      candidateCount: 3,
+      selectedEventId: "harvest_festival",
+      promptTokens: 120,
+      completionTokens: 20,
+      latencyMs: 350,
+    });
+    await directorJobs.enqueue({
+      jobKey: "homestead:v2:admin-audit-test",
+      userId: PLAYER_ID,
+      townId: "greenvale",
+      dayKey: "2026-07-31",
+      profile: {
+        enabled: true,
+        goal: "balanced",
+        risk: "balanced",
+        focus: "processing",
+      },
+      disasterId: null,
+    });
+
+
+    const playerAgent = request.agent(app);
+    await playerAgent.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    await playerAgent.get("/api/admin/llm-usage").expect(403);
+
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+    const response = await adminAgent
+      .get("/api/admin/llm-usage?limit=10")
+      .expect(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body.usage).toMatchObject({
+      rolling24Hours: {
+        calls: 1,
+        successes: 1,
+        promptTokens: 120,
+        completionTokens: 20,
+      },
+      directorJobs: {
+        counts: {
+          pending: 1,
+          processing: 0,
+          applied: 0,
+          obsolete: 0,
+          failed: 0,
+        },
+      },
+      recent: [{
+        userId: PLAYER_ID,
+        feature: "homestead",
+        status: "success",
+        selectedEventId: "harvest_festival",
+      }],
+    });
   });
 
   it("allows only admins to allocate, disable and reset player accounts", async () => {
