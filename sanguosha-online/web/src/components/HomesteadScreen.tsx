@@ -330,7 +330,9 @@ function FacilityStatus({
 export function canCommitHomesteadSnapshot(
   next: HomesteadSnapshot,
   current?: HomesteadSnapshot,
+  authoritative = false,
 ): boolean {
+  if (authoritative) return true;
   return isTownRevisionVectorAtLeast(
     next.homestead.activeTownId,
     [
@@ -353,6 +355,20 @@ export function canCommitHomesteadSnapshot(
   );
 }
 
+export async function runHomesteadActionWithConflictRetry<T>(
+  initialSnapshot: HomesteadSnapshot,
+  apply: (snapshot: HomesteadSnapshot) => Promise<T>,
+  refresh: () => Promise<HomesteadSnapshot>,
+): Promise<{ result: T; retried: boolean }> {
+  try {
+    return { result: await apply(initialSnapshot), retried: false };
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 409) throw error;
+    const latestSnapshot = await refresh();
+    return { result: await apply(latestSnapshot), retried: true };
+  }
+}
+
 export function HomesteadScreen() {
   const [snapshot, setSnapshot] = useState<HomesteadSnapshot>();
   const [loading, setLoading] = useState(true);
@@ -370,9 +386,12 @@ export function HomesteadScreen() {
   const actionInFlight = useRef(false);
   const loadRequestSequence = useRef(0);
 
-  const commitSnapshot = (next: HomesteadSnapshot): boolean => {
+  const commitSnapshot = (
+    next: HomesteadSnapshot,
+    authoritative = false,
+  ): boolean => {
     const current = snapshotRef.current;
-    if (!canCommitHomesteadSnapshot(next, current)) return false;
+    if (!canCommitHomesteadSnapshot(next, current, authoritative)) return false;
     const townChanged = Boolean(
       current &&
       current.homestead.activeTownId !== next.homestead.activeTownId,
@@ -388,19 +407,25 @@ export function HomesteadScreen() {
     return true;
   };
 
-  const load = async (quiet = false, allowDuringAction = false) => {
-    if (quiet && actionInFlight.current && !allowDuringAction) return;
+  const load = async (
+    quiet = false,
+    allowDuringAction = false,
+    authoritative = false,
+  ): Promise<HomesteadSnapshot | undefined> => {
+    if (quiet && actionInFlight.current && !allowDuringAction) return undefined;
     const requestId = ++loadRequestSequence.current;
     if (quiet) setQuietLoading(true);
     else setLoading(true);
+    let committed: HomesteadSnapshot | undefined;
     try {
       const next = await api.getHomestead();
       if (
         isLatestRequest(requestId, loadRequestSequence.current) &&
         (allowDuringAction || !actionInFlight.current) &&
-        commitSnapshot(next)
+        commitSnapshot(next, authoritative)
       ) {
         setFailure(undefined);
+        committed = next;
       }
     } catch (error) {
       if (
@@ -413,6 +438,7 @@ export function HomesteadScreen() {
       setLoading(false);
       setQuietLoading(false);
     }
+    return committed;
   };
 
   useEffect(() => {
@@ -435,29 +461,33 @@ export function HomesteadScreen() {
     actionInFlight.current = true;
     loadRequestSequence.current += 1;
     setBusyKey(key);
-    let refreshAfterAction = false;
     try {
-      const next = await api.applyHomesteadAction(current, action);
-      commitSnapshot(next);
+      const outcome = await runHomesteadActionWithConflictRetry(
+        current,
+        (baseSnapshot) => api.applyHomesteadAction(baseSnapshot, action),
+        async () => {
+          toast.warning('\u5e84\u56ed\u72b6\u6001\u5df2\u53d8\u5316\uff0c\u6b63\u5728\u540c\u6b65\u5e76\u91cd\u65b0\u6267\u884c\u672c\u6b21\u64cd\u4f5c');
+          const refreshed = await load(true, true, true);
+          if (!refreshed) {
+            throw new Error('\u65e0\u6cd5\u83b7\u53d6\u6700\u65b0\u5e84\u56ed\u72b6\u6001\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
+          }
+          return refreshed;
+        },
+      );
+      commitSnapshot(outcome.result, true);
       setFailure(undefined);
-      toast.success(success);
+      toast.success(
+        outcome.retried
+          ? `${success}\uff08\u5df2\u540c\u6b65\u6700\u65b0\u72b6\u6001\uff09`
+          : success,
+      );
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        refreshAfterAction = true;
-        toast.warning('庄园状态已经变化，正在为你刷新');
-      } else {
-        const text = errorMessage(error);
-        setFailure(text);
-        toast.error(text);
-      }
+      const text = error instanceof ApiError && error.status === 409
+        ? '\u5e84\u56ed\u72b6\u6001\u4ecd\u5728\u53d8\u5316\uff0c\u8bf7\u7a0d\u540e\u91cd\u65b0\u64cd\u4f5c'
+        : errorMessage(error);
+      setFailure(text);
+      toast.error(text);
     } finally {
-      if (!refreshAfterAction) {
-        actionInFlight.current = false;
-        setBusyKey(undefined);
-      }
-    }
-    if (refreshAfterAction) {
-      await load(true, true);
       actionInFlight.current = false;
       setBusyKey(undefined);
     }

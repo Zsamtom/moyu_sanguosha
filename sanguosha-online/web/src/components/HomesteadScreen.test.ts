@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { ApiError } from '../api';
 import type { HomesteadSnapshot } from '../types';
 import {
   canCommitHomesteadSnapshot,
@@ -7,6 +8,7 @@ import {
   formatHomesteadDuration,
   formatWeatherObservedAt,
   isWeatherMechanicsEnabled,
+  runHomesteadActionWithConflictRetry,
 } from './HomesteadScreen';
 
 describe('HomesteadScreen helpers', () => {
@@ -105,6 +107,38 @@ describe('HomesteadScreen helpers', () => {
       snapshot('greenvale', [11, 49, 61, 35, 16]),
       snapshot('greenvale', [10, 50, 60, 35, 16]),
     )).toBe(false);
+    expect(canCommitHomesteadSnapshot(
+      snapshot('greenvale', [9, 1, 1, 1, 1]),
+      snapshot('greenvale', [10, 50, 60, 35, 16]),
+      true,
+    )).toBe(true);
+  });
+
+  it('refreshes authoritatively and retries a stale action only once', async () => {
+    const initial = { homestead: { revision: 5 } } as unknown as HomesteadSnapshot;
+    const latest = { homestead: { revision: 6 } } as unknown as HomesteadSnapshot;
+    const apply = vi.fn()
+      .mockRejectedValueOnce(new ApiError('stale', 409, 'STALE_REVISION'))
+      .mockResolvedValueOnce('applied');
+    const refresh = vi.fn().mockResolvedValue(latest);
+
+    await expect(runHomesteadActionWithConflictRetry(
+      initial,
+      apply,
+      refresh,
+    )).resolves.toEqual({ result: 'applied', retried: true });
+    expect(apply).toHaveBeenNthCalledWith(1, initial);
+    expect(apply).toHaveBeenNthCalledWith(2, latest);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    const stillStale = vi.fn()
+      .mockRejectedValue(new ApiError('stale', 409, 'STALE_REVISION'));
+    await expect(runHomesteadActionWithConflictRetry(
+      initial,
+      stillStale,
+      refresh,
+    )).rejects.toMatchObject({ status: 409 });
+    expect(stillStale).toHaveBeenCalledTimes(2);
   });
 
   it('keeps every supported modular homestead action reachable from the interface', () => {
