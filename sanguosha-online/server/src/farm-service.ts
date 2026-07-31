@@ -3108,15 +3108,30 @@ export class FarmService {
     bundle: TownEstateBundle,
   ): EstateAccountState {
     const account = structuredClone(state);
-    const previous = JSON.stringify({
-      coins: account.coins,
-      researchPoints: account.researchPoints,
-      merchantRenown: account.merchantRenown,
-      research: account.unlockedResearchIds,
-      progress: account.townProgress[bundle.townId],
-      shopRecommendationId: account.shopRecommendationId,
-      shopRecommendationSource: account.shopRecommendationSource,
-    });
+    const fingerprint = (value: EstateAccountState): string => {
+      const progress = value.townProgress[bundle.townId];
+      return JSON.stringify([
+        value.coins,
+        value.researchPoints,
+        value.merchantRenown,
+        [...value.unlockedResearchIds].sort(),
+        progress
+          ? [
+              progress.unlocked,
+              progress.unlockedAt,
+              progress.localReputation,
+              progress.farmLevel,
+              progress.ranchLevel,
+              progress.mineLevel,
+              progress.landmarkStage,
+              progress.lastVisitedAt,
+            ]
+          : null,
+        value.shopRecommendationId,
+        value.shopRecommendationSource,
+      ]);
+    };
+    const previous = fingerprint(account);
     account.coins = bundle.farm.coins;
     account.researchPoints = bundle.homestead.researchPoints;
     account.merchantRenown =
@@ -3158,15 +3173,7 @@ export class FarmService {
       lastVisitedAt:
         account.townProgress[bundle.townId]?.lastVisitedAt ?? this.clock(),
     };
-    const next = JSON.stringify({
-      coins: account.coins,
-      researchPoints: account.researchPoints,
-      merchantRenown: account.merchantRenown,
-      research: account.unlockedResearchIds,
-      progress: account.townProgress[bundle.townId],
-      shopRecommendationId: account.shopRecommendationId,
-      shopRecommendationSource: account.shopRecommendationSource,
-    });
+    const next = fingerprint(account);
     if (previous !== next) {
       account.revision += 1;
       account.updatedAt = Math.max(account.updatedAt, this.clock());

@@ -1201,6 +1201,52 @@ describe("real-time FarmService", () => {
     expect(unchanged.homestead.emergencyBoosts.farm).toBe(false);
   });
 
+  it("does not advance the account revision when JSONB reorders town progress fields", async () => {
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const snapshot = await service.getOrCreateHomestead(user);
+    const account = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const progress = account.townProgress.greenvale!;
+    account.townProgress.greenvale = {
+      lastVisitedAt: progress.lastVisitedAt,
+      landmarkStage: progress.landmarkStage,
+      mineLevel: progress.mineLevel,
+      ranchLevel: progress.ranchLevel,
+      farmLevel: progress.farmLevel,
+      localReputation: progress.localReputation,
+      unlockedAt: progress.unlockedAt,
+      unlocked: progress.unlocked,
+    };
+    store.setRawEstateAccount(user.id, account);
+
+    const updated = await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      snapshot.homestead.accountRevision,
+      {
+        type: "homestead_update_ai_profile",
+        enabled: true,
+        goal: "wealth",
+        risk: "safe",
+        focus: "farm",
+      },
+      "greenvale",
+    );
+
+    expect(updated.homestead.aiProfile.goal).toBe("wealth");
+    expect(updated.homestead.accountRevision).toBe(
+      snapshot.homestead.accountRevision,
+    );
+  });
+
   it("persists cross-day disaster reputation loss to the town and account", async () => {
     let now = start;
     const store = new MemoryFarmStateStore();
