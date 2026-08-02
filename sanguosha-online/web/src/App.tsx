@@ -4,10 +4,7 @@ import { api, ApiError, errorMessage } from './api';
 import { AppShell } from './components/AppShell';
 import { ChangePasswordModal, RequiredPasswordChangeScreen } from './components/ChangePasswordScreen';
 import { HomesteadNav, type HomesteadView } from './components/HomesteadNav';
-import { LobbyScreen } from './components/LobbyScreen';
 import { LoginScreen } from './components/LoginScreen';
-import { RoomScreen } from './components/RoomScreen';
-import { RoomChat } from './components/RoomChat';
 import {
   digitBombViewForRoom,
   numberConnectViewForRoom,
@@ -31,7 +28,9 @@ import type {
   RoomDetail,
   RoomRuleConfig,
   RoomSummary,
+  TownWeatherSettings,
   UpdateLlmSettings,
+  UpdateTownWeatherSettings,
 } from './types';
 import {
   isDigitBombGameView,
@@ -66,6 +65,12 @@ const MineScreen = lazy(() => import('./components/MineScreen')
   .then(({ MineScreen: component }) => ({ default: component })));
 const HomesteadScreen = lazy(() => import('./components/HomesteadScreen')
   .then(({ HomesteadScreen: component }) => ({ default: component })));
+const LobbyScreen = lazy(() => import('./components/LobbyScreen')
+  .then(({ LobbyScreen: component }) => ({ default: component })));
+const RoomScreen = lazy(() => import('./components/RoomScreen')
+  .then(({ RoomScreen: component }) => ({ default: component })));
+const RoomChat = lazy(() => import('./components/RoomChat')
+  .then(({ RoomChat: component }) => ({ default: component })));
 
 const llmFallbackMessages: Record<LlmFailureReason, string> = {
   timeout: '大模型请求超时，已提供规则推荐',
@@ -114,6 +119,8 @@ export default function App() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
   const [llmSettingsLoading, setLlmSettingsLoading] = useState(false);
+  const [townWeatherSettings, setTownWeatherSettings] = useState<TownWeatherSettings>();
+  const [townWeatherSettingsLoading, setTownWeatherSettingsLoading] = useState(false);
   const [llmUsage, setLlmUsage] = useState<LlmGovernanceSnapshot>();
   const [llmUsageLoading, setLlmUsageLoading] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -180,6 +187,17 @@ export default function App() {
       toast.error(errorMessage(error));
     } finally {
       setLlmSettingsLoading(false);
+    }
+  }, [toast]);
+
+  const refreshTownWeatherSettings = useCallback(async () => {
+    setTownWeatherSettingsLoading(true);
+    try {
+      setTownWeatherSettings(await api.getTownWeatherSettings());
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setTownWeatherSettingsLoading(false);
     }
   }, [toast]);
 
@@ -534,6 +552,39 @@ export default function App() {
     }
   };
 
+  const saveTownWeatherSettings = async (
+    values: UpdateTownWeatherSettings,
+  ) => {
+    try {
+      const updated = await api.updateTownWeatherSettings(values);
+      setTownWeatherSettings(updated);
+      toast.success(
+        updated.enabled ? '和风天气与逐日预报已启用' : '天气配置已保存',
+      );
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
+  const testTownWeatherConnection = async (
+    values: Partial<
+      Omit<UpdateTownWeatherSettings, 'enabled' | 'clearApiKey'>
+    >,
+  ) => {
+    try {
+      const result = await api.testTownWeatherConnection(values);
+      toast.success(
+        `两镇天气连接成功 · ${result.towns.map((town) =>
+          `${town.cityName} ${town.forecastDayCount} 日预报`
+        ).join(' / ')} · ${result.latencyMs} ms`,
+      );
+    } catch (error) {
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  };
+
   if (booting) {
     return (
       <div className="boot-screen">
@@ -703,13 +754,18 @@ export default function App() {
             loading={usersLoading}
             llmSettings={llmSettings}
             llmSettingsLoading={llmSettingsLoading}
+            townWeatherSettings={townWeatherSettings}
+            townWeatherSettingsLoading={townWeatherSettingsLoading}
             llmUsage={llmUsage}
             llmUsageLoading={llmUsageLoading}
             onRefresh={refreshUsers}
             onRefreshLlmSettings={refreshLlmSettings}
+            onRefreshTownWeatherSettings={refreshTownWeatherSettings}
             onRefreshLlmUsage={refreshLlmUsage}
             onSaveLlmSettings={saveLlmSettings}
             onTestLlmConnection={testLlmConnection}
+            onSaveTownWeatherSettings={saveTownWeatherSettings}
+            onTestTownWeatherConnection={testTownWeatherConnection}
             onCreate={createUser}
             onDisplayName={changeUserDisplayName}
             onStatus={changeUserStatus}
@@ -721,13 +777,15 @@ export default function App() {
         )}</Suspense>
       </AppShell>
       {room && (
-        <RoomChat
-          roomName={room.name}
-          messages={room.chatMessages}
-          user={user}
-          connected={connected}
-          onSend={sendRoomChat}
-        />
+        <Suspense fallback={null}>
+          <RoomChat
+            roomName={room.name}
+            messages={room.chatMessages}
+            user={user}
+            connected={connected}
+            onSend={sendRoomChat}
+          />
+        </Suspense>
       )}
       <ChangePasswordModal
         open={passwordOpen}

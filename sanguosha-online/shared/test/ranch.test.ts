@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FARMING_CROPS,
+  MINE_DEPOSITS,
   RANCH_ANIMALS,
   RanchRuleError,
   applyRanchAction,
@@ -45,9 +46,15 @@ describe("persistent ranch engine", () => {
         animal.productPrice * animal.yield -
         feedValue -
         animal.careCost;
-      expect(animal.purchaseCost / netCycleValue).toBeGreaterThanOrEqual(6);
+      expect(animal.purchaseCost / netCycleValue).toBeGreaterThanOrEqual(4);
       expect(animal.resalePrice).toBeLessThan(animal.purchaseCost);
     }
+  });
+
+  it("prices a starter chicken below one late-game gold ore", () => {
+    expect(RANCH_ANIMALS.chicken.purchaseCost).toBeLessThan(
+      MINE_DEPOSITS.gold.orePrice,
+    );
   });
 
   it("opens the starter ranch on day one while retaining later animal gates", () => {
@@ -79,6 +86,52 @@ describe("persistent ranch engine", () => {
       { type: "ranch_buy_animal", animalId: "duck", penIndex: 0 },
       start,
     )).toThrowError(RanchRuleError);
+  });
+
+  it("uses the same market modifier in ranch cards and account settlement", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-market",
+      now: start,
+    });
+    const production = {
+      yieldPercent: 0,
+      durationPercent: 0,
+      label: "灾期市场",
+      marketBuyPercent: 20,
+      marketSellPercent: 15,
+    };
+    const linked = economy({ coins: 1_000, farmLevel: 1 });
+    const view = getRanchGameView(ranch, {
+      viewerId: "owner",
+      now: start,
+      farmRevision: linked.farmRevision,
+      farmLevel: linked.farmLevel,
+      dogLevel: 0,
+      coins: linked.coins,
+      produce: linked.produce,
+      production,
+    });
+    expect(view.animals.chicken.purchaseCost).toBe(216);
+    expect(view.animals.chicken.resalePrice).toBe(104);
+
+    const bought = applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+      production,
+    );
+    expect(bought.economy.coins).toBe(784);
+    const sold = applyRanchAction(
+      bought.ranch,
+      bought.economy,
+      { type: "ranch_sell_animal", penIndex: 0 },
+      start + 1,
+      production,
+    );
+    expect(sold.economy.coins).toBe(888);
   });
 
   it("links animal purchase, feed and product sales to the farm economy", () => {

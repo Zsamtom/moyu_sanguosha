@@ -17,6 +17,11 @@ import {
 import { MemoryHomesteadDirectorJobStore } from "./homestead-director-jobs.js";
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
+import { TownWeatherService } from "./town-weather.js";
+import {
+  MemoryTownWeatherSettingsStore,
+  TownWeatherSettingsService,
+} from "./weather-settings.js";
 import type {
   CreateUserInput,
   PublicUser,
@@ -200,6 +205,12 @@ describe("account allocation and authorization", () => {
       })),
     );
     await llmSettings.initialize();
+    const townWeatherSettings = new TownWeatherSettingsService(
+      new MemoryTownWeatherSettingsStore(),
+      new TownWeatherService(),
+      config.sessionSecret,
+    );
+    await townWeatherSettings.initialize();
     llmGovernance = new LlmGovernanceService(
       new MemoryLlmGovernanceStore(),
     );
@@ -212,6 +223,7 @@ describe("account allocation and authorization", () => {
       rooms: new RoomService(),
       securityEvents: new SecurityEvents(),
       llmSettings,
+      townWeatherSettings,
       llmGovernance,
       directorJobs,
     });
@@ -450,6 +462,78 @@ describe("account allocation and authorization", () => {
     expect(cleared.body.settings.apiKeyConfigured).toBe(false);
     expect(botDecisions.supports("doudizhu")).toBe(false);
     expect(botDecisions.supports("sanguosha")).toBe(false);
+  });
+
+  it("lets only admins hot-update town weather without exposing the API key", async () => {
+    await request(app).get("/api/admin/weather-settings").expect(401);
+    const playerAgent = request.agent(app);
+    await playerAgent.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    await playerAgent.get("/api/admin/weather-settings").expect(403);
+
+    const adminAgent = request.agent(app);
+    await adminAgent.post("/api/auth/login")
+      .send({ username: "admin", password: "admin-password" })
+      .expect(200);
+    const defaults = await adminAgent
+      .get("/api/admin/weather-settings")
+      .expect(200);
+    expect(defaults.headers["cache-control"]).toBe("no-store");
+    expect(defaults.body.settings).toMatchObject({
+      enabled: false,
+      apiKeyConfigured: false,
+      forecastDays: 3,
+      towns: {
+        greenvale: { realCityName: "郑州" },
+        frostpeak: { realCityName: "拉萨" },
+      },
+    });
+
+    const payload = {
+      enabled: true,
+      apiHost: "https://abc123.qweatherapi.com",
+      apiKey: "private-weather-key",
+      timeoutMs: 3_000,
+      forecastDays: 4,
+      towns: {
+        greenvale: {
+          realCityName: "郑州",
+          latitude: 34.75,
+          longitude: 113.62,
+        },
+        frostpeak: {
+          realCityName: "拉萨",
+          latitude: 29.65,
+          longitude: 91.1,
+        },
+      },
+    };
+    await adminAgent.put("/api/admin/weather-settings")
+      .send({ ...payload, apiHost: "https://api.qweather.com" })
+      .expect(400);
+    const saved = await adminAgent.put("/api/admin/weather-settings")
+      .send(payload)
+      .expect(200);
+    expect(saved.body.settings).toMatchObject({
+      enabled: true,
+      apiHost: "https://abc123.qweatherapi.com",
+      apiKeyConfigured: true,
+      forecastDays: 4,
+    });
+    expect(saved.text).not.toContain("private-weather-key");
+    const reloaded = await adminAgent
+      .get("/api/admin/weather-settings")
+      .expect(200);
+    expect(reloaded.text).not.toContain("private-weather-key");
+    expect(users.audits.at(-1)).toMatchObject({
+      action: "settings.weather.update",
+      details: {
+        provider: "qweather",
+        enabled: true,
+        apiKeyChanged: true,
+      },
+    });
   });
 
   it("lets an admin rename and delete another account but not itself", async () => {

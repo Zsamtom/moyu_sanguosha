@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
+import type { EstateAccountState } from "@sanguosha/shared";
 import type { PublicUser } from "./users.js";
 import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import {
   MemoryHomesteadDirectorJobStore,
   type HomesteadDirectorJobInput,
 } from "./homestead-director-jobs.js";
-import { FarmService, MemoryFarmStateStore } from "./farm-service.js";
+import {
+  FarmService,
+  MemoryFarmStateStore,
+  type TownEstateBundle,
+} from "./farm-service.js";
 
 const now = Date.UTC(2026, 6, 31, 8, 0, 0);
 const user: PublicUser = {
@@ -87,6 +92,10 @@ describe("homestead director durable jobs", () => {
           narrative: "商队依据今日库存提交了受规则约束的合作提案。",
           recommendation: "先比较两个固定选项的成本。",
           npcLine: "数值归规则，叙事交给我。",
+          advisorIndex: 1,
+          directorBeatId: "trade",
+          evidenceIndices: [0, 2],
+          foreshadowing: "商队的选择可能在明日形成新的城镇回声。",
           planStepIndices: [0, 1, 2],
         },
       }),
@@ -114,6 +123,12 @@ describe("homestead director durable jobs", () => {
           llmCalls: number;
           generatedEventsApplied: number;
         };
+        advice: {
+          source: string;
+          worldBeatId?: string;
+          evidence?: Array<{ id: string; label: string }>;
+          foreshadowing?: string;
+        };
       };
     };
     expect(saved.homestead.worldEvent).toMatchObject({
@@ -127,6 +142,72 @@ describe("homestead director durable jobs", () => {
       llmCalls: 1,
       generatedEventsApplied: 1,
     });
+    expect(saved.homestead.advice).toMatchObject({
+      source: "llm",
+      worldBeatId: "trade",
+      foreshadowing: "商队的选择可能在明日形成新的城镇回声。",
+    });
+    expect(saved.homestead.advice.evidence).toHaveLength(2);
     expect((await jobs.snapshot(10)).counts.applied).toBe(1);
+
+    const stagedAccount = await state.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const stagedBundle = await state.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    stagedAccount.coins = 100_000;
+    stagedBundle.farm.coins = 100_000;
+    stagedBundle.homestead.reputation = 999;
+    for (const storage of [
+      stagedBundle.farm.produce,
+      stagedBundle.ranch.products,
+      stagedBundle.mine.ores,
+      stagedBundle.homestead.goods,
+      stagedBundle.homestead.cargoInventory,
+    ] as Array<Record<string, number>>) {
+      for (const key of Object.keys(storage)) storage[key] = 99;
+    }
+    await state.saveAccountAndTownEstate(
+      user.id,
+      stagedAccount,
+      "greenvale",
+      stagedBundle,
+    );
+
+    const snapshot = await service.getOrCreateHomestead(user);
+    const option = snapshot.homestead.worldEvent.definition.options.find(
+      ({ canChoose }) => canChoose,
+    );
+    expect(option).toBeDefined();
+    await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      snapshot.homestead.accountRevision,
+      {
+        type: "homestead_choose_event",
+        optionId: option!.id,
+      },
+      snapshot.homestead.activeTownId,
+    );
+    await service.runHomesteadDirectorJobs();
+
+    const afterChoice = await state.loadTownEstate(user.id, "greenvale") as {
+      homestead: {
+        worldEvent: { selectedOptionId: string | null };
+        advice: { source: string; worldBeatId?: string };
+        statistics: { llmCalls: number };
+      };
+    };
+    expect(afterChoice.homestead.worldEvent.selectedOptionId).toBe(option!.id);
+    expect(afterChoice.homestead.advice).toMatchObject({
+      source: "llm",
+      worldBeatId: "trade",
+    });
+    expect(afterChoice.homestead.statistics.llmCalls).toBe(2);
+    expect((await jobs.snapshot(10)).counts.applied).toBe(2);
   });
 });

@@ -10,11 +10,14 @@ import {
   HOMESTEAD_RESEARCH_NODE_IDS,
   HOMESTEAD_RECIPE_IDS,
   HOMESTEAD_RESILIENCE_IDS,
+  HOMESTEAD_HONOR_MILESTONE_IDS,
+  HOMESTEAD_INFRASTRUCTURE_IDS,
   HOMESTEAD_SEASON_MILESTONE_IDS,
   HOMESTEAD_TOWN_RESOURCE_IDS,
   HOMESTEAD_TOWN_SECTOR_IDS,
   HOMESTEAD_VALUE_ROUTE_IDS,
   ESTATE_MERCHANT_ITEM_IDS,
+  ESTATE_CARGO_IDS,
   ESTATE_TOWN_IDS,
 } from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
@@ -82,6 +85,14 @@ const actionSchema = z.discriminatedUnion("type", [
     milestoneId: z.enum(HOMESTEAD_SEASON_MILESTONE_IDS),
   }).strict(),
   z.object({
+    type: z.literal("homestead_claim_honor_reward"),
+    milestoneId: z.enum(HOMESTEAD_HONOR_MILESTONE_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_upgrade_infrastructure"),
+    infrastructureId: z.enum(HOMESTEAD_INFRASTRUCTURE_IDS),
+  }).strict(),
+  z.object({
     type: z.literal("homestead_upgrade_resilience"),
     resilienceId: z.enum(HOMESTEAD_RESILIENCE_IDS),
   }).strict(),
@@ -104,6 +115,14 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("homestead_use_acceleration_card"),
     facilityId: facilityIdSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_dispatch_cargo"),
+    cargoId: z.enum(ESTATE_CARGO_IDS),
+  }).strict(),
+  z.object({
+    type: z.literal("homestead_collect_cargo"),
+    shipmentId: z.string().min(1).max(160),
   }).strict(),
   z.object({
     type: z.literal("homestead_update_ai_profile"),

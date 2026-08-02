@@ -22,6 +22,7 @@ import { createRoomsRouter } from "./routes/rooms.js";
 import type { RoomService } from "./rooms.js";
 import type { SecurityEvents } from "./security-events.js";
 import type { UserStore } from "./users.js";
+import type { TownWeatherSettingsService } from "./weather-settings.js";
 
 export function createApplication(options: {
   config: AppConfig;
@@ -31,6 +32,7 @@ export function createApplication(options: {
   rooms: RoomService;
   securityEvents: SecurityEvents;
   llmSettings?: LlmSettingsService;
+  townWeatherSettings?: TownWeatherSettingsService;
   llmGovernance?: LlmGovernanceService;
   directorJobs?: HomesteadDirectorJobStore;
   farm?: FarmService;
@@ -43,6 +45,7 @@ export function createApplication(options: {
     rooms,
     securityEvents,
     llmSettings,
+    townWeatherSettings,
     llmGovernance,
     directorJobs,
     farm,
@@ -90,6 +93,7 @@ export function createApplication(options: {
       llmSettings,
       llmGovernance,
       directorJobs,
+      townWeatherSettings,
     ),
   );
   if (farm) {

@@ -7,7 +7,9 @@ import type {
   LlmDecisionAuditEntry,
   LlmGovernanceSnapshot,
   LlmSettings,
+  TownWeatherSettings,
   UpdateLlmSettings,
+  UpdateTownWeatherSettings,
 } from '../types';
 
 interface CreateUserValues {
@@ -30,19 +32,33 @@ interface LlmSettingsValues extends Omit<UpdateLlmSettings, 'clearApiKey'> {
   apiKey?: string;
 }
 
+interface TownWeatherSettingsValues
+  extends Omit<UpdateTownWeatherSettings, 'clearApiKey'> {
+  apiKey?: string;
+}
+
 interface AdminUsersScreenProps {
   currentUser: AuthUser;
   users: AuthUser[];
   loading: boolean;
   llmSettings?: LlmSettings;
   llmSettingsLoading: boolean;
+  townWeatherSettings?: TownWeatherSettings;
+  townWeatherSettingsLoading: boolean;
   llmUsage?: LlmGovernanceSnapshot;
   llmUsageLoading: boolean;
   onRefresh: () => Promise<void>;
   onRefreshLlmSettings: () => Promise<void>;
+  onRefreshTownWeatherSettings: () => Promise<void>;
   onRefreshLlmUsage: () => Promise<void>;
   onSaveLlmSettings: (values: UpdateLlmSettings) => Promise<void>;
   onTestLlmConnection: (apiKey?: string, model?: DeepSeekModel) => Promise<void>;
+  onSaveTownWeatherSettings: (values: UpdateTownWeatherSettings) => Promise<void>;
+  onTestTownWeatherConnection: (
+    values: Partial<
+      Omit<UpdateTownWeatherSettings, 'enabled' | 'clearApiKey'>
+    >,
+  ) => Promise<void>;
   onCreate: (values: Pick<CreateUserValues, 'username' | 'displayName' | 'password'>) => Promise<void>;
   onDisplayName: (userId: string, displayName: string) => Promise<void>;
   onStatus: (userId: string, disabled: boolean) => Promise<void>;
@@ -56,13 +72,18 @@ export function AdminUsersScreen({
   loading,
   llmSettings,
   llmSettingsLoading,
+  townWeatherSettings,
+  townWeatherSettingsLoading,
   llmUsage,
   llmUsageLoading,
   onRefresh,
   onRefreshLlmSettings,
+  onRefreshTownWeatherSettings,
   onRefreshLlmUsage,
   onSaveLlmSettings,
   onTestLlmConnection,
+  onSaveTownWeatherSettings,
+  onTestTownWeatherConnection,
   onCreate,
   onDisplayName,
   onStatus,
@@ -76,11 +97,15 @@ export function AdminUsersScreen({
   const [statusUserId, setStatusUserId] = useState<string>();
   const [llmSaving, setLlmSaving] = useState(false);
   const [llmTesting, setLlmTesting] = useState(false);
+  const [weatherSaving, setWeatherSaving] = useState(false);
+  const [weatherTesting, setWeatherTesting] = useState(false);
   const [createForm] = Form.useForm<CreateUserValues>();
   const [resetForm] = Form.useForm<ResetPasswordValues>();
   const [displayNameForm] = Form.useForm<DisplayNameValues>();
   const [llmForm] = Form.useForm<LlmSettingsValues>();
+  const [weatherForm] = Form.useForm<TownWeatherSettingsValues>();
   const pendingLlmApiKey = Form.useWatch('apiKey', llmForm);
+  const pendingWeatherApiKey = Form.useWatch('apiKey', weatherForm);
 
   const closeCreate = () => {
     createForm.resetFields();
@@ -100,8 +125,14 @@ export function AdminUsersScreen({
   useEffect(() => {
     void onRefresh();
     void onRefreshLlmSettings();
+    void onRefreshTownWeatherSettings();
     void onRefreshLlmUsage();
-  }, [onRefresh, onRefreshLlmSettings, onRefreshLlmUsage]);
+  }, [
+    onRefresh,
+    onRefreshLlmSettings,
+    onRefreshLlmUsage,
+    onRefreshTownWeatherSettings,
+  ]);
 
   useEffect(() => {
     if (!llmSettings) return;
@@ -114,6 +145,18 @@ export function AdminUsersScreen({
       maximumOutputTokens: llmSettings.maximumOutputTokens,
     });
   }, [llmForm, llmSettings]);
+
+  useEffect(() => {
+    if (!townWeatherSettings) return;
+    weatherForm.setFieldsValue({
+      enabled: townWeatherSettings.enabled,
+      apiHost: townWeatherSettings.apiHost,
+      apiKey: undefined,
+      timeoutMs: townWeatherSettings.timeoutMs,
+      forecastDays: townWeatherSettings.forecastDays,
+      towns: townWeatherSettings.towns,
+    });
+  }, [townWeatherSettings, weatherForm]);
 
   const createUser = async (values: CreateUserValues) => {
     setSubmitting(true);
@@ -201,6 +244,55 @@ export function AdminUsersScreen({
       );
     } finally {
       setLlmTesting(false);
+    }
+  };
+
+  const saveTownWeatherSettings = async (
+    values: TownWeatherSettingsValues,
+  ) => {
+    setWeatherSaving(true);
+    try {
+      await onSaveTownWeatherSettings({
+        ...values,
+        ...(values.apiKey?.trim() ? { apiKey: values.apiKey.trim() } : {}),
+      });
+      weatherForm.setFieldValue('apiKey', undefined);
+    } finally {
+      setWeatherSaving(false);
+    }
+  };
+
+  const clearTownWeatherApiKey = async () => {
+    if (!townWeatherSettings) return;
+    setWeatherSaving(true);
+    try {
+      await onSaveTownWeatherSettings({
+        enabled: false,
+        apiHost: townWeatherSettings.apiHost,
+        clearApiKey: true,
+        timeoutMs: townWeatherSettings.timeoutMs,
+        forecastDays: townWeatherSettings.forecastDays,
+        towns: townWeatherSettings.towns,
+      });
+      weatherForm.setFieldsValue({ enabled: false, apiKey: undefined });
+    } finally {
+      setWeatherSaving(false);
+    }
+  };
+
+  const testTownWeatherConnection = async () => {
+    setWeatherTesting(true);
+    try {
+      const values = weatherForm.getFieldsValue();
+      await onTestTownWeatherConnection({
+        apiHost: values.apiHost,
+        apiKey: values.apiKey,
+        timeoutMs: values.timeoutMs,
+        forecastDays: values.forecastDays,
+        towns: values.towns,
+      });
+    } finally {
+      setWeatherTesting(false);
     }
   };
 
@@ -360,7 +452,7 @@ export function AdminUsersScreen({
         <div className="section-toolbar">
           <div>
             <h2>大模型机器人</h2>
-            <p>当前应用于三国杀和斗地主；够级继续使用原有规则机器人。</p>
+            <p>当前用于三国杀、斗地主、农场行情与庄园经营管家；够级继续使用原有规则机器人。</p>
           </div>
           <Space>
             <Tag color={llmSettings?.enabled ? 'green' : 'default'}>
@@ -425,7 +517,7 @@ export function AdminUsersScreen({
             <Form.Item name="enabled" valuePropName="checked" noStyle>
               <Switch checkedChildren="已启用" unCheckedChildren="未启用" />
             </Form.Item>
-            <span>允许三国杀与斗地主机器人全程使用大模型，并支持斗地主真人主动获取大模型出牌推荐；调用失败会回退规则策略。</span>
+            <span>允许牌局机器人、斗地主真人建议、农场行情和庄园管家使用大模型；调用失败会回退规则策略。</span>
             <Space>
               {llmSettings?.apiKeyConfigured && (
                 <Popconfirm
@@ -449,6 +541,134 @@ export function AdminUsersScreen({
                 测试连接
               </Button>
               <Button type="primary" htmlType="submit" loading={llmSaving}>保存大模型配置</Button>
+            </Space>
+          </div>
+        </Form>
+      </section>
+
+      <section className="paper-card llm-settings-section weather-settings-section">
+        <div className="section-toolbar">
+          <div>
+            <h2>庄园真实天气与逐日预报</h2>
+            <p>和风天气 API Key、专属 Host、请求参数与两座可玩城镇坐标均可热更新，无需重启。</p>
+          </div>
+          <Space>
+            <Tag color={townWeatherSettings?.enabled ? 'green' : 'default'}>
+              {townWeatherSettings?.enabled ? '实时同步中' : '安全回退模式'}
+            </Tag>
+            <Button
+              loading={townWeatherSettingsLoading}
+              onClick={() => void onRefreshTownWeatherSettings()}
+            >
+              刷新
+            </Button>
+          </Space>
+        </div>
+
+        <Form<TownWeatherSettingsValues>
+          className="llm-settings-form"
+          form={weatherForm}
+          layout="vertical"
+          requiredMark={false}
+          disabled={!townWeatherSettings || townWeatherSettingsLoading}
+          onFinish={saveTownWeatherSettings}
+        >
+          <div className="llm-settings-grid">
+            <Form.Item
+              label="和风天气专属 API Host"
+              name="apiHost"
+              extra="控制台中的专属 HTTPS *.qweatherapi.com 域名，不要填写接口路径"
+            >
+              <Input placeholder="https://abc123.qweatherapi.com" />
+            </Form.Item>
+            <Form.Item
+              label="和风天气 API Key"
+              name="apiKey"
+              extra={townWeatherSettings?.apiKeyConfigured ? '已加密保存；留空保留现有密钥' : '尚未配置'}
+            >
+              <Input.Password autoComplete="new-password" placeholder="X-QW-Api-Key" />
+            </Form.Item>
+            <Form.Item
+              label="逐日预报天数"
+              name="forecastDays"
+              rules={[{ required: true }]}
+              extra="官方接口支持 1–10 天；庄园仅把未来数据用于规划，不提前改变结算"
+            >
+              <InputNumber min={1} max={10} />
+            </Form.Item>
+            <Form.Item
+              label="单接口超时（毫秒）"
+              name="timeoutMs"
+              rules={[{ required: true }]}
+            >
+              <InputNumber min={500} max={10_000} step={500} />
+            </Form.Item>
+          </div>
+
+          <div className="llm-settings-grid weather-location-grid">
+            {([
+              ['greenvale', '青禾镇', '郑州'],
+              ['frostpeak', '霜岭镇', '拉萨'],
+            ] as const).map(([townId, townName, defaultCity]) => (
+              <div className="weather-location-card" key={townId}>
+                <strong>{townName}天气锚点</strong>
+                <Form.Item
+                  label="现实城市"
+                  name={['towns', townId, 'realCityName']}
+                  rules={[{ required: true, message: `请输入${townName}对应城市` }]}
+                >
+                  <Input placeholder={defaultCity} />
+                </Form.Item>
+                <Space align="start" wrap>
+                  <Form.Item
+                    label="纬度"
+                    name={['towns', townId, 'latitude']}
+                    rules={[{ required: true }]}
+                  >
+                    <InputNumber min={-90} max={90} precision={2} />
+                  </Form.Item>
+                  <Form.Item
+                    label="经度"
+                    name={['towns', townId, 'longitude']}
+                    rules={[{ required: true }]}
+                  >
+                    <InputNumber min={-180} max={180} precision={2} />
+                  </Form.Item>
+                </Space>
+              </div>
+            ))}
+          </div>
+
+          <div className="llm-settings-actions">
+            <Form.Item name="enabled" valuePropName="checked" noStyle>
+              <Switch checkedChildren="已启用" unCheckedChildren="未启用" />
+            </Form.Item>
+            <span>实况用于当前 8 小时生产快照；逐日预报供气象站与庄园 LLM 规划。接口异常时自动回退，不应用伪造倍率。</span>
+            <Space wrap>
+              {townWeatherSettings?.apiKeyConfigured && (
+                <Popconfirm
+                  title="清除已保存的天气 API Key？"
+                  description="真实天气会停用，庄园进入中性安全回退。"
+                  okText="清除"
+                  cancelText="取消"
+                  onConfirm={() => void clearTownWeatherApiKey()}
+                >
+                  <Button danger disabled={weatherSaving}>清除密钥</Button>
+                </Popconfirm>
+              )}
+              <Button
+                loading={weatherTesting}
+                disabled={
+                  weatherSaving ||
+                  (!townWeatherSettings?.apiKeyConfigured && !pendingWeatherApiKey?.trim())
+                }
+                onClick={() => void testTownWeatherConnection()}
+              >
+                测试两镇实况与预报
+              </Button>
+              <Button type="primary" htmlType="submit" loading={weatherSaving}>
+                保存天气配置
+              </Button>
             </Space>
           </div>
         </Form>

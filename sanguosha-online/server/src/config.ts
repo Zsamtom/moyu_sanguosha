@@ -51,6 +51,7 @@ const environmentSchema = z.object({
   QWEATHER_API_HOST: optionalQWeatherHost,
   QWEATHER_API_KEY: optionalTrimmedString,
   QWEATHER_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3_000),
+  QWEATHER_FORECAST_DAYS: z.coerce.number().int().min(1).max(10).default(3),
 }).superRefine((environment, context) => {
   const providerValues = [
     environment.DOUDIZHU_LLM_ENDPOINT,
@@ -101,6 +102,7 @@ export interface AppConfig {
     apiHost: string;
     apiKey: string;
     timeoutMs: number;
+    forecastDays: number;
   };
 }
 
@@ -151,6 +153,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
             apiHost: parsed.QWEATHER_API_HOST,
             apiKey: parsed.QWEATHER_API_KEY,
             timeoutMs: parsed.QWEATHER_TIMEOUT_MS,
+            forecastDays: parsed.QWEATHER_FORECAST_DAYS,
           },
         }
       : {}),

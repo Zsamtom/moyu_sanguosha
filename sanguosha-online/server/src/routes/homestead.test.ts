@@ -81,7 +81,11 @@ describe("homestead HTTP schemas", () => {
         npcId: "agronomist_lin",
         topicId: "soil",
       },
-      { type: "homestead_claim_season_reward", milestoneId: "bronze" },
+      { type: "homestead_claim_honor_reward", milestoneId: "newcomer" },
+      {
+        type: "homestead_upgrade_infrastructure",
+        infrastructureId: "operations_center",
+      },
       { type: "homestead_upgrade_resilience", resilienceId: "drainage" },
       {
         type: "homestead_activate_emergency_boost",
@@ -136,6 +140,14 @@ describe("homestead HTTP schemas", () => {
       {
         type: "homestead_complete_value_route",
         routeId: "frost_highland_staples",
+      },
+      {
+        type: "homestead_dispatch_cargo",
+        cargoId: "greenvale_warmhouse_supplies",
+      },
+      {
+        type: "homestead_collect_cargo",
+        shipmentId: "shipment-1",
       },
     ]) {
       expect(() => homesteadActionEnvelopeSchema.parse(envelope(action)))

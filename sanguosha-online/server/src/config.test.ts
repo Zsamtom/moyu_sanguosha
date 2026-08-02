@@ -97,6 +97,7 @@ describe("optional town weather configuration", () => {
       apiHost: "https://abcxyz.qweatherapi.com/",
       apiKey: "weather-secret",
       timeoutMs: 2_500,
+      forecastDays: 3,
     });
   });
 

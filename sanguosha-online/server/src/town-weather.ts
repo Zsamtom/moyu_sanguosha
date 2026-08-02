@@ -48,18 +48,18 @@ export const TOWN_WEATHER_ANCHORS: Readonly<
   greenvale: {
     townId: "greenvale",
     fictionalName: "青禾镇",
-    realCityName: "成都",
-    latitude: 30.57,
-    longitude: 104.07,
+    realCityName: "郑州",
+    latitude: 34.75,
+    longitude: 113.62,
     timezone: "Asia/Shanghai",
     utcOffsetMinutes: 480,
   },
   frostpeak: {
     townId: "frostpeak",
     fictionalName: "霜岭镇",
-    realCityName: "香格里拉",
-    latitude: 27.83,
-    longitude: 99.7,
+    realCityName: "拉萨",
+    latitude: 29.65,
+    longitude: 91.1,
     timezone: "Asia/Shanghai",
     utcOffsetMinutes: 480,
   },
@@ -96,7 +96,22 @@ export interface TownWeatherProviderResult {
   readonly visibilityKm: number;
   readonly alerts: readonly TownWeatherProviderAlert[];
   readonly alertsAvailable?: boolean;
+  readonly forecast?: readonly TownWeatherProviderForecastDay[];
+  readonly forecastAvailable?: boolean;
   readonly attributions: readonly string[];
+}
+
+export interface TownWeatherProviderForecastDay {
+  readonly forecastStartAt: number;
+  readonly forecastEndAt: number;
+  readonly conditionCode: string;
+  readonly conditionText: string;
+  readonly temperatureMinC: number;
+  readonly temperatureMaxC: number;
+  readonly precipitationMm: number;
+  readonly precipitationProbabilityPercent: number;
+  readonly humidityPercent: number;
+  readonly windSpeedKph: number;
 }
 
 export interface TownWeatherProvider {
@@ -132,6 +147,20 @@ export interface NormalizedTownWeatherObservation {
   readonly precipitationMm: number | null;
   readonly windSpeedKph: number | null;
   readonly visibilityKm: number | null;
+}
+
+export interface NormalizedTownWeatherForecastDay {
+  readonly forecastStartAt: number;
+  readonly forecastEndAt: number;
+  readonly weatherId: NormalizedTownWeatherId;
+  readonly conditionCode: string;
+  readonly conditionText: string;
+  readonly temperatureMinC: number;
+  readonly temperatureMaxC: number;
+  readonly precipitationMm: number;
+  readonly precipitationProbabilityPercent: number;
+  readonly humidityPercent: number;
+  readonly windSpeedKph: number;
 }
 
 export interface NormalizedTownWeatherDisaster {
@@ -178,6 +207,8 @@ export interface TownWeatherSnapshot {
   readonly weatherId: NormalizedTownWeatherId;
   readonly observation: NormalizedTownWeatherObservation;
   readonly alertsAvailable: boolean;
+  readonly forecastAvailable: boolean;
+  readonly forecast: readonly NormalizedTownWeatherForecastDay[];
   readonly disasters: readonly NormalizedTownWeatherDisaster[];
   readonly attributions: readonly string[];
   readonly fallbackReason: string | null;
@@ -186,6 +217,7 @@ export interface TownWeatherSnapshot {
 export interface QWeatherProviderConfig {
   readonly apiHost: string;
   readonly apiKey: string;
+  readonly forecastDays?: number;
 }
 
 type FetchLike = typeof fetch;
@@ -253,6 +285,39 @@ const qWeatherAlertsSchema = z.object({
   alerts: z.array(qWeatherAlertSchema).default([]),
 }).passthrough();
 
+const qWeatherMeasurementSchema = z.object({
+  value: numericValue,
+  unit: z.string().optional(),
+}).passthrough();
+
+const qWeatherDailyPeriodSchema = z.object({
+  condition: z.object({
+    text: z.string().min(1),
+    code: z.string().min(1),
+  }).passthrough(),
+  wind: z.object({
+    speed: qWeatherMeasurementSchema,
+  }).passthrough(),
+  precipitation: z.object({
+    amount: qWeatherMeasurementSchema,
+    probability: boundedNumber(0, 1),
+  }).passthrough(),
+  humidity: boundedNumber(0, 1),
+}).passthrough();
+
+const qWeatherDailySchema = z.object({
+  metadata: z.object({
+    attributions: z.array(z.string()).optional(),
+  }).passthrough().optional(),
+  days: z.array(z.object({
+    forecastStartTime: z.string().min(1),
+    forecastEndTime: z.string().min(1),
+    temperatureMax: qWeatherMeasurementSchema,
+    temperatureMin: qWeatherMeasurementSchema,
+    daytime: qWeatherDailyPeriodSchema,
+  }).passthrough()).min(1),
+}).passthrough();
+
 function parsedTimestamp(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -278,6 +343,8 @@ export class QWeatherProvider implements TownWeatherProvider {
   private readonly apiHost: string;
   private readonly currentTimeoutMs: number;
   private readonly alertsTimeoutMs: number;
+  private readonly forecastTimeoutMs: number;
+  private readonly forecastDays: number;
 
   constructor(
     config: QWeatherProviderConfig,
@@ -289,11 +356,16 @@ export class QWeatherProvider implements TownWeatherProvider {
     }
     this.apiHost = normalizedApiHost(config.apiHost);
     this.apiKey = config.apiKey;
+    this.forecastDays = Math.max(
+      1,
+      Math.min(10, Math.floor(config.forecastDays ?? 3)),
+    );
     this.currentTimeoutMs = totalTimeoutMs;
     this.alertsTimeoutMs = Math.min(
       TOWN_WEATHER_DEFAULT_ALERT_TIMEOUT_MS,
       Math.max(0, Math.floor(totalTimeoutMs / 2)),
     );
+    this.forecastTimeoutMs = Math.max(1, Math.floor(totalTimeoutMs * 0.8));
   }
 
   private readonly apiKey: string;
@@ -313,10 +385,18 @@ export class QWeatherProvider implements TownWeatherProvider {
     );
     alertsUrl.searchParams.set("localTime", "false");
     alertsUrl.searchParams.set("lang", "zh");
+    const dailyUrl = new URL(
+      `/weather/v1/daily/${latitude}/${longitude}`,
+      this.apiHost,
+    );
+    dailyUrl.searchParams.set("days", String(this.forecastDays));
+    dailyUrl.searchParams.set("localTime", "true");
+    dailyUrl.searchParams.set("lang", "zh");
 
-    const [nowResult, alertsResult] = await Promise.allSettled([
+    const [nowResult, alertsResult, dailyResult] = await Promise.allSettled([
       this.request(nowUrl, signal, this.currentTimeoutMs),
       this.request(alertsUrl, signal, this.alertsTimeoutMs),
+      this.request(dailyUrl, signal, this.forecastTimeoutMs),
     ]);
     if (nowResult.status === "rejected") throw nowResult.reason;
     const current = qWeatherNowSchema.parse(nowResult.value);
@@ -330,6 +410,16 @@ export class QWeatherProvider implements TownWeatherProvider {
         warnings = parsed.data;
       } else {
         alertsAvailable = false;
+      }
+    }
+    let forecastAvailable = dailyResult.status === "fulfilled";
+    let daily: z.infer<typeof qWeatherDailySchema> | null = null;
+    if (dailyResult.status === "fulfilled") {
+      const parsed = qWeatherDailySchema.safeParse(dailyResult.value);
+      if (parsed.success) {
+        daily = parsed.data;
+      } else {
+        forecastAvailable = false;
       }
     }
     const observedAt = parsedTimestamp(current.now.obsTime);
@@ -358,7 +448,31 @@ export class QWeatherProvider implements TownWeatherProvider {
       ...(current.refer?.sources ?? []),
       ...(current.refer?.license ?? []),
       ...(warnings.metadata?.attributions ?? []),
+      ...(daily?.metadata?.attributions ?? []),
     ]);
+
+    const forecast = (daily?.days ?? []).flatMap((day) => {
+      const forecastStartAt = parsedTimestamp(day.forecastStartTime);
+      const forecastEndAt = parsedTimestamp(day.forecastEndTime);
+      if (forecastStartAt === null || forecastEndAt === null) return [];
+      const speedUnit = day.daytime.wind.speed.unit?.toLocaleLowerCase();
+      const windSpeedKph = speedUnit === "m/s"
+        ? day.daytime.wind.speed.value * 3.6
+        : day.daytime.wind.speed.value;
+      const probability = day.daytime.precipitation.probability;
+      return [{
+        forecastStartAt,
+        forecastEndAt,
+        conditionCode: day.daytime.condition.code,
+        conditionText: day.daytime.condition.text,
+        temperatureMinC: day.temperatureMin.value,
+        temperatureMaxC: day.temperatureMax.value,
+        precipitationMm: day.daytime.precipitation.amount.value,
+        precipitationProbabilityPercent: Math.round(probability * 100),
+        humidityPercent: Math.round(day.daytime.humidity * 100),
+        windSpeedKph,
+      }];
+    });
 
     return {
       provider: "qweather",
@@ -373,6 +487,8 @@ export class QWeatherProvider implements TownWeatherProvider {
       visibilityKm: current.now.vis,
       alerts,
       alertsAvailable,
+      forecast,
+      forecastAvailable,
       attributions: [...attributions],
     };
   }
@@ -542,6 +658,11 @@ function validateProviderResult(
       result.alertsAvailable !== undefined &&
       typeof result.alertsAvailable !== "boolean"
     ) ||
+    (result.forecast !== undefined && !Array.isArray(result.forecast)) ||
+    (
+      result.forecastAvailable !== undefined &&
+      typeof result.forecastAvailable !== "boolean"
+    ) ||
     !Array.isArray(result.attributions)
   ) {
     throw new Error("Weather provider returned an invalid payload");
@@ -650,6 +771,33 @@ function normalizedDisasters(
   return [...byProviderAlertId.values()].sort(priority);
 }
 
+function normalizedForecast(
+  result: TownWeatherProviderResult,
+  anchor: TownWeatherAnchor,
+  rules: TownWeatherRules,
+): NormalizedTownWeatherForecastDay[] {
+  return (result.forecast ?? []).map((day) => ({
+    ...structuredClone(day),
+    weatherId: rules.resolveWeatherId({
+      provider: result.provider,
+      observedAt: day.forecastStartAt,
+      conditionCode: day.conditionCode,
+      conditionText: day.conditionText,
+      temperatureC: day.temperatureMaxC,
+      feelsLikeC: day.temperatureMaxC,
+      humidityPercent: day.humidityPercent,
+      precipitationMm: day.precipitationMm,
+      windSpeedKph: day.windSpeedKph,
+      visibilityKm: result.visibilityKm,
+      alerts: [],
+      alertsAvailable: false,
+      forecast: [],
+      forecastAvailable: false,
+      attributions: [],
+    }, anchor),
+  }));
+}
+
 function providerSnapshot(input: {
   result: TownWeatherProviderResult;
   anchor: TownWeatherAnchor;
@@ -684,6 +832,8 @@ function providerSnapshot(input: {
       visibilityKm: result.visibilityKm,
     },
     alertsAvailable: result.alertsAvailable !== false,
+    forecastAvailable: result.forecastAvailable !== false,
+    forecast: normalizedForecast(result, anchor, rules),
     disasters: normalizedDisasters(result, anchor, rules),
     attributions: [...result.attributions],
     fallbackReason: input.fallbackReason ?? null,
@@ -743,6 +893,8 @@ function deterministicFallback(
       visibilityKm: null,
     },
     alertsAvailable: false,
+    forecastAvailable: false,
+    forecast: [],
     disasters: [],
     attributions: [],
     fallbackReason: reason,
@@ -755,12 +907,12 @@ function fallbackReason(error: unknown): string {
 }
 
 export class TownWeatherService {
-  private readonly provider?: TownWeatherProvider;
+  private provider?: TownWeatherProvider;
   private readonly rules: TownWeatherRules;
-  private readonly anchors: Readonly<
+  private anchors: Readonly<
     Record<TownWeatherTownId, TownWeatherAnchor>
   >;
-  private readonly timeoutMs: number;
+  private timeoutMs: number;
   private readonly lastKnownGoodMs: number;
   private readonly clock: () => number;
   private readonly onProviderError?: TownWeatherServiceOptions[
@@ -769,6 +921,7 @@ export class TownWeatherService {
   private readonly cache = new Map<string, TownWeatherSnapshot>();
   private readonly inFlight = new Map<string, Promise<TownWeatherSnapshot>>();
   private readonly lastKnownGood = new Map<TownWeatherTownId, LastKnownGood>();
+  private configurationRevision = 0;
 
   constructor(options: TownWeatherServiceOptions = {}) {
     if (
@@ -800,26 +953,55 @@ export class TownWeatherService {
     return this.provider !== undefined;
   }
 
+  configure(options: {
+    readonly provider?: TownWeatherProvider;
+    readonly anchors?: Readonly<Record<TownWeatherTownId, TownWeatherAnchor>>;
+    readonly timeoutMs?: number;
+  }): void {
+    if (
+      options.timeoutMs !== undefined &&
+      (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 1)
+    ) {
+      throw new TypeError("Town weather timeout must be a positive number");
+    }
+    this.provider = options.provider;
+    if (options.anchors) this.anchors = structuredClone(options.anchors);
+    if (options.timeoutMs !== undefined) this.timeoutMs = options.timeoutMs;
+    this.configurationRevision += 1;
+    this.cache.clear();
+    this.inFlight.clear();
+    this.lastKnownGood.clear();
+  }
+
   async getTownWeather(
     townId: TownWeatherTownId,
     now = this.clock(),
   ): Promise<TownWeatherSnapshot> {
     const anchor = this.anchors[townId];
     if (!anchor) throw new RangeError(`Unknown town weather anchor: ${townId}`);
+    const revision = this.configurationRevision;
     const validFrom = townWeatherBucketStart(now, anchor.utcOffsetMinutes);
-    const key = bucketKey(townId, validFrom);
+    const key = `${revision}|${bucketKey(townId, validFrom)}`;
     const cached = this.cache.get(key);
     if (cached) return snapshotAt(cached, now);
 
     const running = this.inFlight.get(key);
     if (running) return snapshotAt(await running, now);
 
-    const operation = this.resolveSnapshot(anchor, validFrom, now);
+    const operation = this.resolveSnapshot(
+      anchor,
+      validFrom,
+      now,
+      revision,
+      this.provider,
+    );
     this.inFlight.set(key, operation);
     try {
       const snapshot = await operation;
-      this.cache.set(key, snapshot);
-      this.prune(now);
+      if (this.configurationRevision === revision) {
+        this.cache.set(key, snapshot);
+        this.prune(now);
+      }
       return snapshotAt(snapshot, now);
     } finally {
       if (this.inFlight.get(key) === operation) this.inFlight.delete(key);
@@ -832,7 +1014,7 @@ export class TownWeatherService {
       return;
     }
     for (const key of this.cache.keys()) {
-      if (key.startsWith(`${townId}:`)) this.cache.delete(key);
+      if (key.includes(`|${townId}:`)) this.cache.delete(key);
     }
   }
 
@@ -840,8 +1022,10 @@ export class TownWeatherService {
     anchor: TownWeatherAnchor,
     validFrom: number,
     now: number,
+    configurationRevision: number,
+    provider: TownWeatherProvider | undefined,
   ): Promise<TownWeatherSnapshot> {
-    if (!this.provider) {
+    if (!provider) {
       return deterministicFallback(
         anchor,
         validFrom,
@@ -852,13 +1036,15 @@ export class TownWeatherService {
 
     try {
       const result = validateProviderResult(
-        await this.fetchWithTimeout(anchor),
+        await this.fetchWithTimeout(anchor, provider),
         now,
       );
-      this.lastKnownGood.set(anchor.townId, {
-        result: structuredClone(result),
-        fetchedAt: now,
-      });
+      if (this.configurationRevision === configurationRevision) {
+        this.lastKnownGood.set(anchor.townId, {
+          result: structuredClone(result),
+          fetchedAt: now,
+        });
+      }
       return providerSnapshot({
         result,
         anchor,
@@ -870,7 +1056,9 @@ export class TownWeatherService {
     } catch (error) {
       this.onProviderError?.(error, anchor.townId);
       const reason = fallbackReason(error);
-      const previous = this.lastKnownGood.get(anchor.townId);
+      const previous = this.configurationRevision === configurationRevision
+        ? this.lastKnownGood.get(anchor.townId)
+        : undefined;
       if (
         previous &&
         now >= previous.fetchedAt &&
@@ -892,6 +1080,7 @@ export class TownWeatherService {
 
   private async fetchWithTimeout(
     anchor: TownWeatherAnchor,
+    provider: TownWeatherProvider,
   ): Promise<TownWeatherProviderResult> {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -904,7 +1093,7 @@ export class TownWeatherService {
     });
     try {
       return await Promise.race([
-        this.provider!.fetchTownWeather(anchor, controller.signal),
+        provider.fetchTownWeather(anchor, controller.signal),
         timeoutPromise,
       ]);
     } finally {

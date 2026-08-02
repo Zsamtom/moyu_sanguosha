@@ -24,6 +24,10 @@ import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
 import { createSessionMiddleware } from "./session.js";
 import { createTownWeatherService } from "./town-weather.js";
+import {
+  PostgresTownWeatherSettingsStore,
+  TownWeatherSettingsService,
+} from "./weather-settings.js";
 import { ensureInitialAdmin, PostgresUserStore } from "./users.js";
 
 async function main(): Promise<void> {
@@ -56,7 +60,14 @@ async function main(): Promise<void> {
       new PostgresLlmGovernanceStore(pool),
     );
     const directorJobs = new PostgresHomesteadDirectorJobStore(pool);
-    const townWeather = createTownWeatherService(config.townWeather);
+    const townWeather = createTownWeatherService();
+    const townWeatherSettings = new TownWeatherSettingsService(
+      new PostgresTownWeatherSettingsStore(pool),
+      townWeather,
+      config.sessionSecret,
+      config.townWeather,
+    );
+    await townWeatherSettings.initialize();
     const farm = new FarmService(
       new PostgresFarmStateStore(pool),
       botDecisions,
@@ -102,6 +113,7 @@ async function main(): Promise<void> {
       rooms,
       securityEvents,
       llmSettings,
+      townWeatherSettings,
       llmGovernance,
       directorJobs,
       farm,

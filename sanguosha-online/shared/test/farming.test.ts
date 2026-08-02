@@ -63,6 +63,48 @@ describe("real-time farming engine", () => {
     expect(after.plots[0]).toMatchObject({ ready: true, progress: 1 });
   });
 
+  it("uses the authoritative same-day modifier for displayed and settled prices", () => {
+    let state = game();
+    state.coins = 1_000;
+    state.produce.wheat = 1;
+    const production = {
+      yieldPercent: 0,
+      durationPercent: 0,
+      label: "灾期市场",
+      marketBuyPercent: 20,
+      marketSellPercent: 25,
+    };
+    const baseMarketPrice = state.market.wheat.price;
+    const view = getFarmingGameView(
+      state,
+      state.ownerId,
+      start,
+      production,
+    );
+    expect(view.crops.wheat.seedCost).toBe(
+      Math.round(FARMING_CROPS.wheat.seedCost * 1.2),
+    );
+    expect(view.market.wheat.price).toBe(Math.round(baseMarketPrice * 1.25));
+
+    state = applyFarmingAction(
+      state,
+      { type: "farming_buy_seed", cropId: "wheat", quantity: 1 },
+      start,
+      production,
+    );
+    expect(state.coins).toBe(
+      1_000 - Math.round(FARMING_CROPS.wheat.seedCost * 1.2),
+    );
+    const beforeSale = state.coins;
+    state = applyFarmingAction(
+      state,
+      { type: "farming_sell", cropId: "wheat", quantity: 1 },
+      start + 1,
+      production,
+    );
+    expect(state.coins - beforeSale).toBe(Math.round(baseMarketPrice * 1.25));
+  });
+
   it("unlocks atomic batch planting and harvesting at farm level 3", () => {
     const locked = game();
     expect(() => applyFarmingAction(

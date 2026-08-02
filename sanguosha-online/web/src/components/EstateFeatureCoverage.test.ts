@@ -74,7 +74,8 @@ describe('three-sector interface capability coverage', () => {
       'homestead_upgrade_mine_protection',
       'homestead_survey_layer',
       'homestead_talk_npc',
-      'homestead_claim_season_reward',
+      'homestead_claim_honor_reward',
+      'homestead_upgrade_infrastructure',
       'homestead_upgrade_resilience',
       'homestead_activate_emergency_boost',
       'homestead_unlock_town',
@@ -82,13 +83,9 @@ describe('three-sector interface capability coverage', () => {
       'homestead_buy_merchant_item',
       'homestead_use_acceleration_card',
       'homestead_update_ai_profile',
-      'homestead_start_town_sector',
-      'homestead_collect_town_sector',
-      'homestead_upgrade_town_sector',
-      'homestead_sell_town_resource',
-      'homestead_resolve_town_problem',
-      'homestead_restore_town_landmark',
       'homestead_complete_value_route',
+      'homestead_dispatch_cargo',
+      'homestead_collect_cargo',
     ]);
   });
 });

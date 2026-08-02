@@ -56,6 +56,8 @@ export interface PlannedTownPreview {
   readonly climate: string;
   readonly description: string;
   readonly plannedSpecialties: readonly string[];
+  /** Reserved planning metadata. Planned towns do not issue weather calls. */
+  readonly weatherAnchor: TownWeatherAnchor;
 }
 
 export interface TownRouteDefinition {

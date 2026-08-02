@@ -793,6 +793,22 @@ p {
   width: 100%;
 }
 
+.weather-location-grid {
+  margin-top: 4px;
+}
+
+.weather-location-card {
+  padding: 16px;
+  border: 1px solid rgba(69, 82, 65, 0.14);
+  border-radius: 10px;
+  background: rgba(246, 249, 243, 0.72);
+}
+
+.weather-location-card > strong {
+  display: block;
+  margin-bottom: 12px;
+}
+
 .llm-settings-actions {
   display: flex;
   align-items: center;

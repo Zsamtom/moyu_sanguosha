@@ -14,6 +14,11 @@ import {
   type EstateTownId,
   type TownDefinition,
 } from "./towns/registry.js";
+import {
+  applyAccumulatedProductionModifier,
+  applyDiscreteProductionModifier,
+  applyPriceModifier,
+} from "./production-modifier.js";
 
 export const FARMING_STATE_VERSION = 2 as const;
 export const FARMING_STARTING_PLOTS = 6;
@@ -297,6 +302,11 @@ export interface EstateProductionRule {
   readonly yieldPercent: number;
   readonly durationPercent: number;
   readonly label: string;
+  /** Same-day authoritative purchase-price modifier from events/disasters. */
+  readonly marketBuyPercent?: number;
+  /** Same-day authoritative sale-price modifier from events/disasters/facilities. */
+  readonly marketSellPercent?: number;
+  readonly marketLabel?: string;
 }
 
 export interface FarmingMarketQuote {
@@ -368,6 +378,8 @@ export interface FarmingGameState {
   level: number;
   unlockedPlots: number;
   dogLevel: number;
+  /** Backend-only carry used to settle fractional yield across harvests. */
+  productionRemainder: number;
   seeds: FarmingCropCounts;
   produce: FarmingCropCounts;
   mutations: FarmingCropCounts;
@@ -479,6 +491,7 @@ export interface FarmingGameView {
   readonly unlockedPlots: number;
   readonly dogLevel: number;
   readonly dogBlockChance: number;
+  readonly productionRule: EstateProductionRule;
   readonly crops: Readonly<Record<FarmingCropId, FarmingCropDefinition>>;
   readonly inventory: FarmingInventoryView | null;
   readonly discoveredCrops: FarmingCropId[];
@@ -724,9 +737,9 @@ function plotYield(plot: FarmingPlotState, now: number): number {
   if (!plot.watered) result -= 1;
   if (cropIssueAppeared(plot.weedAt, plot.weedCleared, now)) result -= 1;
   if (cropIssueAppeared(plot.pestAt, plot.pestCleared, now)) result -= 1;
-  return Math.max(
-    1,
-    Math.round(result * (100 + (plot.productionModifierPercent ?? 0)) / 100),
+  return applyDiscreteProductionModifier(
+    Math.max(1, result),
+    plot.productionModifierPercent ?? 0,
   );
 }
 
@@ -793,6 +806,7 @@ export function createFarmingGame(input: {
     level: 1,
     unlockedPlots: FARMING_STARTING_PLOTS,
     dogLevel: 0,
+    productionRemainder: 0,
     seeds,
     produce: cropCounts(0, townId),
     mutations: cropCounts(0, townId),
@@ -911,6 +925,10 @@ export function refreshFarmingGame(
     game.townId = "greenvale";
     changed = true;
   }
+  if (!Number.isFinite(game.productionRemainder)) {
+    game.productionRemainder = 0;
+    changed = true;
+  }
   if (game.marketDay !== key) {
     game.market = marketForDay(game.seed, key, game.townId, game.market);
     game.marketDay = key;
@@ -1019,7 +1037,11 @@ export function applyFarmingAction(
         `农场达到 ${crop.unlockLevel} 级后才能购买${crop.name}种子`,
       );
     }
-    const cost = crop.seedCost * action.quantity;
+    const unitCost = applyPriceModifier(
+      crop.seedCost,
+      production.marketBuyPercent,
+    );
+    const cost = unitCost * action.quantity;
     if (game.coins < cost) {
       throw new FarmingRuleError("FARMING_NOT_ENOUGH_COINS", "金币不足");
     }
@@ -1226,7 +1248,20 @@ export function applyFarmingAction(
       throw new FarmingRuleError("FARMING_NOT_READY", "作物尚未成熟");
     }
     const crop = crops[plot.cropId];
-    const totalYield = plotYield(plot, effectiveNow);
+    const baseYield = Math.max(
+      1,
+      crop.yield -
+        (plot.watered ? 0 : 1) -
+        (cropIssueAppeared(plot.weedAt, plot.weedCleared, effectiveNow) ? 1 : 0) -
+        (cropIssueAppeared(plot.pestAt, plot.pestCleared, effectiveNow) ? 1 : 0),
+    );
+    const settlement = applyAccumulatedProductionModifier(
+      baseYield,
+      plot.productionModifierPercent ?? 0,
+      game.productionRemainder,
+    );
+    game.productionRemainder = settlement.remainder;
+    const totalYield = settlement.quantity;
     const ownerYield = Math.max(0, totalYield - plot.stolen);
     game.produce[crop.id] += ownerYield;
     game.statistics.harvests += 1;
@@ -1274,7 +1309,11 @@ export function applyFarmingAction(
     if (game.produce[action.cropId] < action.quantity) {
       throw new FarmingRuleError("FARMING_NOT_ENOUGH_PRODUCE", "仓库库存不足");
     }
-    const revenue = game.market[action.cropId].price * action.quantity;
+    const unitPrice = applyPriceModifier(
+      game.market[action.cropId].price,
+      production.marketSellPercent,
+    );
+    const revenue = unitPrice * action.quantity;
     game.produce[action.cropId] -= action.quantity;
     game.coins += revenue;
     game.statistics.produceSold += action.quantity;
@@ -1296,7 +1335,11 @@ export function applyFarmingAction(
       throw new FarmingRuleError("FARMING_NOT_ENOUGH_MUTATIONS", "变异作物数量不足");
     }
     const crop = crops[action.cropId];
-    const coinReward = game.market[action.cropId].price * 5 * action.quantity;
+    const mutationPrice = applyPriceModifier(
+      game.market[action.cropId].price * 5,
+      production.marketSellPercent,
+    );
+    const coinReward = mutationPrice * action.quantity;
     const experienceReward = crop.harvestExperience * action.quantity;
     game.mutations[action.cropId] -= action.quantity;
     game.coins += coinReward;
@@ -1544,6 +1587,11 @@ export function getFarmingGameView(
   state: FarmingGameState,
   viewerId: string,
   now: number,
+  production: EstateProductionRule = {
+    yieldPercent: 0,
+    durationPercent: 0,
+    label: "常态生产",
+  },
 ): FarmingGameView {
   const game = refreshFarmingGame(state, now);
   const effectiveNow = Math.max(now, game.updatedAt);
@@ -1568,7 +1616,19 @@ export function getFarmingGameView(
     unlockedPlots: game.unlockedPlots,
     dogLevel: game.dogLevel,
     dogBlockChance: dogBlockChance(game.dogLevel),
-    crops: structuredClone(farmingCrops(game.townId)),
+    productionRule: structuredClone(production),
+    crops: Object.fromEntries(
+      Object.entries(farmingCrops(game.townId)).map(([cropId, crop]) => [
+        cropId,
+        {
+          ...structuredClone(crop),
+          seedCost: applyPriceModifier(
+            crop.seedCost,
+            production.marketBuyPercent,
+          ),
+        },
+      ]),
+    ) as Readonly<Record<FarmingCropId, FarmingCropDefinition>>,
     inventory: isOwner
       ? {
           coins: game.coins,
@@ -1579,7 +1639,22 @@ export function getFarmingGameView(
       : null,
     discoveredCrops: structuredClone(game.discoveredCrops),
     plots: game.plots.map((plot) => plotView(game, plot, effectiveNow)),
-    market: structuredClone(game.market),
+    market: Object.fromEntries(
+      Object.entries(game.market).map(([cropId, quote]) => [
+        cropId,
+        {
+          ...structuredClone(quote),
+          price: applyPriceModifier(
+            quote.price,
+            production.marketSellPercent,
+          ),
+          previousPrice: applyPriceModifier(
+            quote.previousPrice,
+            production.marketSellPercent,
+          ),
+        },
+      ]),
+    ) as Record<FarmingCropId, FarmingMarketQuote>,
     marketEvent: structuredClone(game.marketEvent),
     nextExpansion: FARMING_PLOT_EXPANSIONS.find(
       (candidate) => candidate.plotIndex === game.unlockedPlots,
@@ -1682,6 +1757,15 @@ export function assertRestorableFarmingGameState(
     !Number.isSafeInteger(value.dogLevel) ||
     Number(value.dogLevel) < 0 ||
     Number(value.dogLevel) > FARMING_DOG_UPGRADES.length ||
+    (
+      value.productionRemainder !== undefined &&
+      (
+        typeof value.productionRemainder !== "number" ||
+        !Number.isFinite(value.productionRemainder) ||
+        Number(value.productionRemainder) <= -1 ||
+        Number(value.productionRemainder) >= 1
+      )
+    ) ||
     !validCounts(value.seeds, townId) ||
     !validCounts(value.produce, townId) ||
     !validCounts(value.mutations, townId) ||

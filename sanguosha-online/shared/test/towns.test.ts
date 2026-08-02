@@ -179,7 +179,7 @@ describe("modular estate town catalog", () => {
         feedValue -
         animal.careCost;
       expect(animal.purchaseCost / netCycleValue)
-        .toBeGreaterThanOrEqual(6);
+        .toBeGreaterThanOrEqual(4);
     }
     expect(Object.values(FROSTPEAK_MINE_DEPOSITS).every((deposit) =>
       deposit.expeditionCost > 0 && deposit.rationAmount > 0 &&
@@ -191,6 +191,9 @@ describe("modular estate town catalog", () => {
         deposit.supportProductId as (typeof FROSTPEAK_PRODUCT_IDS)[number],
       )
     )).toBe(true);
+    expect(FROSTPEAK_RANCH_ANIMALS.snow_chicken.purchaseCost).toBeLessThan(
+      FROSTPEAK_MINE_DEPOSITS.glacier_gold.orePrice,
+    );
   });
 
   it("rejects cross-town inventory contamination in restorable saves", () => {

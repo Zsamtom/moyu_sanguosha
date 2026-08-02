@@ -13,6 +13,7 @@ import type { HomesteadDirectorJobStore } from "../homestead-director-jobs.js";
 import type { SecurityEvents } from "../security-events.js";
 import type { RoomService } from "../rooms.js";
 import type { UserStore } from "../users.js";
+import type { TownWeatherSettingsService } from "../weather-settings.js";
 
 const usernameSchema = z.string().trim().min(3).max(32)
   .regex(/^[A-Za-z0-9_.-]+$/, "用户名只能包含字母、数字、点、下划线和连字符");
@@ -48,6 +49,27 @@ const llmConnectionTestSchema = z.object({
   apiKey: z.string().trim().min(8).max(512).optional(),
   model: deepSeekModelSchema.optional(),
 }).strict();
+const qWeatherHostSchema = z.string().trim().max(255);
+const townWeatherLocationSchema = z.object({
+  realCityName: z.string().trim().min(1).max(40),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+}).strict();
+const townWeatherSettingsSchema = z.object({
+  enabled: z.boolean(),
+  apiHost: qWeatherHostSchema,
+  apiKey: z.string().trim().min(8).max(512).optional(),
+  clearApiKey: z.boolean().optional(),
+  timeoutMs: z.number().int().min(500).max(10_000),
+  forecastDays: z.number().int().min(1).max(10),
+  towns: z.object({
+    greenvale: townWeatherLocationSchema,
+    frostpeak: townWeatherLocationSchema,
+  }).strict(),
+}).strict();
+const townWeatherConnectionTestSchema = townWeatherSettingsSchema
+  .partial()
+  .omit({ enabled: true, clearApiKey: true });
 
 export function createAdminRouter(
   users: UserStore,
@@ -56,6 +78,7 @@ export function createAdminRouter(
   llmSettings?: LlmSettingsService,
   llmGovernance?: LlmGovernanceService,
   directorJobs?: HomesteadDirectorJobStore,
+  townWeatherSettings?: TownWeatherSettingsService,
 ): Router {
   const router = Router();
   router.use(requireAuth(users), requirePasswordChangeComplete, requireAdmin);
@@ -116,6 +139,81 @@ export function createAdminRouter(
           error instanceof Error && error.name === "AbortError"
             ? "连接 DeepSeek 超时，请稍后重试"
             : "DeepSeek 连接失败，请检查 API Key 和网络",
+        );
+      }
+    }));
+  }
+
+  if (townWeatherSettings) {
+    router.get("/weather-settings", (_request, response) => {
+      response.set("Cache-Control", "no-store").json({
+        settings: townWeatherSettings.getPublicSettings(),
+      });
+    });
+
+    router.put("/weather-settings", asyncHandler(async (request, response) => {
+      const actor = currentUser(response);
+      const input = townWeatherSettingsSchema.parse(request.body);
+      const existing = townWeatherSettings.getPublicSettings();
+      const willHaveApiKey = input.clearApiKey
+        ? false
+        : Boolean(input.apiKey || existing.apiKeyConfigured);
+      if (input.enabled && !input.apiHost.trim()) {
+        throw new HttpError(
+          400,
+          "QWEATHER_API_HOST_REQUIRED",
+          "启用真实天气前必须配置和风天气专属 API Host",
+        );
+      }
+      if (input.enabled && !willHaveApiKey) {
+        throw new HttpError(
+          400,
+          "QWEATHER_API_KEY_REQUIRED",
+          "启用真实天气前必须配置和风天气 API Key",
+        );
+      }
+      try {
+        const settings = await townWeatherSettings.update(input, actor.id);
+        await users.recordAudit(actor.id, "settings.weather.update", actor.id, {
+          provider: settings.provider,
+          enabled: settings.enabled,
+          forecastDays: settings.forecastDays,
+          towns: settings.towns,
+          apiKeyChanged: Boolean(input.apiKey || input.clearApiKey),
+        });
+        response.set("Cache-Control", "no-store").json({ settings });
+      } catch (error) {
+        if (error instanceof Error && error.message === "QWEATHER_API_HOST_INVALID") {
+          throw new HttpError(
+            400,
+            "QWEATHER_API_HOST_INVALID",
+            "API Host 必须是专属 HTTPS *.qweatherapi.com 域名",
+          );
+        }
+        throw error;
+      }
+    }));
+
+    router.post("/weather-settings/test", asyncHandler(async (request, response) => {
+      const input = townWeatherConnectionTestSchema.parse(request.body ?? {});
+      const existing = townWeatherSettings.getPublicSettings();
+      if (!input.apiKey && !existing.apiKeyConfigured) {
+        throw new HttpError(
+          400,
+          "QWEATHER_API_KEY_REQUIRED",
+          "请先输入或保存和风天气 API Key",
+        );
+      }
+      try {
+        const result = await townWeatherSettings.testConnection(input);
+        response.set("Cache-Control", "no-store").json({ result });
+      } catch (error) {
+        throw new HttpError(
+          502,
+          "QWEATHER_CONNECTION_FAILED",
+          error instanceof Error && error.name === "AbortError"
+            ? "连接和风天气超时，请稍后重试"
+            : "和风天气连接失败，请检查 Host、API Key、坐标和接口权限",
         );
       }
     }));

@@ -17,6 +17,11 @@ import {
   type EstateTownId,
   type TownDefinition,
 } from "./towns/registry.js";
+import {
+  applyAccumulatedProductionModifier,
+  applyDiscreteProductionModifier,
+  applyPriceModifier,
+} from "./production-modifier.js";
 
 export const RANCH_STATE_VERSION = 1 as const;
 export const RANCH_REQUIRED_FARM_LEVEL = 1;
@@ -75,8 +80,8 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "鸡蛋",
     requiredFarmLevel: 1,
     requiredRanchLevel: 1,
-    purchaseCost: 400,
-    resalePrice: 200,
+    purchaseCost: 180,
+    resalePrice: 90,
     feedCropId: "wheat",
     feedAmount: 1,
     careCost: 5,
@@ -92,8 +97,8 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "鸭蛋",
     requiredFarmLevel: 4,
     requiredRanchLevel: 2,
-    purchaseCost: 700,
-    resalePrice: 350,
+    purchaseCost: 320,
+    resalePrice: 160,
     feedCropId: "corn",
     feedAmount: 1,
     careCost: 8,
@@ -109,8 +114,8 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "兔绒",
     requiredFarmLevel: 5,
     requiredRanchLevel: 3,
-    purchaseCost: 1_100,
-    resalePrice: 550,
+    purchaseCost: 480,
+    resalePrice: 240,
     feedCropId: "carrot",
     feedAmount: 1,
     careCost: 12,
@@ -126,8 +131,8 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "羊毛",
     requiredFarmLevel: 6,
     requiredRanchLevel: 4,
-    purchaseCost: 1_800,
-    resalePrice: 900,
+    purchaseCost: 920,
+    resalePrice: 460,
     feedCropId: "wheat",
     feedAmount: 2,
     careCost: 21,
@@ -143,8 +148,8 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "牛奶",
     requiredFarmLevel: 8,
     requiredRanchLevel: 6,
-    purchaseCost: 3_600,
-    resalePrice: 1_800,
+    purchaseCost: 1_500,
+    resalePrice: 750,
     feedCropId: "corn",
     feedAmount: 2,
     careCost: 36,
@@ -160,8 +165,8 @@ export const RANCH_ANIMALS: Readonly<Record<
     productName: "羊奶",
     requiredFarmLevel: 10,
     requiredRanchLevel: 8,
-    purchaseCost: 5_500,
-    resalePrice: 2_750,
+    purchaseCost: 3_000,
+    resalePrice: 1_500,
     feedCropId: "carrot",
     feedAmount: 2,
     careCost: 66,
@@ -294,6 +299,8 @@ export interface RanchGameState {
   experience: number;
   level: number;
   unlockedPens: number;
+  /** Backend-only carry used to settle fractional yield across collections. */
+  productionRemainder: number;
   products: RanchProductCounts;
   pens: RanchPenState[];
   dailySocial: RanchDailySocial;
@@ -385,6 +392,7 @@ export interface RanchGameView {
   readonly currentLevelExperience: number;
   readonly nextLevelExperience: number | null;
   readonly unlockedPens: number;
+  readonly productionRule: import("./farming.js").EstateProductionRule;
   readonly animals: Readonly<Record<RanchAnimalId, RanchAnimalDefinition>>;
   readonly economy: {
     readonly coins: number;
@@ -629,12 +637,9 @@ function messAppeared(pen: RanchPenState, now: number): boolean {
 function penYield(pen: RanchPenState, now: number): number {
   if (!pen.animalId || pen.producesAt === null) return 0;
   const base = ALL_RANCH_ANIMALS[pen.animalId].yield;
-  return Math.max(
-    1,
-    Math.round(
-      (base - (messAppeared(pen, now) ? 1 : 0)) *
-        (100 + (pen.productionModifierPercent ?? 0)) / 100,
-    ),
+  return applyDiscreteProductionModifier(
+    Math.max(1, base - (messAppeared(pen, now) ? 1 : 0)),
+    pen.productionModifierPercent ?? 0,
   );
 }
 
@@ -687,6 +692,7 @@ export function createRanchGame(input: {
     experience: 0,
     level: 1,
     unlockedPens: RANCH_STARTING_PENS,
+    productionRemainder: 0,
     products: productCounts(0, townId),
     pens: Array.from({ length: RANCH_MAX_PENS }, (_, index) => emptyPen(index)),
     dailySocial: { dayKey: dayKey(input.now), helps: 0, collects: 0 },
@@ -711,6 +717,10 @@ export function refreshRanchGame(
   let changed = false;
   if (!isEstateTownId(game.townId)) {
     game.townId = "greenvale";
+    changed = true;
+  }
+  if (!Number.isFinite(game.productionRemainder)) {
+    game.productionRemainder = 0;
     changed = true;
   }
   if (game.dailySocial.dayKey !== key) {
@@ -761,10 +771,14 @@ export function applyRanchAction(
         `需要农场 ${animal.requiredFarmLevel} 级、牧场 ${animal.requiredRanchLevel} 级才能饲养${animal.name}`,
       );
     }
-    if (economy.coins < animal.purchaseCost) {
+    const purchaseCost = applyPriceModifier(
+      animal.purchaseCost,
+      production.marketBuyPercent,
+    );
+    if (economy.coins < purchaseCost) {
       throw new RanchRuleError("RANCH_NOT_ENOUGH_COINS", "购入动物的金币不足");
     }
-    economy.coins -= animal.purchaseCost;
+    economy.coins -= purchaseCost;
     economyChanged = true;
     Object.assign(pen, emptyPen(pen.index), { animalId: animal.id });
     ranch.statistics.animalsPurchased += 1;
@@ -773,7 +787,7 @@ export function applyRanchAction(
       ranch,
       effectiveNow,
       "animal",
-      `购入${animal.name}并安置在 ${pen.index + 1} 号畜舍，支出 ${animal.purchaseCost} 金币。`,
+      `购入${animal.name}并安置在 ${pen.index + 1} 号畜舍，支出 ${purchaseCost} 金币。`,
     );
   } else if (action.type === "ranch_move_animal") {
     if (action.fromPenIndex === action.toPenIndex) {
@@ -808,15 +822,19 @@ export function applyRanchAction(
       throw new RanchRuleError("RANCH_ANIMAL_BUSY", "生产中的动物不能出售，请先收取产品");
     }
     const animal = animals[pen.animalId];
-    economy.coins += animal.resalePrice;
+    const resalePrice = applyPriceModifier(
+      animal.resalePrice,
+      production.marketSellPercent,
+    );
+    economy.coins += resalePrice;
     economyChanged = true;
-    ranch.statistics.coinsEarned += animal.resalePrice;
+    ranch.statistics.coinsEarned += resalePrice;
     Object.assign(pen, emptyPen(pen.index));
     addLog(
       ranch,
       effectiveNow,
       "economy",
-      `出售 ${pen.index + 1} 号畜舍的${animal.name}，农场账户收入 ${animal.resalePrice} 金币。`,
+      `出售 ${pen.index + 1} 号畜舍的${animal.name}，农场账户收入 ${resalePrice} 金币。`,
     );
   } else if (action.type === "ranch_feed") {
     const pen = requirePen(ranch, action.penIndex);
@@ -833,10 +851,14 @@ export function applyRanchAction(
         `需要 ${animal.feedAmount} 份${animal.feedCropId === "wheat" ? "小麦" : animal.feedCropId === "corn" ? "玉米" : "胡萝卜"}作为饲料`,
       );
     }
-    if (economy.coins < animal.careCost) {
+    const careCost = applyPriceModifier(
+      animal.careCost,
+      production.marketBuyPercent,
+    );
+    if (economy.coins < careCost) {
       throw new RanchRuleError(
         "RANCH_NOT_ENOUGH_COINS",
-        `投喂还需要 ${animal.careCost} 金币用于垫料与基础诊疗`,
+        `投喂还需要 ${careCost} 金币用于垫料与基础诊疗`,
       );
     }
     const duration = Math.max(
@@ -847,7 +869,7 @@ export function applyRanchAction(
       ),
     );
     economy.produce[animal.feedCropId] -= animal.feedAmount;
-    economy.coins -= animal.careCost;
+    economy.coins -= careCost;
     economyChanged = true;
     pen.cycle += 1;
     pen.fedAt = effectiveNow;
@@ -866,7 +888,7 @@ export function applyRanchAction(
       ranch,
       effectiveNow,
       "animal",
-      `给 ${pen.index + 1} 号畜舍的${animal.name}投喂，并支付 ${animal.careCost} 金币垫料与诊疗费；预计 ${new Date(pen.producesAt).toLocaleString("zh-CN")} 可收取${animal.productName}。`,
+      `给 ${pen.index + 1} 号畜舍的${animal.name}投喂，并支付 ${careCost} 金币垫料与诊疗费；预计 ${new Date(pen.producesAt).toLocaleString("zh-CN")} 可收取${animal.productName}。`,
     );
   } else if (action.type === "ranch_clean") {
     const pen = requirePen(ranch, action.penIndex);
@@ -889,7 +911,17 @@ export function applyRanchAction(
       throw new RanchRuleError("RANCH_NOT_READY", "动物产品尚未产出");
     }
     const animal = animals[pen.animalId];
-    const totalYield = penYield(pen, effectiveNow);
+    const baseYield = Math.max(
+      1,
+      animal.yield - (messAppeared(pen, effectiveNow) ? 1 : 0),
+    );
+    const settlement = applyAccumulatedProductionModifier(
+      baseYield,
+      pen.productionModifierPercent ?? 0,
+      ranch.productionRemainder,
+    );
+    ranch.productionRemainder = settlement.remainder;
+    const totalYield = settlement.quantity;
     const ownerYield = Math.max(0, totalYield - pen.taken);
     ranch.products[animal.productId] += ownerYield;
     ranch.statistics.productsCollected += ownerYield;
@@ -916,7 +948,11 @@ export function applyRanchAction(
     const animal = Object.values(animals).find(
       (candidate) => candidate.productId === action.productId,
     )!;
-    const revenue = animal.productPrice * action.quantity;
+    const unitPrice = applyPriceModifier(
+      animal.productPrice,
+      production.marketSellPercent,
+    );
+    const revenue = unitPrice * action.quantity;
     ranch.products[action.productId] -= action.quantity;
     economy.coins += revenue;
     economyChanged = true;
@@ -1118,6 +1154,7 @@ export function getRanchGameView(
     readonly dogLevel: number;
     readonly coins?: number;
     readonly produce?: FarmingCropCounts;
+    readonly production?: import("./farming.js").EstateProductionRule;
   },
 ): RanchGameView {
   const game = refreshRanchGame(state, input.now);
@@ -1125,6 +1162,11 @@ export function getRanchGameView(
   const isOwner = game.ownerId === input.viewerId;
   const currentThreshold = RANCH_LEVEL_EXPERIENCE[game.level - 1] ?? 0;
   const nextThreshold = RANCH_LEVEL_EXPERIENCE[game.level] ?? null;
+  const production = input.production ?? {
+    yieldPercent: 0,
+    durationPercent: 0,
+    label: "常态生产",
+  };
   return {
     kind: "ranch",
     version: RANCH_STATE_VERSION,
@@ -1147,7 +1189,31 @@ export function getRanchGameView(
     currentLevelExperience: currentThreshold,
     nextLevelExperience: nextThreshold,
     unlockedPens: game.unlockedPens,
-    animals: structuredClone(ranchAnimals(game.townId)),
+    productionRule: structuredClone(production),
+    animals: Object.fromEntries(
+      Object.entries(ranchAnimals(game.townId)).map(([animalId, animal]) => [
+        animalId,
+        {
+          ...structuredClone(animal),
+          purchaseCost: applyPriceModifier(
+            animal.purchaseCost,
+            production.marketBuyPercent,
+          ),
+          careCost: applyPriceModifier(
+            animal.careCost,
+            production.marketBuyPercent,
+          ),
+          resalePrice: applyPriceModifier(
+            animal.resalePrice,
+            production.marketSellPercent,
+          ),
+          productPrice: applyPriceModifier(
+            animal.productPrice,
+            production.marketSellPercent,
+          ),
+        },
+      ]),
+    ) as Readonly<Record<RanchAnimalId, RanchAnimalDefinition>>,
     economy: isOwner && input.coins !== undefined && input.produce
       ? {
           coins: input.coins,
@@ -1240,6 +1306,15 @@ export function assertRestorableRanchGameState(
     !Number.isSafeInteger(value.unlockedPens) ||
     Number(value.unlockedPens) < RANCH_STARTING_PENS ||
     Number(value.unlockedPens) > RANCH_MAX_PENS ||
+    (
+      value.productionRemainder !== undefined &&
+      (
+        typeof value.productionRemainder !== "number" ||
+        !Number.isFinite(value.productionRemainder) ||
+        Number(value.productionRemainder) <= -1 ||
+        Number(value.productionRemainder) >= 1
+      )
+    ) ||
     !validProducts(value.products, townId)
   ) {
     throw new Error("牧场主状态无效");

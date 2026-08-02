@@ -566,6 +566,7 @@ export type HomesteadRecipeId =
 export type HomesteadResearchNodeId =
   | 'soil_science'
   | 'crop_rotation'
+  | 'precision_irrigation'
   | 'animal_nutrition'
   | 'animal_genetics'
   | 'geology'
@@ -573,7 +574,20 @@ export type HomesteadResearchNodeId =
   | 'estate_engineering'
   | 'automation'
   | 'civic_network'
-  | 'seasonal_mastery';
+  | 'cooperative_logistics'
+  | 'seasonal_mastery'
+  | 'permafrost_science'
+  | 'alpine_rotation'
+  | 'thermal_irrigation'
+  | 'yak_nutrition'
+  | 'cold_resilient_breeding'
+  | 'glacial_geology'
+  | 'thermal_vein_mining'
+  | 'cold_region_engineering'
+  | 'frostpeak_automation'
+  | 'mountain_mutual_aid'
+  | 'avalanche_logistics'
+  | 'aurora_honor';
 
 export type HomesteadCropFamily = 'grain' | 'root' | 'orchard' | 'fiber';
 export type HomesteadFeedProgramId = 'pasture' | 'balanced' | 'mineral';
@@ -587,7 +601,10 @@ export type HomesteadMineLayerId = 'shallow' | 'middle' | 'deep' | 'ancient';
 export type HomesteadNpcId =
   | 'agronomist_lin'
   | 'veterinarian_su'
-  | 'engineer_qiao';
+  | 'engineer_qiao'
+  | 'agronomist_lobsang'
+  | 'veterinarian_deji'
+  | 'engineer_sonam';
 export type HomesteadNpcTopicId =
   | 'soil'
   | 'rotation'
@@ -595,7 +612,13 @@ export type HomesteadNpcTopicId =
   | 'traits'
   | 'layers'
   | 'safety';
-export type HomesteadSeasonMilestoneId = 'bronze' | 'silver' | 'gold';
+export type HomesteadHonorMilestoneId =
+  | 'newcomer'
+  | 'steward'
+  | 'specialist'
+  | 'exemplar'
+  | 'legend';
+export type HomesteadSeasonMilestoneId = HomesteadHonorMilestoneId;
 export type HomesteadWeatherId = 'clear' | 'gentle_rain' | 'heatwave' | 'frost';
 export type HomesteadResilienceId =
   | 'weather_station'
@@ -622,14 +645,58 @@ export type HomesteadValueRouteId =
 export type EstateMerchantItemId =
   | 'priority_dispatch'
   | 'rail_pass'
-  | 'merchant_banner';
+  | 'merchant_banner'
+  | 'valley_flour_pack'
+  | 'valley_feed_pack'
+  | 'valley_fortified_feed'
+  | 'valley_soil_kit'
+  | 'valley_workwear'
+  | 'valley_iron_pack'
+  | 'valley_mining_kit'
+  | 'valley_greenhouse_kit'
+  | 'valley_fuel_pack'
+  | 'frost_flour_pack'
+  | 'alpine_feed_pack'
+  | 'thermal_compost_pack'
+  | 'frost_felt_pack'
+  | 'frost_alloy_pack'
+  | 'insulated_kit_pack'
+  | 'winter_provisions_pack'
+  | 'preserves_pack'
+  | 'frost_fuel_pack';
+
+export type EstateCargoId =
+  | 'greenvale_warmhouse_supplies'
+  | 'greenvale_grain_relief'
+  | 'greenvale_machine_components'
+  | 'frostpeak_coldchain_supplies'
+  | 'frostpeak_alpine_medicine'
+  | 'frostpeak_thermal_materials';
+
+export type HomesteadInfrastructureId =
+  | 'operations_center'
+  | 'supply_hub'
+  | 'resilience_center'
+  | 'river_irrigation'
+  | 'cooperative_cold_storage'
+  | 'geothermal_greenhouse'
+  | 'avalanche_command';
 
 export interface HomesteadResourceView {
-  source: 'farm' | 'ranch' | 'mine' | 'goods';
+  source: 'farm' | 'ranch' | 'mine' | 'goods' | 'cargo';
   itemId: string;
   quantity: number;
   available: number;
   sufficient: boolean;
+}
+
+export interface HomesteadDecisionProductionEffect {
+  label: string;
+  farm?: { yieldPercent: number; durationPercent: number };
+  ranch?: { yieldPercent: number; durationPercent: number };
+  mine?: { yieldPercent: number; durationPercent: number };
+  marketBuyPercent?: number;
+  marketSellPercent?: number;
 }
 
 export interface HomesteadFacilityView {
@@ -749,6 +816,7 @@ export interface HomesteadWorldEventView {
       missingCoins: number;
       missingReputation: number;
       temporaryAlreadyUsed: boolean;
+      productionEffect: HomesteadDecisionProductionEffect | null;
     }>;
   };
 }
@@ -768,6 +836,20 @@ export interface HomesteadWeatherView {
   stale?: boolean;
   mechanicsEnabled?: boolean;
   alertsAvailable?: boolean;
+  forecastAvailable?: boolean;
+  forecast?: Array<{
+    forecastStartAt: number;
+    forecastEndAt: number;
+    weatherId: HomesteadWeatherId;
+    conditionCode: string;
+    conditionText: string;
+    temperatureMinC: number;
+    temperatureMaxC: number;
+    precipitationMm: number;
+    precipitationProbabilityPercent: number;
+    humidityPercent: number;
+    windSpeedKph: number;
+  }>;
   fallbackReason?: string | null;
   providerAttributions?: string[];
   liveHazards?: Array<{
@@ -820,6 +902,9 @@ export interface HomesteadProductionRuleView {
   yieldPercent: number;
   durationPercent: number;
   label: string;
+  marketBuyPercent?: number;
+  marketSellPercent?: number;
+  marketLabel?: string;
 }
 
 export interface HomesteadResilienceView {
@@ -864,10 +949,22 @@ export interface HomesteadResearchView {
     researchCost: number;
     requiredReputation: number;
     prerequisites: HomesteadResearchNodeId[];
+    production?: Partial<Record<
+      'farm' | 'ranch' | 'mine',
+      { yieldPercent: number; durationPercent: number }
+    >>;
+    unlocks?: string[];
   };
   unlocked: boolean;
   canUnlock: boolean;
   missingPrerequisites: HomesteadResearchNodeId[];
+  requirements: Array<{
+    label: string;
+    current: number;
+    required: number;
+    satisfied: boolean;
+  }>;
+  missingRequirements: string[];
 }
 
 export interface HomesteadSpecializationsView {
@@ -968,6 +1065,38 @@ export interface HomesteadNpcView {
   canTalkToday: boolean;
 }
 
+export interface HomesteadAdvisorGuidanceView {
+  dayKey: string;
+  npcId: HomesteadNpcId;
+  topicId: HomesteadNpcTopicId;
+  sectorId: 'farm' | 'ranch' | 'mine';
+  yieldPercent: number;
+  durationPercent: number;
+  label: string;
+}
+
+export interface HomesteadHonorView {
+  score: number;
+  claimedMilestones: HomesteadHonorMilestoneId[];
+  progressPercent: number;
+  milestones: Array<{
+    definition: {
+      id: HomesteadHonorMilestoneId;
+      name: string;
+      score: number;
+      coinReward: number;
+      researchReward: number;
+      goodReward: {
+        itemId: 'soil_conditioner' | 'fortified_feed' | 'mining_kit';
+        quantity: number;
+      } | null;
+    };
+    claimed: boolean;
+    canClaim: boolean;
+    lockedByResearch: boolean;
+  }>;
+}
+
 export interface HomesteadSeasonView {
   id: string;
   startsAt: number;
@@ -1009,11 +1138,44 @@ export interface HomesteadCollectionView {
     | 'mine'
     | 'research'
     | 'npc'
-    | 'season';
+    | 'honor'
+    | 'operations'
+    | 'logistics';
   name: string;
   description: string;
+  difficulty: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+  honorPoints: number;
   unlocked: boolean;
   unlockedAt: number | null;
+}
+
+export interface HomesteadInfrastructureView {
+  definition: {
+    id: HomesteadInfrastructureId;
+    townId: EstateTownId | null;
+    name: string;
+    description: string;
+    kind: 'common' | 'specialty';
+    maximumLevel: 3;
+    baseCoinCost: number;
+    baseResearchCost: number;
+    requiredReputation: number;
+    production: Partial<Record<
+      'farm' | 'ranch' | 'mine',
+      { yieldPercent: number; durationPercent: number }
+    >>;
+    marketSellPercentPerLevel: number;
+  };
+  level: number;
+  nextUpgrade: {
+    level: number;
+    coinCost: number;
+    researchCost: number;
+    alloyCost: number;
+    requiredGoodId: HomesteadGoodId;
+    canUpgrade: boolean;
+    disabledReason: string | null;
+  } | null;
 }
 
 export interface HomesteadAdviceView {
@@ -1025,6 +1187,16 @@ export interface HomesteadAdviceView {
   npcId: HomesteadNpcId;
   npcLine: string;
   generatedAt: number;
+  worldBeatId?:
+    | 'recovery'
+    | 'pressure'
+    | 'opportunity'
+    | 'community'
+    | 'discovery'
+    | 'trade';
+  foreshadowing?: string;
+  evidence?: Array<{ id: string; label: string }>;
+  merchantRecommendationId?: EstateMerchantItemId | null;
   steps: Array<{
     id: string;
     title: string;
@@ -1036,7 +1208,9 @@ export interface HomesteadAdviceView {
       | 'homestead-processing'
       | 'homestead-orders'
       | 'homestead-research'
-      | 'homestead-town-local';
+      | 'homestead-town-rhythm'
+      | 'homestead-town-local'
+      | 'homestead-town-trade';
   }>;
 }
 
@@ -1151,7 +1325,8 @@ export interface HomesteadMerchantItemView {
   coinPrice: number;
   requiredRenown: number;
   inventoryLimit: number;
-  weeklyPurchaseLimit: number;
+  dailyPurchaseLimit: number;
+  townId?: EstateTownId;
   category: 'utility' | 'information' | 'resilience' | 'cosmetic';
   numericEffect:
     | {
@@ -1160,9 +1335,15 @@ export interface HomesteadMerchantItemView {
         maximumSeconds: number;
       }
     | { kind: 'travel_discount'; percent: 50 }
-    | { kind: 'cosmetic' };
+    | { kind: 'cosmetic' }
+    | {
+        kind: 'resource_bundle';
+        source: 'farm' | 'ranch' | 'mine' | 'goods';
+        itemId: string;
+        quantity: number;
+      };
   owned: number;
-  purchasedThisWeek: number;
+  purchasedToday: number;
   canBuy: boolean;
   disabledReason: string | null;
   recommended: boolean;
@@ -1175,6 +1356,14 @@ export interface PlannedTownPreview {
   climate: string;
   description: string;
   plannedSpecialties: string[];
+  weatherAnchor: {
+    cityName: string;
+    countryCode: string;
+    latitude: number;
+    longitude: number;
+    timeZone: string;
+    refreshIntervalSeconds: number;
+  };
 }
 
 export interface EstateTravelLogEntry {
@@ -1198,10 +1387,55 @@ export interface HomesteadValueRouteView {
   coinReward: number;
   reputationReward: number;
   researchReward: number;
+  requiredInfrastructure?: {
+    id: HomesteadInfrastructureId;
+    level: number;
+  };
   requirementsView: HomesteadResourceView[];
   logisticsCost: 1 | 2;
   completedToday: boolean;
   canComplete: boolean;
+  disabledReason: string | null;
+}
+
+export interface EstateCargoDefinition {
+  id: EstateCargoId;
+  name: string;
+  description: string;
+  fromTownId: EstateTownId;
+  toTownId: EstateTownId;
+  coinCost: number;
+  logisticsCost: 1;
+  durationSeconds: number;
+  manifest: Array<{
+    source: 'farm' | 'ranch' | 'mine' | 'goods';
+    itemId: string;
+    quantity: number;
+  }>;
+  destinationProjectId: string;
+  requiredResearchId: string | null;
+  requiredReputation: number;
+  requiredInfrastructureId?: HomesteadInfrastructureId;
+  requiredInfrastructureLevel?: number;
+}
+
+export interface EstateCargoRouteView extends EstateCargoDefinition {
+  requirementsView: HomesteadResourceView[];
+  canDispatch: boolean;
+  disabledReason: string | null;
+}
+
+export interface EstateShipmentView {
+  id: string;
+  cargoId: EstateCargoId;
+  fromTownId: EstateTownId;
+  toTownId: EstateTownId;
+  dispatchedAt: number;
+  arrivesAt: number;
+  collectedAt: number | null;
+  definition: EstateCargoDefinition;
+  status: 'in_transit' | 'ready' | 'collected';
+  canCollect: boolean;
   disabledReason: string | null;
 }
 
@@ -1226,6 +1460,11 @@ export interface HomesteadGameView {
     capacity: number;
   };
   travelLogs: EstateTravelLogEntry[];
+  intertownLogistics: {
+    routes: EstateCargoRouteView[];
+    shipments: EstateShipmentView[];
+    inventory: Record<EstateCargoId, number>;
+  };
   merchantShop: {
     recommendationSource: 'rules' | 'llm';
     items: HomesteadMerchantItemView[];
@@ -1245,10 +1484,40 @@ export interface HomesteadGameView {
     mine: HomesteadProductionRuleView;
   };
   resilience: HomesteadResilienceView[];
+  infrastructure: HomesteadInfrastructureView[];
+  townRhythm: {
+    definition: {
+      id: string;
+      townId: EstateTownId;
+      name: string;
+      summary: string;
+      steps: Array<{
+        sectorId: 'farm' | 'ranch' | 'mine';
+        name: string;
+        description: string;
+      }>;
+    };
+    progress: 0 | 1 | 2 | 3;
+    completedCycles: number;
+    nextStepIndex: number | null;
+    blockedToday: boolean;
+    activeEffect: {
+      label: string;
+      farm?: { yieldPercent: number; durationPercent: number };
+      ranch?: { yieldPercent: number; durationPercent: number };
+      mine?: { yieldPercent: number; durationPercent: number };
+      marketSellPercent?: number;
+    } | null;
+  };
   emergencyOperations: HomesteadEmergencyOperationView[];
   research: HomesteadResearchView[];
   specializations: HomesteadSpecializationsView;
   npcs: HomesteadNpcView[];
+  advisorGuidance: Record<
+    'farm' | 'ranch' | 'mine',
+    HomesteadAdvisorGuidanceView | null
+  >;
+  honor: HomesteadHonorView;
   season: HomesteadSeasonView;
   collections: HomesteadCollectionView[];
   advice: HomesteadAdviceView;
@@ -1270,6 +1539,9 @@ export interface HomesteadGameView {
     herdProgramsCompleted: number;
     surveysCompleted: number;
     npcConversations: number;
+    cargoShipmentsCollected: number;
+    valueRoutesCompleted: number;
+    honorRewardsClaimed: number;
     seasonRewardsClaimed: number;
     llmCalls: number;
     llmFallbacks: number;
@@ -1290,6 +1562,7 @@ export interface HomesteadGameView {
       | 'ranch'
       | 'mine'
       | 'npc'
+      | 'honor'
       | 'season'
       | 'community'
       | 'market';
@@ -1326,6 +1599,14 @@ export type HomesteadClientAction =
   | {
       type: 'homestead_claim_season_reward';
       milestoneId: HomesteadSeasonMilestoneId;
+    }
+  | {
+      type: 'homestead_claim_honor_reward';
+      milestoneId: HomesteadHonorMilestoneId;
+    }
+  | {
+      type: 'homestead_upgrade_infrastructure';
+      infrastructureId: HomesteadInfrastructureId;
     }
   | {
       type: 'homestead_upgrade_resilience';
@@ -1377,7 +1658,9 @@ export type HomesteadClientAction =
   | {
       type: 'homestead_complete_value_route';
       routeId: HomesteadValueRouteId;
-    };
+    }
+  | { type: 'homestead_dispatch_cargo'; cargoId: EstateCargoId }
+  | { type: 'homestead_collect_cargo'; shipmentId: string };
 
 export interface HomesteadSnapshot {
   homestead: HomesteadGameView;
@@ -1408,6 +1691,41 @@ export interface LlmSettings {
   timeoutMs: number;
   maximumOutputTokens: number;
   updatedAt: string | null;
+}
+
+export interface TownWeatherLocationSettings {
+  realCityName: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface TownWeatherSettings {
+  provider: 'qweather';
+  enabled: boolean;
+  apiHost: string;
+  apiKeyConfigured: boolean;
+  timeoutMs: number;
+  forecastDays: number;
+  towns: Record<EstateTownId, TownWeatherLocationSettings>;
+  updatedAt: string | null;
+}
+
+export interface UpdateTownWeatherSettings
+  extends Omit<TownWeatherSettings, 'provider' | 'apiKeyConfigured' | 'updatedAt'> {
+  apiKey?: string;
+  clearApiKey?: boolean;
+}
+
+export interface TownWeatherConnectionTestResult {
+  ok: true;
+  provider: 'qweather';
+  latencyMs: number;
+  towns: Array<{
+    townId: EstateTownId;
+    cityName: string;
+    conditionText: string;
+    forecastDayCount: number;
+  }>;
 }
 
 export type LlmAuditStatus =

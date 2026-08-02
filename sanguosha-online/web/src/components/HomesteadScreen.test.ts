@@ -159,7 +159,8 @@ describe('HomesteadScreen helpers', () => {
       'homestead_upgrade_mine_protection',
       'homestead_survey_layer',
       'homestead_talk_npc',
-      'homestead_claim_season_reward',
+      'homestead_claim_honor_reward',
+      'homestead_upgrade_infrastructure',
       'homestead_upgrade_resilience',
       'homestead_activate_emergency_boost',
       'homestead_unlock_town',
@@ -167,6 +168,8 @@ describe('HomesteadScreen helpers', () => {
       'homestead_buy_merchant_item',
       'homestead_use_acceleration_card',
       'homestead_complete_value_route',
+      'homestead_dispatch_cargo',
+      'homestead_collect_cargo',
     ]) {
       expect(source).toContain(`type: '${actionType}'`);
     }
@@ -208,5 +211,26 @@ describe('HomesteadScreen helpers', () => {
     expect(typesSource).toContain('nextReputationLoss: number');
     expect(typesSource).toContain('reputationPenaltyContinues: boolean');
     expect(typesSource).toContain('temporaryAlreadyUsed: boolean');
+  });
+
+  it('shows the world director, local operation rhythm, and research milestones', () => {
+    const source = readFileSync(
+      new URL('./HomesteadScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    const typesSource = readFileSync(
+      new URL('../types.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toContain('LLM WORLD DIRECTOR');
+    expect(source).toContain('本次导演依据');
+    expect(source).toContain('跨日伏笔');
+    expect(source).toContain('LOCAL OPERATING RHYTHM');
+    expect(source).toContain('今日顺序已经错过');
+    expect(source).toContain('经营里程碑尚缺');
+    expect(typesSource).toContain("| 'homestead-town-rhythm'");
+    expect(typesSource).toContain('completedCycles: number');
+    expect(typesSource).toContain('worldBeatId?:');
   });
 });

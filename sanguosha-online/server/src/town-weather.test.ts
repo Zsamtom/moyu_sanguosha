@@ -137,9 +137,9 @@ describe("town weather buckets and caching", () => {
     ]);
 
     expect(source.fetchTownWeather).toHaveBeenCalledTimes(2);
-    expect(greenvale.anchor.realCityName).toBe("成都");
+    expect(greenvale.anchor.realCityName).toBe("郑州");
     expect(greenvale.weatherId).toBe("clear");
-    expect(frostpeak.anchor.realCityName).toBe("香格里拉");
+    expect(frostpeak.anchor.realCityName).toBe("拉萨");
     expect(frostpeak.weatherId).toBe("frost");
   });
 });
@@ -210,6 +210,35 @@ describe("town weather failure isolation", () => {
     expect(service.providerConfigured).toBe(false);
     expect(snapshot.fallbackReason).toBe("provider_disabled");
   });
+
+  it("does not reuse an old in-flight result after hot reconfiguration", async () => {
+    let releaseOld!: (result: TownWeatherProviderResult) => void;
+    const oldProvider = provider(
+      async () => await new Promise<TownWeatherProviderResult>((resolve) => {
+        releaseOld = resolve;
+      }),
+    );
+    const newProvider = provider(async () => {
+      throw new Error("new provider unavailable");
+    });
+    const service = new TownWeatherService({ provider: oldProvider });
+
+    const pending = service.getTownWeather("greenvale", localMidnight);
+    await Promise.resolve();
+    expect(oldProvider.fetchTownWeather).toHaveBeenCalledTimes(1);
+    service.configure({ provider: newProvider });
+    releaseOld(providerResult());
+    expect((await pending).source).toBe("qweather");
+
+    const afterReconfiguration = await service.getTownWeather(
+      "greenvale",
+      localMidnight + 8 * 60 * 60 * 1_000,
+    );
+    expect(afterReconfiguration).toMatchObject({
+      source: "deterministic_fallback",
+      fallbackReason: "provider_error",
+    });
+  });
 });
 
 describe("QWeather normalization", () => {
@@ -236,11 +265,31 @@ describe("QWeather normalization", () => {
           },
         }), { status: 200 });
       }
+      if (url.includes("/weather/v1/daily/")) {
+        return new Response(JSON.stringify({
+          metadata: { attributions: ["和风天气逐日预报"] },
+          days: [{
+            forecastStartTime: "2026-07-30T00:00+08:00",
+            forecastEndTime: "2026-07-31T00:00+08:00",
+            temperatureMax: { value: 37, unit: "°C" },
+            temperatureMin: { value: 27, unit: "°C" },
+            daytime: {
+              condition: { text: "晴", code: "100" },
+              wind: { speed: { value: 3, unit: "m/s" } },
+              precipitation: {
+                amount: { value: 0, unit: "mm" },
+                probability: 0.1,
+              },
+              humidity: 0.48,
+            },
+          }],
+        }), { status: 200 });
+      }
       return new Response(JSON.stringify({
         metadata: { attributions: ["天气预警来源"] },
         alerts: [{
           id: "alert-1",
-          senderName: "成都市气象台",
+          senderName: "郑州市气象台",
           issuedTime: "2026-07-30T00:00+08:00",
           messageType: { code: "alert", supersedes: [] },
           eventType: { name: "暴雨", code: "1003" },
@@ -265,14 +314,14 @@ describe("QWeather normalization", () => {
 
     const snapshot = await service.getTownWeather("greenvale", localMidnight);
 
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(
       fetcher.mock.calls.every(([, init]) =>
         (init?.headers as Record<string, string>)["X-QW-Api-Key"] === "secret"
       ),
     ).toBe(true);
     expect(String(fetcher.mock.calls[0]?.[0])).toContain(
-      "location=104.07%2C30.57",
+      "location=113.62%2C34.75",
     );
     expect(snapshot).toMatchObject({
       source: "qweather",
@@ -289,6 +338,15 @@ describe("QWeather normalization", () => {
       affectsGameplay: true,
     });
     expect(snapshot.attributions).toContain("天气预警来源");
+    expect(snapshot.attributions).toContain("和风天气逐日预报");
+    expect(snapshot.forecast).toEqual([
+      expect.objectContaining({
+        weatherId: "heatwave",
+        temperatureMinC: 27,
+        temperatureMaxC: 37,
+        precipitationProbabilityPercent: 10,
+      }),
+    ]);
   });
 
   it("rejects malformed provider JSON and safely falls back", async () => {

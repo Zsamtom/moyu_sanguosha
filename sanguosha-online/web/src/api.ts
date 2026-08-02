@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmGovernanceSnapshot, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, UpdateLlmSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmGovernanceSnapshot, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, TownWeatherConnectionTestResult, TownWeatherSettings, UpdateLlmSettings, UpdateTownWeatherSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -386,6 +386,37 @@ export const api = {
         }),
       },
     );
+    return 'result' in result ? result.result : result;
+  },
+
+  async getTownWeatherSettings(): Promise<TownWeatherSettings> {
+    const result = await request<
+      TownWeatherSettings | { settings: TownWeatherSettings }
+    >('/api/admin/weather-settings');
+    return 'settings' in result ? result.settings : result;
+  },
+
+  async updateTownWeatherSettings(
+    input: UpdateTownWeatherSettings,
+  ): Promise<TownWeatherSettings> {
+    const result = await request<
+      TownWeatherSettings | { settings: TownWeatherSettings }
+    >('/api/admin/weather-settings', {
+      method: 'PUT',
+      ...jsonBody(input),
+    });
+    return 'settings' in result ? result.settings : result;
+  },
+
+  async testTownWeatherConnection(
+    input: Partial<Omit<UpdateTownWeatherSettings, 'enabled' | 'clearApiKey'>>,
+  ): Promise<TownWeatherConnectionTestResult> {
+    const result = await request<
+      TownWeatherConnectionTestResult | { result: TownWeatherConnectionTestResult }
+    >('/api/admin/weather-settings/test', {
+      method: 'POST',
+      ...jsonBody(input),
+    });
     return 'result' in result ? result.result : result;
   },
 

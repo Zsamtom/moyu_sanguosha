@@ -72,6 +72,44 @@ describe("linked mine engine", () => {
     )).toThrowError(MineRuleError);
   });
 
+  it("uses the same market modifier in mine cards and account settlement", () => {
+    const mine = createMineGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "mine-market",
+      now: start,
+    });
+    mine.ores.coal = 1;
+    const production = {
+      yieldPercent: 0,
+      durationPercent: 0,
+      label: "灾期市场",
+      marketBuyPercent: 25,
+      marketSellPercent: 25,
+    };
+    const linked = economy({ farmLevel: 1, ranchLevel: 1 });
+    const view = getMineGameView(mine, linked, start, production);
+    expect(view.deposits.coal.expeditionCost).toBe(25);
+    expect(view.deposits.coal.orePrice).toBe(35);
+
+    const started = applyMineAction(
+      mine,
+      linked,
+      { type: "mine_start", depositId: "coal", shaftIndex: 0 },
+      start,
+      production,
+    );
+    expect(started.economy.coins).toBe(linked.coins - 25);
+    const sold = applyMineAction(
+      started.mine,
+      started.economy,
+      { type: "mine_sell", depositId: "coal", quantity: 1 },
+      start + 1,
+      production,
+    );
+    expect(sold.economy.coins).toBe(linked.coins + 10);
+  });
+
   it("consumes farm coins and ranch rations, then returns ore revenue", () => {
     let mine = createMineGame({
       ownerId: "owner",

@@ -14,6 +14,11 @@ import {
   type EstateTownId,
   type TownDefinition,
 } from "./towns/registry.js";
+import {
+  applyAccumulatedProductionModifier,
+  applyDiscreteProductionModifier,
+  applyPriceModifier,
+} from "./production-modifier.js";
 
 export const MINE_STATE_VERSION = 1 as const;
 export const MINE_REQUIRED_FARM_LEVEL = 1;
@@ -70,7 +75,7 @@ export const MINE_DEPOSITS: Readonly<Record<
     supportAmount: 1,
     durationSeconds: 15 * MINUTE,
     yield: 3,
-    orePrice: 25,
+    orePrice: 28,
     collectExperience: 16,
   },
   iron: {
@@ -86,7 +91,7 @@ export const MINE_DEPOSITS: Readonly<Record<
     supportAmount: 1,
     durationSeconds: 30 * MINUTE,
     yield: 3,
-    orePrice: 38,
+    orePrice: 45,
     collectExperience: 22,
   },
   copper: {
@@ -102,7 +107,7 @@ export const MINE_DEPOSITS: Readonly<Record<
     supportAmount: 1,
     durationSeconds: HOUR,
     yield: 4,
-    orePrice: 60,
+    orePrice: 85,
     collectExperience: 31,
   },
   silver: {
@@ -118,7 +123,7 @@ export const MINE_DEPOSITS: Readonly<Record<
     supportAmount: 1,
     durationSeconds: 2 * HOUR,
     yield: 4,
-    orePrice: 95,
+    orePrice: 150,
     collectExperience: 44,
   },
   gold: {
@@ -134,7 +139,7 @@ export const MINE_DEPOSITS: Readonly<Record<
     supportAmount: 2,
     durationSeconds: 3 * HOUR,
     yield: 4,
-    orePrice: 150,
+    orePrice: 260,
     collectExperience: 61,
   },
   crystal: {
@@ -150,7 +155,7 @@ export const MINE_DEPOSITS: Readonly<Record<
     supportAmount: 2,
     durationSeconds: 6 * HOUR,
     yield: 5,
-    orePrice: 230,
+    orePrice: 420,
     collectExperience: 82,
   },
 };
@@ -275,6 +280,8 @@ export interface MineGameState {
   level: number;
   unlockedShafts: number;
   pickaxeLevel: number;
+  /** Backend-only carry used to settle fractional yield across expeditions. */
+  productionRemainder: number;
   ores: MineOreCounts;
   relics: number;
   shafts: MineShaftState[];
@@ -360,6 +367,7 @@ export interface MineGameView {
   readonly unlockedShafts: number;
   readonly pickaxeLevel: number;
   readonly pickaxeYieldBonus: number;
+  readonly productionRule: import("./farming.js").EstateProductionRule;
   readonly deposits: Readonly<Record<MineDepositId, MineDepositDefinition>>;
   readonly economy: {
     readonly coins: number;
@@ -555,11 +563,9 @@ function shaftYield(
       (hasHazard(shaft, now) ? MINE_UNREINFORCED_YIELD_PENALTY : 0) +
       (shaft.reinforced ? MINE_REINFORCED_YIELD_BONUS : 0),
   );
-  return Math.max(
-    1,
-    Math.round(
-      base * (100 + (shaft.productionModifierPercent ?? 0)) / 100,
-    ),
+  return applyDiscreteProductionModifier(
+    base,
+    shaft.productionModifierPercent ?? 0,
   );
 }
 
@@ -609,6 +615,7 @@ export function createMineGame(input: {
     level: 1,
     unlockedShafts: MINE_STARTING_SHAFTS,
     pickaxeLevel: 0,
+    productionRemainder: 0,
     ores: oreCounts(0, townId),
     relics: 0,
     shafts: Array.from(
@@ -639,6 +646,9 @@ export function applyMineAction(
   assertTime(now);
   const mine = structuredClone(state);
   if (!isEstateTownId(mine.townId)) mine.townId = "greenvale";
+  if (!Number.isFinite(mine.productionRemainder)) {
+    mine.productionRemainder = 0;
+  }
   const economy = structuredClone(economyState);
   const effectiveNow = Math.max(now, mine.updatedAt);
   const deposits = mineDeposits(mine.townId);
@@ -665,7 +675,11 @@ export function applyMineAction(
         `需要农场 ${deposit.requiredFarmLevel} 级、牧场 ${deposit.requiredRanchLevel} 级、矿山 ${deposit.requiredMineLevel} 级`,
       );
     }
-    if (economy.coins < deposit.expeditionCost) {
+    const expeditionCost = applyPriceModifier(
+      deposit.expeditionCost,
+      production.marketBuyPercent,
+    );
+    if (economy.coins < expeditionCost) {
       throw new MineRuleError("MINE_NOT_ENOUGH_COINS", "采掘经费不足");
     }
     if (
@@ -684,7 +698,7 @@ export function applyMineAction(
           (100 + production.durationPercent) / 100,
       ),
     );
-    economy.coins -= deposit.expeditionCost;
+    economy.coins -= expeditionCost;
     economy.ranchProducts[deposit.rationProductId] -= deposit.rationAmount;
     farmChanged = true;
     ranchChanged = true;
@@ -705,7 +719,7 @@ export function applyMineAction(
       mine,
       effectiveNow,
       "expedition",
-      `${shaft.index + 1} 号矿井进入${deposit.name}，支出 ${deposit.expeditionCost} 金币并消耗牧场口粮。`,
+      `${shaft.index + 1} 号矿井进入${deposit.name}，支出 ${expeditionCost} 金币并消耗牧场口粮。`,
     );
   } else if (action.type === "mine_abandon") {
     const shaft = requireShaft(mine, action.shaftIndex);
@@ -758,7 +772,20 @@ export function applyMineAction(
       throw new MineRuleError("MINE_NOT_READY", "采掘任务尚未完成");
     }
     const deposit = deposits[shaft.depositId];
-    const amount = shaftYield(mine, shaft, effectiveNow);
+    const baseYield = Math.max(
+      1,
+      deposit.yield +
+        pickaxeYieldBonus(mine.pickaxeLevel) -
+        (hasHazard(shaft, effectiveNow) ? MINE_UNREINFORCED_YIELD_PENALTY : 0) +
+        (shaft.reinforced ? MINE_REINFORCED_YIELD_BONUS : 0),
+    );
+    const settlement = applyAccumulatedProductionModifier(
+      baseYield,
+      shaft.productionModifierPercent ?? 0,
+      mine.productionRemainder,
+    );
+    mine.productionRemainder = settlement.remainder;
+    const amount = settlement.quantity;
     mine.ores[deposit.id] += amount;
     mine.statistics.expeditionsCompleted += 1;
     mine.statistics.oresCollected += amount;
@@ -797,7 +824,11 @@ export function applyMineAction(
       throw new MineRuleError("MINE_NOT_ENOUGH_ORE", "矿石仓库库存不足");
     }
     const deposit = deposits[action.depositId];
-    const revenue = deposit.orePrice * action.quantity;
+    const unitPrice = applyPriceModifier(
+      deposit.orePrice,
+      production.marketSellPercent,
+    );
+    const revenue = unitPrice * action.quantity;
     mine.ores[action.depositId] -= action.quantity;
     economy.coins += revenue;
     farmChanged = true;
@@ -906,6 +937,11 @@ export function getMineGameView(
   state: MineGameState,
   economy: MineLinkedEconomy,
   now: number,
+  production: import("./farming.js").EstateProductionRule = {
+    yieldPercent: 0,
+    durationPercent: 0,
+    label: "常态生产",
+  },
 ): MineGameView {
   assertTime(now);
   const effectiveNow = Math.max(now, state.updatedAt);
@@ -936,7 +972,23 @@ export function getMineGameView(
     unlockedShafts: state.unlockedShafts,
     pickaxeLevel: state.pickaxeLevel,
     pickaxeYieldBonus: pickaxeYieldBonus(state.pickaxeLevel),
-    deposits: structuredClone(mineDeposits(townId)),
+    productionRule: structuredClone(production),
+    deposits: Object.fromEntries(
+      Object.entries(mineDeposits(townId)).map(([depositId, deposit]) => [
+        depositId,
+        {
+          ...structuredClone(deposit),
+          expeditionCost: applyPriceModifier(
+            deposit.expeditionCost,
+            production.marketBuyPercent,
+          ),
+          orePrice: applyPriceModifier(
+            deposit.orePrice,
+            production.marketSellPercent,
+          ),
+        },
+      ]),
+    ) as Readonly<Record<MineDepositId, MineDepositDefinition>>,
     economy: {
       coins: economy.coins,
       ranchProducts: structuredClone(economy.ranchProducts),
@@ -1005,6 +1057,15 @@ export function assertRestorableMineGameState(
     !Number.isSafeInteger(value.pickaxeLevel) ||
     Number(value.pickaxeLevel) < 0 ||
     Number(value.pickaxeLevel) > MINE_PICKAXE_UPGRADES.length ||
+    (
+      value.productionRemainder !== undefined &&
+      (
+        typeof value.productionRemainder !== "number" ||
+        !Number.isFinite(value.productionRemainder) ||
+        Number(value.productionRemainder) <= -1 ||
+        Number(value.productionRemainder) >= 1
+      )
+    ) ||
     !validOres(value.ores, townId) ||
     !isNonNegativeInteger(value.relics)
   ) {

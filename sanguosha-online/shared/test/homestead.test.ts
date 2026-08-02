@@ -368,6 +368,27 @@ describe("homestead linked economy", () => {
     ).toThrowError(HomesteadRuleError);
   });
 
+  it("consumes an imported cargo crate only in its destination linkage project", () => {
+    const { homestead, economy } = setup();
+    homestead.cargoInventory.frostpeak_coldchain_supplies = 1;
+    economy.farmProduce.grape = 2;
+    const result = applyHomesteadAction(
+      homestead,
+      economy,
+      {
+        type: "homestead_complete_value_route",
+        routeId: "greenvale_frostpeak_coldchain_link",
+      },
+      start,
+    );
+
+    expect(result.homestead.cargoInventory.frostpeak_coldchain_supplies)
+      .toBe(0);
+    expect(result.economy.farmProduce.grape).toBe(0);
+    expect(result.economy.coins).toBe(2_980);
+    expect(result.homestead.reputation).toBe(10);
+  });
+
   it("creates a recoverable daily state with a starter mill", () => {
     const { homestead, economy } = setup();
 
@@ -523,6 +544,74 @@ describe("homestead linked economy", () => {
         start + 1,
       )
     ).toThrowError(HomesteadRuleError);
+  });
+
+  it("shows daily decision production effects, applies them, and expires them", () => {
+    const { homestead, economy } = setup();
+    homestead.worldEvent = {
+      eventId: "steady_weather",
+      dayKey: homestead.dayKey,
+      selectedOptionId: null,
+      narrative: "三业进入稳定排产窗口。",
+      source: "rules",
+      startedDayKey: homestead.dayKey,
+      durationDays: 1,
+      unresolvedDays: 0,
+      severity: 0,
+    };
+    const option = getHomesteadGameView(homestead, economy, start)
+      .worldEvent.definition.options.find(
+        ({ id }) => id === "focus_production",
+      );
+    expect(option?.productionEffect?.label).toContain("三业工期 -6%");
+
+    const result = applyHomesteadAction(
+      homestead,
+      economy,
+      { type: "homestead_choose_event", optionId: "focus_production" },
+      start,
+    );
+    const rules = getHomesteadProductionRules(result.homestead);
+    expect(rules.farm.label).toContain("专注排产");
+    expect(rules.ranch.label).toContain("专注排产");
+    expect(rules.mine.label).toContain("专注排产");
+
+    const next = refreshHomesteadGame(
+      result.homestead,
+      start + 24 * 60 * 60_000,
+    );
+    expect(next.decisionEffect).toBeNull();
+    expect(getHomesteadProductionRules(next).farm.label).not.toContain(
+      "专注排产",
+    );
+  });
+
+  it("turns research nodes into direct three-sector production modifiers", () => {
+    const { homestead } = setup();
+    const baseline = getHomesteadProductionRules(homestead);
+    homestead.research.unlocked.push(
+      "soil_science",
+      "crop_rotation",
+      "animal_nutrition",
+      "animal_genetics",
+      "geology",
+      "deep_mining",
+      "estate_engineering",
+    );
+    const researched = getHomesteadProductionRules(homestead);
+
+    expect(researched.farm.yieldPercent - baseline.farm.yieldPercent).toBe(8);
+    expect(researched.ranch.yieldPercent - baseline.ranch.yieldPercent).toBe(8);
+    expect(researched.mine.yieldPercent - baseline.mine.yieldPercent).toBe(8);
+    expect(researched.farm.durationPercent).toBe(
+      baseline.farm.durationPercent - 8,
+    );
+    expect(researched.ranch.durationPercent).toBe(
+      baseline.ranch.durationPercent - 3,
+    );
+    expect(researched.mine.durationPercent).toBe(
+      baseline.mine.durationPercent - 8,
+    );
   });
 
   it("requires enough reputation for reputation-cost event options", () => {
@@ -1089,8 +1178,10 @@ describe("homestead linked economy", () => {
 
   it("unlocks research and applies facility upgrades to production", () => {
     const { homestead, economy } = setup();
-    homestead.researchPoints = 20;
-    homestead.reputation = 20;
+    homestead.researchPoints = 30;
+    homestead.reputation = 40;
+    homestead.statistics.jobsCollected = 4;
+    homestead.statistics.facilitiesBuilt = 2;
     const researched = applyHomesteadAction(
       homestead,
       economy,
@@ -1145,16 +1236,20 @@ describe("homestead linked economy", () => {
     ).toBeGreaterThan(30);
   });
 
-  it("requires seasonal mastery for the final 56-day reward", () => {
+  it("requires local mastery for the final lifetime honor reward", () => {
     const { homestead, economy } = setup();
-    homestead.season.score = 1_200;
+    homestead.collections = getHomesteadGameView(
+      homestead,
+      economy,
+      start,
+    ).collections.map(({ id }) => ({ id, unlockedAt: start }));
     expect(() =>
       applyHomesteadAction(
         homestead,
         economy,
         {
-          type: "homestead_claim_season_reward",
-          milestoneId: "gold",
+          type: "homestead_claim_honor_reward",
+          milestoneId: "legend",
         },
         start,
       )
@@ -1166,12 +1261,31 @@ describe("homestead linked economy", () => {
         homestead,
         economy,
         {
-          type: "homestead_claim_season_reward",
-          milestoneId: "gold",
+          type: "homestead_claim_honor_reward",
+          milestoneId: "legend",
         },
         start,
       )
     ).not.toThrow();
+  });
+
+  it("preserves unclaimed legacy season progress when migrating to permanent honor", () => {
+    const { homestead, economy } = setup();
+    const legacy = structuredClone(homestead) as typeof homestead & {
+      honor?: unknown;
+    };
+    delete legacy.honor;
+    legacy.season.score = 180;
+    legacy.season.claimedMilestones = [];
+
+    const migrated = getHomesteadGameView(legacy, economy, start);
+
+    expect(migrated.honor.score).toBe(180);
+    expect(
+      migrated.honor.milestones.find(
+        ({ definition }) => definition.id === "specialist",
+      ),
+    ).toMatchObject({ canClaim: true, claimed: false });
   });
 
   it("migrates the first-stage save shape without quarantining it", () => {
@@ -1190,6 +1304,8 @@ describe("homestead linked economy", () => {
     delete legacy.townNetwork;
     delete legacy.valueRouteDayKeys;
     delete legacy.weather;
+    delete legacy.decisionEffect;
+    delete legacy.cargoInventory;
     delete legacy.disaster;
     delete legacy.resilience;
     delete legacy.emergencyBoosts;
@@ -1203,7 +1319,7 @@ describe("homestead linked economy", () => {
       economy,
       start,
     );
-    expect(view.research).toHaveLength(10);
+    expect(view.research).toHaveLength(12);
     expect(view.specializations.farm.soilHealth).toBe(60);
     expect(view.npcs).toHaveLength(3);
     expect(view.aiProfile).toEqual({

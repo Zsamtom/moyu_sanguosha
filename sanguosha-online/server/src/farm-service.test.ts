@@ -5,6 +5,7 @@ import {
   MINE_DEPOSITS,
   RANCH_ANIMALS,
   applyFarmAction,
+  createEstateAccount,
   createFarmGame,
   createFarmingGame,
   createHomesteadGame,
@@ -1199,6 +1200,80 @@ describe("real-time FarmService", () => {
     ) as TownEstateBundle;
     expect(unchanged.homestead.goods.soil_conditioner).toBe(1);
     expect(unchanged.homestead.emergencyBoosts.farm).toBe(false);
+  });
+
+  it("rejects direct cargo dispatch while a persistent logistics hazard is active", async () => {
+    const store = new MemoryFarmStateStore();
+    const account = createEstateAccount({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      now: start,
+      coins: 2_000,
+    });
+    account.activeTownId = "frostpeak";
+    account.townProgress.frostpeak = {
+      unlocked: true,
+      unlockedAt: start,
+      localReputation: 0,
+      farmLevel: 1,
+      ranchLevel: 1,
+      mineLevel: 1,
+      landmarkStage: 0,
+      lastVisitedAt: start,
+    };
+    const bundle = townEstateBundle(user, "frostpeak");
+    bundle.farm.coins = account.coins;
+    bundle.farm.produce.cloudberry = 2;
+    bundle.ranch.products.yak_milk = 2;
+    bundle.mine.ores.frost_silver = 1;
+    bundle.homestead.disaster = {
+      eventId: "cold_snap",
+      contentEventId: "frost_rail_icing",
+      startedDayKey: bundle.homestead.dayKey,
+      remainingDays: 1,
+      unresolvedDays: 0,
+      severity: 1,
+      mitigated: false,
+      resolution: null,
+      reputationPenaltyPaid: 0,
+      temporaryOptionId: null,
+    };
+    store.setRawEstateAccount(user.id, account);
+    store.setRawTownEstate(user.id, "frostpeak", bundle);
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const snapshot = await service.getOrCreateHomestead(user);
+
+    await expect(service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      snapshot.homestead.accountRevision,
+      {
+        type: "homestead_dispatch_cargo",
+        cargoId: "frostpeak_coldchain_supplies",
+      },
+      "frostpeak",
+    )).rejects.toMatchObject({
+      status: 400,
+      code: "ESTATE_CARGO_LOGISTICS_BLOCKED",
+    });
+
+    const unchangedAccount = await store.loadEstateAccount(user.id) as
+      EstateAccountState;
+    const unchangedBundle = await store.loadTownEstate(
+      user.id,
+      "frostpeak",
+    ) as TownEstateBundle;
+    expect(unchangedAccount.shipments).toHaveLength(0);
+    expect(unchangedBundle.farm.produce.cloudberry).toBe(2);
+    expect(unchangedBundle.ranch.products.yak_milk).toBe(2);
+    expect(unchangedBundle.mine.ores.frost_silver).toBe(1);
   });
 
   it("does not advance the account revision when JSONB reorders town progress fields", async () => {

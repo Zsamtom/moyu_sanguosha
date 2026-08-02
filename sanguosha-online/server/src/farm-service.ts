@@ -24,6 +24,7 @@ import {
   type FarmingNeighborSummary,
   type FarmingVisitAction,
   type FarmingVisitResult,
+  type EstateProductionRule,
   RanchRuleError,
   RANCH_REQUIRED_FARM_LEVEL,
   applyRanchAction,
@@ -63,17 +64,22 @@ import {
   type HomesteadWorldEventId,
   assertRestorableEstateAccount,
   buyEstateMerchantItem,
+  collectEstateShipment,
   consumeEstateMerchantItem,
   createEstateAccount,
+  estateMerchantOfferIds,
   getEstateTownUnlockStatus,
   refreshEstateAccount,
+  dispatchEstateShipment,
   spendEstateLogistics,
   travelEstateTown,
   unlockEstateTown,
   ESTATE_MERCHANT_ITEMS,
+  ESTATE_CARGO_DEFINITIONS,
   HOMESTEAD_VALUE_ROUTES,
   HOMESTEAD_WORLD_EVENTS,
   type EstateAccountState,
+  type EstateCargoDefinition,
   type EstateMerchantItemId,
   type EstateTownId,
   TOWN_DEFINITIONS,
@@ -1318,6 +1324,7 @@ export class FarmService {
         bundle.farm,
         user.id,
         account.activeTownId,
+        getHomesteadProductionRules(bundle.homestead).farm,
       );
     });
   }
@@ -1355,7 +1362,12 @@ export class FarmService {
         bundle,
       );
       return {
-        farm: getFarmingGameView(bundle.farm, user.id, this.clock()),
+        farm: getFarmingGameView(
+          bundle.farm,
+          user.id,
+          this.clock(),
+          getHomesteadProductionRules(bundle.homestead).farm,
+        ),
         marketDirectorAvailable: this.marketDirectorAvailable,
       };
     });
@@ -1442,6 +1454,7 @@ export class FarmService {
           result!.visitor,
           user.id,
           account.activeTownId,
+          getHomesteadProductionRules(visitorBundle.homestead).farm,
         )),
         neighbor: getFarmingGameView(result!.owner, user.id, this.clock()),
         outcome: result!.outcome,
@@ -1458,6 +1471,7 @@ export class FarmService {
         bundle.farm,
         user.id,
         account.activeTownId,
+        getHomesteadProductionRules(bundle.homestead).ranch,
       );
     });
   }
@@ -1511,7 +1525,12 @@ export class FarmService {
         bundle,
       );
       return {
-        ranch: this.ranchView(bundle.ranch, bundle.farm, user.id),
+        ranch: this.ranchView(
+          bundle.ranch,
+          bundle.farm,
+          user.id,
+          getHomesteadProductionRules(bundle.homestead).ranch,
+        ),
       };
     });
   }
@@ -1613,6 +1632,7 @@ export class FarmService {
           visitorFarm,
           user.id,
           account.activeTownId,
+          getHomesteadProductionRules(visitorBundle.homestead).ranch,
         )),
         neighbor: this.ranchView(result!.owner, ownerFarm, user.id),
         outcome: result!.outcome,
@@ -1625,7 +1645,12 @@ export class FarmService {
     return this.serializedMany([user.id], async () => {
       const { bundle } = await this.loadActiveEstate(user);
       return {
-        mine: this.mineView(bundle.mine, bundle.farm, bundle.ranch),
+        mine: this.mineView(
+          bundle.mine,
+          bundle.farm,
+          bundle.ranch,
+          getHomesteadProductionRules(bundle.homestead).mine,
+        ),
       };
     });
   }
@@ -1690,7 +1715,12 @@ export class FarmService {
         bundle,
       );
       return {
-        mine: this.mineView(bundle.mine, bundle.farm, bundle.ranch),
+        mine: this.mineView(
+          bundle.mine,
+          bundle.farm,
+          bundle.ranch,
+          getHomesteadProductionRules(bundle.homestead).mine,
+        ),
       };
     });
   }
@@ -1850,10 +1880,27 @@ export class FarmService {
         bundle,
       );
       if (
-        action.type === "homestead_update_ai_profile" &&
-        action.enabled
+        (
+          action.type === "homestead_update_ai_profile" &&
+          action.enabled
+        ) ||
+        action.type === "homestead_choose_event" ||
+        action.type === "homestead_complete_order" ||
+        action.type === "homestead_complete_value_route" ||
+        action.type === "homestead_unlock_research" ||
+        action.type === "homestead_build_facility" ||
+        action.type === "homestead_upgrade_facility" ||
+        action.type === "homestead_upgrade_infrastructure" ||
+        action.type === "homestead_plan_rotation" ||
+        action.type === "homestead_run_feed_program" ||
+        action.type === "homestead_survey_layer" ||
+        action.type === "homestead_talk_npc"
       ) {
-        this.scheduleHomesteadDirector(user, bundle);
+        this.scheduleHomesteadDirector(
+          user,
+          bundle,
+          `action:${action.type}:${account.revision}:${bundle.homestead.revision}`,
+        );
       }
       return {
         homestead: getHomesteadGameView(
@@ -2030,8 +2077,151 @@ export class FarmService {
       };
     }
 
+    if (action.type === "homestead_dispatch_cargo") {
+      const cargo = ESTATE_CARGO_DEFINITIONS[action.cargoId];
+      if (!cargo) {
+        throw new HttpError(400, "ESTATE_CARGO_UNKNOWN", "未知货运路线");
+      }
+      if (this.homesteadLogisticsBlocked(currentBundle.homestead)) {
+        throw new HttpError(
+          400,
+          "ESTATE_CARGO_LOGISTICS_BLOCKED",
+          "当前持续灾害正在阻断城镇货运，请先完成处置",
+        );
+      }
+      if (
+        cargo.requiredInfrastructureId &&
+        ((
+          currentBundle.homestead.infrastructure as unknown as
+            Record<string, number>
+        )[cargo.requiredInfrastructureId] ?? 0) <
+          (cargo.requiredInfrastructureLevel ?? 1)
+      ) {
+        throw new HttpError(
+          400,
+          "ESTATE_CARGO_INFRASTRUCTURE_LOCKED",
+          `高级货运需要对应本地基础设施达到 LV${cargo.requiredInfrastructureLevel ?? 1}`,
+        );
+      }
+      const missing = cargo.manifest.filter(
+        (resource) =>
+          this.cargoResourceAvailable(currentBundle, resource) <
+            resource.quantity,
+      );
+      if (missing.length > 0) {
+        throw new HttpError(
+          400,
+          "ESTATE_CARGO_RESOURCES_INSUFFICIENT",
+          `本地特色物资不足：${missing.map(({ itemId }) => itemId).join("、")}`,
+        );
+      }
+      let account: EstateAccountState;
+      try {
+        account = dispatchEstateShipment(state, action.cargoId, now);
+      } catch (error) {
+        throw new HttpError(
+          400,
+          "ESTATE_CARGO_DISPATCH_REJECTED",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      let bundle = structuredClone(currentBundle);
+      this.deductCargoManifest(bundle, cargo, now);
+      bundle.homestead.logs.unshift({
+        id: `${now}:cargo-dispatch:${action.cargoId}`,
+        at: now,
+        type: "market",
+        message:
+          `${cargo.name}已经装车发往${TOWN_DEFINITIONS[cargo.toTownId].name}；原料已从本地三业仓库扣除。`,
+      });
+      bundle = this.syncBundleFromAccount(bundle, account);
+      await this.store.saveAccountAndTownEstate(
+        user.id,
+        account,
+        bundle.townId,
+        bundle,
+      );
+      this.scheduleHomesteadDirector(
+        user,
+        bundle,
+        `cargo:dispatch:${account.revision}`,
+      );
+      return {
+        homestead: getHomesteadGameView(
+          bundle.homestead,
+          this.homesteadEconomy(
+            bundle.farm,
+            bundle.ranch,
+            bundle.mine,
+            account,
+          ),
+          now,
+        ),
+      };
+    }
+
+    if (action.type === "homestead_collect_cargo") {
+      const shipment = state.shipments.find(
+        ({ id }) => id === action.shipmentId,
+      );
+      if (!shipment) {
+        throw new HttpError(404, "ESTATE_CARGO_NOT_FOUND", "货运记录不存在");
+      }
+      const cargo = ESTATE_CARGO_DEFINITIONS[shipment.cargoId];
+      let account: EstateAccountState;
+      try {
+        account = collectEstateShipment(state, action.shipmentId, now);
+      } catch (error) {
+        throw new HttpError(
+          400,
+          "ESTATE_CARGO_COLLECTION_REJECTED",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      let bundle = structuredClone(currentBundle);
+      bundle.homestead.cargoInventory[cargo.id] += 1;
+      bundle.homestead.statistics.cargoShipmentsCollected += 1;
+      bundle.homestead.revision += 1;
+      bundle.homestead.updatedAt = Math.max(
+        bundle.homestead.updatedAt,
+        now,
+      );
+      bundle.homestead.logs.unshift({
+        id: `${now}:cargo-collect:${shipment.id}`,
+        at: now,
+        type: "market",
+        message:
+          `${cargo.name}已经进入跨城货栈；整箱物资现在可用于对应的城镇联动项目。`,
+      });
+      bundle = this.syncBundleFromAccount(bundle, account);
+      await this.store.saveAccountAndTownEstate(
+        user.id,
+        account,
+        bundle.townId,
+        bundle,
+      );
+      this.scheduleHomesteadDirector(
+        user,
+        bundle,
+        `cargo:collect:${account.revision}`,
+      );
+      return {
+        homestead: getHomesteadGameView(
+          bundle.homestead,
+          this.homesteadEconomy(
+            bundle.farm,
+            bundle.ranch,
+            bundle.mine,
+            account,
+          ),
+          now,
+        ),
+      };
+    }
+
     if (action.type === "homestead_buy_merchant_item") {
       let account: EstateAccountState;
+      const item = ESTATE_MERCHANT_ITEMS[action.itemId];
       try {
         account = buyEstateMerchantItem(state, action.itemId, now);
       } catch (error) {
@@ -2041,7 +2231,33 @@ export class FarmService {
           error instanceof Error ? error.message : String(error),
         );
       }
-      const bundle = this.syncBundleFromAccount(currentBundle, account);
+      let bundle = structuredClone(currentBundle);
+      if (item.numericEffect.kind === "resource_bundle") {
+        account = consumeEstateMerchantItem(account, action.itemId, now);
+        const target = item.numericEffect.source === "farm"
+          ? bundle.farm.produce as unknown as Record<string, number>
+          : item.numericEffect.source === "ranch"
+            ? bundle.ranch.products as unknown as Record<string, number>
+            : item.numericEffect.source === "mine"
+              ? bundle.mine.ores as unknown as Record<string, number>
+              : bundle.homestead.goods as unknown as Record<string, number>;
+        target[item.numericEffect.itemId] =
+          (target[item.numericEffect.itemId] ?? 0) +
+          item.numericEffect.quantity;
+        if (item.numericEffect.source === "farm") {
+          bundle.farm.revision += 1;
+          bundle.farm.updatedAt = Math.max(bundle.farm.updatedAt, now);
+        }
+        if (item.numericEffect.source === "ranch") {
+          bundle.ranch.revision += 1;
+          bundle.ranch.updatedAt = Math.max(bundle.ranch.updatedAt, now);
+        }
+        if (item.numericEffect.source === "mine") {
+          bundle.mine.revision += 1;
+          bundle.mine.updatedAt = Math.max(bundle.mine.updatedAt, now);
+        }
+      }
+      bundle = this.syncBundleFromAccount(bundle, account);
       bundle.homestead.revision += 1;
       bundle.homestead.updatedAt = Math.max(
         bundle.homestead.updatedAt,
@@ -2052,7 +2268,7 @@ export class FarmService {
         at: now,
         type: "market",
         message:
-          `从商会购入${ESTATE_MERCHANT_ITEMS[action.itemId].name}。商品价格、效果和限购均由规则系统结算。`,
+          `从今日商会供应中购入${item.name}。商品价格、效果和每日限购均由规则系统结算。`,
       });
       await this.store.saveAccountAndTownEstate(
         user.id,
@@ -2167,6 +2383,64 @@ export class FarmService {
     return null;
   }
 
+  private cargoResourceAvailable(
+    bundle: TownEstateBundle,
+    resource: EstateCargoDefinition["manifest"][number],
+  ): number {
+    if (resource.source === "farm") {
+      return (bundle.farm.produce as Record<string, number>)[resource.itemId] ?? 0;
+    }
+    if (resource.source === "ranch") {
+      return (bundle.ranch.products as Record<string, number>)[resource.itemId] ?? 0;
+    }
+    if (resource.source === "mine") {
+      return (bundle.mine.ores as Record<string, number>)[resource.itemId] ?? 0;
+    }
+    return (bundle.homestead.goods as Record<string, number>)[resource.itemId] ?? 0;
+  }
+
+  private deductCargoManifest(
+    bundle: TownEstateBundle,
+    cargo: EstateCargoDefinition,
+    now: number,
+  ): void {
+    let farmChanged = false;
+    let ranchChanged = false;
+    let mineChanged = false;
+    for (const resource of cargo.manifest) {
+      if (resource.source === "farm") {
+        const stock = bundle.farm.produce as Record<string, number>;
+        stock[resource.itemId] = (stock[resource.itemId] ?? 0) - resource.quantity;
+        farmChanged = true;
+      } else if (resource.source === "ranch") {
+        const stock = bundle.ranch.products as Record<string, number>;
+        stock[resource.itemId] = (stock[resource.itemId] ?? 0) - resource.quantity;
+        ranchChanged = true;
+      } else if (resource.source === "mine") {
+        const stock = bundle.mine.ores as Record<string, number>;
+        stock[resource.itemId] = (stock[resource.itemId] ?? 0) - resource.quantity;
+        mineChanged = true;
+      } else {
+        const stock = bundle.homestead.goods as Record<string, number>;
+        stock[resource.itemId] = (stock[resource.itemId] ?? 0) - resource.quantity;
+      }
+    }
+    if (farmChanged) {
+      bundle.farm.revision += 1;
+      bundle.farm.updatedAt = Math.max(bundle.farm.updatedAt, now);
+    }
+    if (ranchChanged) {
+      bundle.ranch.revision += 1;
+      bundle.ranch.updatedAt = Math.max(bundle.ranch.updatedAt, now);
+    }
+    if (mineChanged) {
+      bundle.mine.revision += 1;
+      bundle.mine.updatedAt = Math.max(bundle.mine.updatedAt, now);
+    }
+    bundle.homestead.revision += 1;
+    bundle.homestead.updatedAt = Math.max(bundle.homestead.updatedAt, now);
+  }
+
   private async prefetchTownWeather(
     userId: string,
     additionalTownId?: EstateTownId,
@@ -2220,6 +2494,10 @@ export class FarmService {
       stale: snapshot.stale,
       mechanicsEnabled: snapshot.mechanicsEnabled,
       alertsAvailable: snapshot.alertsAvailable,
+      forecastAvailable: snapshot.forecastAvailable ?? false,
+      forecast: (snapshot.forecast ?? []).map((day) => ({
+        ...structuredClone(day),
+      })),
       fallbackReason: snapshot.fallbackReason,
       providerAttributions: [...snapshot.attributions],
       liveHazards: snapshot.disasters.map((hazard) => ({
@@ -2237,11 +2515,14 @@ export class FarmService {
       current.source !== nextWeather.source ||
       current.mechanicsEnabled !== nextWeather.mechanicsEnabled ||
       current.alertsAvailable !== nextWeather.alertsAvailable ||
+      current.forecastAvailable !== nextWeather.forecastAvailable ||
       current.weatherId !== nextWeather.weatherId;
     const hazardsChanged =
       JSON.stringify(current.liveHazards ?? []) !==
         JSON.stringify(nextWeather.liveHazards ?? []);
-    if (!weatherWindowChanged && !hazardsChanged) {
+    const forecastChanged = JSON.stringify(current.forecast ?? []) !==
+      JSON.stringify(nextWeather.forecast ?? []);
+    if (!weatherWindowChanged && !hazardsChanged && !forecastChanged) {
       return bundle;
     }
     bundle.homestead.weather = nextWeather;
@@ -2360,7 +2641,15 @@ export class FarmService {
       | "drought",
     description: string,
   ): HomesteadWorldEventId {
-    if (townId === "greenvale") return mechanicId;
+    if (townId === "greenvale") {
+      if (
+        mechanicId === "cold_snap" &&
+        /管|供水|结冰|冰冻|pipe|water/i.test(description)
+      ) {
+        return "greenvale_pipe_freeze";
+      }
+      return mechanicId;
+    }
     if (/雪崩|avalanche/i.test(description)) return "frost_avalanche";
     if (/道路结冰|轨道结冰|road icing|rail icing/i.test(description)) {
       return "frost_rail_icing";
@@ -2434,6 +2723,7 @@ export class FarmService {
   private scheduleHomesteadDirector(
     user: PublicUser,
     bundle: TownEstateBundle,
+    refreshKey = "daily",
   ): void {
     if (!this.decisions.supports("homestead") || !bundle.homestead.aiProfile.enabled) {
       return;
@@ -2461,6 +2751,7 @@ export class FarmService {
         bundle.homestead.dayKey,
         profile,
         disasterId,
+        refreshKey,
       ]))
       .digest("hex")
       .slice(0, 32);
@@ -2553,7 +2844,7 @@ export class FarmService {
       structuredClone(prepared.bundle.ranch),
       structuredClone(prepared.bundle.mine),
       job.userId,
-      this.homesteadDirectorContext(prepared.account),
+      this.homesteadDirectorContext(prepared.account, prepared.bundle),
     );
     if (directed.revision === prepared.baseRevision) return "obsolete";
 
@@ -2579,52 +2870,14 @@ export class FarmService {
       if (!this.directorJobMatches(job, loadedAccount, loadedBundle)) {
         return false;
       }
-      let nextHomestead = directed;
       if (loadedBundle.homestead.revision !== prepared.baseRevision) {
-        nextHomestead = applyHomesteadWorldEventDecision(
-          loadedBundle.homestead,
-          directed.worldEvent.eventId,
-          "llm",
-          this.clock(),
-          {
-            narrative: directed.worldEvent.narrative,
-            recommendation: directed.advice.recommendation,
-            npcLine: directed.advice.npcLine,
-            ...(directed.advice.steps?.length === 3
-              ? { planSteps: directed.advice.steps }
-              : {}),
-            ...(directed.worldEvent.instanceId
-              ? {
-                  eventInstanceId: directed.worldEvent.instanceId,
-                  eventRulesVersion: directed.worldEvent.rulesVersion ?? 1,
-                  ...(directed.worldEvent.parameters
-                    ? { eventParameters: directed.worldEvent.parameters }
-                    : {}),
-                }
-              : {}),
-            llmUsage: {
-              promptTokens: Math.max(
-                0,
-                directed.statistics.llmPromptTokens -
-                  prepared.bundle.homestead.statistics.llmPromptTokens,
-              ),
-              completionTokens: Math.max(
-                0,
-                directed.statistics.llmCompletionTokens -
-                  prepared.bundle.homestead.statistics.llmCompletionTokens,
-              ),
-            },
-            ...(directed.advice.merchantRecommendationId
-              ? {
-                  merchantRecommendationId:
-                    directed.advice.merchantRecommendationId,
-                }
-              : {}),
-          },
-        );
+        // A director response is semantically tied to the exact state it saw.
+        // Never merge it onto newer player actions; the newer action schedules
+        // its own refresh with fresh evidence instead.
+        return false;
       }
       const nextBundle = structuredClone(loadedBundle);
-      nextBundle.homestead = nextHomestead;
+      nextBundle.homestead = directed;
       const nextAccount = this.syncAccountFromBundle(
         structuredClone(loadedAccount),
         nextBundle,
@@ -2653,7 +2906,6 @@ export class FarmService {
       account.activeTownId === job.townId &&
       bundle.townId === job.townId &&
       bundle.homestead.dayKey === job.dayKey &&
-      bundle.homestead.worldEvent.selectedOptionId === null &&
       JSON.stringify(bundle.homestead.aiProfile) ===
         JSON.stringify(job.profile) &&
       disasterId === job.disasterId
@@ -2776,14 +3028,13 @@ export class FarmService {
         );
         return rightUpdatedAt - leftUpdatedAt;
       })[0];
-    const recoveredResearch = new Set(
-      recoveredBundles.flatMap((bundle) =>
-        bundle.homestead.research.unlocked
-      ),
+    const recoveredGreenResearch = new Set(
+      recoveredTownBundles.greenvale?.homestead.research.unlocked ??
+        legacyHomestead?.research.unlocked ?? [],
     );
-    for (const nodeId of legacyHomestead?.research.unlocked ?? []) {
-      recoveredResearch.add(nodeId);
-    }
+    const recoveredFrostResearch = new Set(
+      recoveredTownBundles.frostpeak?.homestead.research.unlocked ?? [],
+    );
     const recoveredMerchantRenown = Math.max(
       legacyHomestead?.townNetwork?.merchantRenown ?? 0,
       ...recoveredBundles.map((bundle) =>
@@ -2797,11 +3048,21 @@ export class FarmService {
       now: this.clock(),
       coins: freshestBundle?.farm.coins ?? legacyFarm?.coins,
       researchPoints:
-        freshestBundle?.homestead.researchPoints ??
+        recoveredTownBundles.greenvale?.homestead.researchPoints ??
         legacyHomestead?.researchPoints,
       merchantRenown: recoveredMerchantRenown,
-      unlockedResearchIds: [...recoveredResearch],
+      unlockedResearchIds: [...recoveredGreenResearch],
     });
+    account.townResearch.greenvale = {
+      points:
+        recoveredTownBundles.greenvale?.homestead.researchPoints ??
+        legacyHomestead?.researchPoints ?? 0,
+      unlockedIds: [...recoveredGreenResearch],
+    };
+    account.townResearch.frostpeak = {
+      points: recoveredTownBundles.frostpeak?.homestead.researchPoints ?? 0,
+      unlockedIds: [...recoveredFrostResearch],
+    };
     const recoveredGreenvale = recoveredTownBundles.greenvale;
     account.townProgress.greenvale = recoveredGreenvale
       ? {
@@ -2879,6 +3140,11 @@ export class FarmService {
         account.activeTownId = "frostpeak";
       }
     }
+    account.researchPoints =
+      account.townResearch[account.activeTownId].points;
+    account.unlockedResearchIds = [
+      ...account.townResearch[account.activeTownId].unlockedIds,
+    ];
     await this.store.saveEstateAccount(user.id, account);
     return account;
   }
@@ -3086,9 +3352,10 @@ export class FarmService {
   ): TownEstateBundle {
     const bundle = structuredClone(state);
     bundle.farm.coins = account.coins;
-    bundle.homestead.researchPoints = account.researchPoints;
+    const localResearch = account.townResearch[bundle.townId];
+    bundle.homestead.researchPoints = localResearch.points;
     bundle.homestead.research.unlocked = [
-      ...new Set(account.unlockedResearchIds),
+      ...new Set(localResearch.unlockedIds),
     ] as HomesteadGameState["research"]["unlocked"];
     bundle.homestead.townNetwork.activeTownId = bundle.townId;
     bundle.homestead.townNetwork.merchantRenown = account.merchantRenown;
@@ -3112,9 +3379,9 @@ export class FarmService {
       const progress = value.townProgress[bundle.townId];
       return JSON.stringify([
         value.coins,
-        value.researchPoints,
+        value.townResearch[bundle.townId].points,
         value.merchantRenown,
-        [...value.unlockedResearchIds].sort(),
+        [...value.townResearch[bundle.townId].unlockedIds].sort(),
         progress
           ? [
               progress.unlocked,
@@ -3133,15 +3400,18 @@ export class FarmService {
     };
     const previous = fingerprint(account);
     account.coins = bundle.farm.coins;
-    account.researchPoints = bundle.homestead.researchPoints;
+    account.townResearch[bundle.townId] = {
+      points: bundle.homestead.researchPoints,
+      unlockedIds: [...new Set(bundle.homestead.research.unlocked)],
+    };
+    if (account.activeTownId === bundle.townId) {
+      account.researchPoints = bundle.homestead.researchPoints;
+      account.unlockedResearchIds = [
+        ...account.townResearch[bundle.townId].unlockedIds,
+      ];
+    }
     account.merchantRenown =
       bundle.homestead.townNetwork.merchantRenown;
-    account.unlockedResearchIds = [
-      ...new Set([
-        ...account.unlockedResearchIds,
-        ...bundle.homestead.research.unlocked,
-      ]),
-    ];
     const recommendedItemId =
       bundle.homestead.advice.merchantRecommendationId;
     if (recommendedItemId === null) {
@@ -3570,17 +3840,46 @@ export class FarmService {
 
   private homesteadDirectorContext(
     account: EstateAccountState,
+    bundle: TownEstateBundle,
   ): HomesteadDirectorContext {
+    const now = this.clock();
+    const view = getHomesteadGameView(
+      bundle.homestead,
+      this.homesteadEconomy(
+        bundle.farm,
+        bundle.ranch,
+        bundle.mine,
+        account,
+      ),
+      now,
+    );
+    const activeCargoRoutes = view.intertownLogistics.routes.filter(
+      ({ fromTownId }) => fromTownId === account.activeTownId,
+    );
+    const valueRouteDeficits = view.valueRoutes
+      .filter(({ completedToday, requirementsView }) =>
+        !completedToday && requirementsView.some(({ sufficient }) => !sufficient)
+      )
+      .map((route) => {
+        const missing = route.requirementsView
+          .filter(({ sufficient }) => !sufficient)
+          .map(({ source, itemId, available, quantity }) =>
+            `${source}/${itemId} ${available}/${quantity}`
+          )
+          .join("、");
+        return `${route.title}缺口：${missing}`;
+      });
     return {
       coins: account.coins,
       localReputation:
         account.townProgress[account.activeTownId]?.localReputation ?? 0,
       merchantRenown: account.merchantRenown,
       logistics: structuredClone(account.logistics),
-      merchantCandidates: Object.values(ESTATE_MERCHANT_ITEMS).map(
-        (item) => {
+      merchantCandidates: estateMerchantOfferIds(account).map(
+        (itemId) => ESTATE_MERCHANT_ITEMS[itemId],
+      ).map((item) => {
           const owned = account.merchantInventory[item.id];
-          const purchasedThisWeek =
+          const purchasedToday =
             account.purchaseLedger.counts[item.id];
           const disabledReason =
             account.merchantRenown < item.requiredRenown
@@ -3589,18 +3888,66 @@ export class FarmService {
                 ? "金币不足"
                 : owned >= item.inventoryLimit
                   ? "库存已达上限"
-                  : purchasedThisWeek >= item.weeklyPurchaseLimit
-                    ? "本周限购次数已用完"
+                  : purchasedToday >= item.dailyPurchaseLimit
+                    ? "今日限购次数已用完"
                     : null;
           return {
             itemId: item.id,
             owned,
-            purchasedThisWeek,
+            purchasedToday,
             canBuy: disabledReason === null,
             disabledReason,
           };
         },
       ),
+      townProgress: view.towns.map((town) => ({
+        townId: town.definition.id,
+        townName: town.definition.name,
+        active: town.active,
+        unlocked: town.unlocked,
+        localReputation: town.reputation,
+        farmLevel:
+          account.townProgress[town.definition.id]?.farmLevel ?? 1,
+        ranchLevel:
+          account.townProgress[town.definition.id]?.ranchLevel ?? 1,
+        mineLevel:
+          account.townProgress[town.definition.id]?.mineLevel ?? 1,
+        landmarkStage: town.landmarkStage,
+      })),
+      shipments: view.intertownLogistics.shipments
+        .filter(({ status }) => status !== "collected")
+        .map((shipment) => ({
+          cargoName: shipment.definition.name,
+          fromTown: TOWN_DEFINITIONS[shipment.fromTownId].name,
+          toTown: TOWN_DEFINITIONS[shipment.toTownId].name,
+          status: shipment.status,
+          secondsRemaining: Math.max(
+            0,
+            Math.ceil((shipment.arrivesAt - now) / 1_000),
+          ),
+          canCollect: shipment.canCollect,
+        })),
+      cargoRoutes: activeCargoRoutes.map((route) => ({
+        cargoName: route.name,
+        fromTown: TOWN_DEFINITIONS[route.fromTownId].name,
+        toTown: TOWN_DEFINITIONS[route.toTownId].name,
+        canDispatch: route.canDispatch,
+        disabledReason: route.disabledReason,
+        missingResources: route.requirementsView
+          .filter(({ sufficient }) => !sufficient)
+          .map(({ source, itemId, available, quantity }) =>
+            `${source}/${itemId} ${available}/${quantity}`
+          ),
+      })),
+      valueRouteDeficits,
+      economicBottlenecks: [
+        ...valueRouteDeficits,
+        ...activeCargoRoutes
+          .filter(({ canDispatch }) => !canDispatch)
+          .map((route) =>
+            `${route.name}暂不可发车：${route.disabledReason ?? "条件未满足"}`
+          ),
+      ].slice(0, 8),
     };
   }
 
@@ -3665,6 +4012,29 @@ export class FarmService {
       const planSteps = result?.presentation?.planStepIndices
         ?.map((index) => request.input.state.planCandidates[index])
         .filter((candidate) => candidate !== undefined);
+      const advisorIndex = result?.presentation?.advisorIndex;
+      const resolvedAdvisorIndex = Number.isSafeInteger(advisorIndex) &&
+          Number(advisorIndex) >= 0
+        ? Number(advisorIndex)
+        : 0;
+      const directorNpcId = homestead.npcs[resolvedAdvisorIndex]?.npcId ??
+        homestead.npcs[0]!.npcId;
+      const selectedBeatId = result?.presentation?.directorBeatId;
+      const directorBeatId = selectedBeatId &&
+          request.input.state.directorBeatCandidates.some(
+            ({ id }) => id === selectedBeatId,
+          )
+        ? selectedBeatId
+        : request.input.state.directorBeatCandidates[0]!.id;
+      const rawEvidenceIndices = result?.presentation?.evidenceIndices;
+      const evidenceIndices = [
+        ...new Set(
+          rawEvidenceIndices?.length ? rawEvidenceIndices : [0],
+        ),
+      ].slice(0, 3);
+      const directorEvidence = evidenceIndices
+        .map((index) => request.input.state.evidenceFacts[index])
+        .filter((fact) => fact !== undefined);
       const compiled = selected
         ? compileHomesteadGeneratedEvent(
             {
@@ -3723,28 +4093,80 @@ export class FarmService {
         fallback.revision += 1;
         return fallback;
       }
-      const directed = applyHomesteadWorldEventDecision(
-        homestead,
-        compiled.eventId,
-        "llm",
-        this.clock(),
-        {
-          narrative: compiled.narrative,
-          recommendation: result?.presentation?.recommendation,
-          npcLine: result?.presentation?.npcLine,
-          ...(planSteps?.length === 3 ? { planSteps } : {}),
-          eventInstanceId: compiled.instanceId,
-          eventRulesVersion: compiled.rulesVersion,
-          llmUsage: result!.usage,
-          eventParameters: compiled.parameters,
-          ...(result?.presentation?.merchantRecommendationId
-            ? {
-                merchantRecommendationId:
-                  result.presentation.merchantRecommendationId,
-              }
-            : {}),
-        },
-      );
+      const directed = homestead.worldEvent.selectedOptionId !== null
+        ? (() => {
+            const next = structuredClone(homestead);
+            const now = this.clock();
+            next.advice = {
+              ...next.advice,
+              dayKey: next.dayKey,
+              source: "llm",
+              headline:
+                result?.presentation?.title ??
+                HOMESTEAD_WORLD_EVENTS[next.worldEvent.eventId].title,
+              narrative:
+                result?.presentation?.narrative ?? next.worldEvent.narrative,
+              recommendation:
+                result?.presentation?.recommendation ??
+                next.advice.recommendation,
+              npcId: directorNpcId,
+              npcLine:
+                result?.presentation?.npcLine ?? next.advice.npcLine,
+              generatedAt: now,
+              worldBeatId: directorBeatId,
+              ...(result?.presentation?.foreshadowing?.trim()
+                ? {
+                    foreshadowing: result.presentation.foreshadowing
+                      .trim()
+                      .slice(0, 120),
+                  }
+                : {}),
+              evidence: directorEvidence,
+              ...(planSteps?.length === 3 ? { steps: planSteps } : {}),
+              ...(result?.presentation?.merchantRecommendationId
+                ? {
+                    merchantRecommendationId:
+                      result.presentation.merchantRecommendationId,
+                  }
+                : {}),
+            };
+            next.statistics.llmCalls += 1;
+            next.statistics.llmPromptTokens += result!.usage.promptTokens;
+            next.statistics.llmCompletionTokens +=
+              result!.usage.completionTokens;
+            next.updatedAt = Math.max(next.updatedAt, now);
+            next.revision += 1;
+            return next;
+          })()
+        : applyHomesteadWorldEventDecision(
+            homestead,
+            compiled.eventId,
+            "llm",
+            this.clock(),
+            {
+              headline: result?.presentation?.title,
+              narrative: compiled.narrative,
+              recommendation: result?.presentation?.recommendation,
+              npcId: directorNpcId,
+              npcLine: result?.presentation?.npcLine,
+              worldBeatId: directorBeatId,
+              foreshadowing: result?.presentation?.foreshadowing,
+              ...(directorEvidence.length > 0
+                ? { evidence: directorEvidence }
+                : {}),
+              ...(planSteps?.length === 3 ? { planSteps } : {}),
+              eventInstanceId: compiled.instanceId,
+              eventRulesVersion: compiled.rulesVersion,
+              llmUsage: result!.usage,
+              eventParameters: compiled.parameters,
+              ...(result?.presentation?.merchantRecommendationId
+                ? {
+                    merchantRecommendationId:
+                      result.presentation.merchantRecommendationId,
+                  }
+                : {}),
+            },
+          );
       await this.llmGovernance?.record({
         userId: playerId,
         feature: "homestead",
@@ -3907,9 +4329,10 @@ export class FarmService {
     game: FarmingGameState,
     userId: string,
     townId: EstateTownId,
+    production?: EstateProductionRule,
   ): Promise<FarmSnapshot> {
     return {
-      farm: getFarmingGameView(game, userId, this.clock()),
+      farm: getFarmingGameView(game, userId, this.clock(), production),
       neighbors: await this.neighborSummaries(userId, townId),
       marketDirectorAvailable: this.marketDirectorAvailable,
     };
@@ -3950,9 +4373,10 @@ export class FarmService {
     farm: FarmingGameState,
     userId: string,
     townId: EstateTownId,
+    production?: EstateProductionRule,
   ): Promise<RanchSnapshot> {
     return {
-      ranch: this.ranchView(ranch, farm, userId),
+      ranch: this.ranchView(ranch, farm, userId, production),
       neighbors: await this.ranchNeighborSummaries(userId, townId),
     };
   }
@@ -3961,6 +4385,7 @@ export class FarmService {
     ranch: RanchGameState,
     farm: FarmingGameState,
     viewerId: string,
+    production?: EstateProductionRule,
   ): RanchGameView {
     return getRanchGameView(ranch, {
       viewerId,
@@ -3968,6 +4393,7 @@ export class FarmService {
       farmRevision: farm.revision,
       farmLevel: farm.level,
       dogLevel: farm.dogLevel,
+      production,
       ...(viewerId === farm.ownerId
         ? { coins: farm.coins, produce: farm.produce }
       : {}),
@@ -3978,6 +4404,7 @@ export class FarmService {
     mine: MineGameState,
     farm: FarmingGameState,
     ranch: RanchGameState,
+    production?: EstateProductionRule,
   ): MineGameView {
     return getMineGameView(mine, {
       farmRevision: farm.revision,
@@ -3987,7 +4414,7 @@ export class FarmService {
       ranchRevision: ranch.revision,
       ranchLevel: ranch.level,
       ranchProducts: ranch.products,
-    }, this.clock());
+    }, this.clock(), production);
   }
 
   private homesteadEconomy(
@@ -4017,6 +4444,7 @@ export class FarmService {
             purchaseLedger: structuredClone(account.purchaseLedger),
             logistics: structuredClone(account.logistics),
             travelLogs: structuredClone(account.travelLogs),
+            shipments: structuredClone(account.shipments),
             shopRecommendationId: account.shopRecommendationId,
             shopRecommendationSource: account.shopRecommendationSource,
           }

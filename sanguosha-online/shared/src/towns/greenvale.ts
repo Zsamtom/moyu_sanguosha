@@ -66,10 +66,10 @@ export const GREENVALE_TOWN_DEFINITION: TownDefinition = {
     defaultMode: "local",
   },
   weatherAnchor: {
-    cityName: "成都",
+    cityName: "郑州",
     countryCode: "CN",
-    latitude: 30.57,
-    longitude: 104.07,
+    latitude: 34.75,
+    longitude: 113.62,
     timeZone: "Asia/Shanghai",
     refreshIntervalSeconds: 8 * 60 * 60,
   },

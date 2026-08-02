@@ -1,6 +1,7 @@
 import type {
   EstateMerchantItemId,
   HomesteadGeneratedEventPacingId,
+  HomesteadWorldBeatId,
 } from "@sanguosha/shared";
 
 export type BotGameKind =
@@ -42,6 +43,14 @@ export interface BotDecisionResult {
     readonly narrative?: string;
     readonly recommendation?: string;
     readonly npcLine?: string;
+    /** Local advisor selected by index from the prompt's advisorOptions. */
+    readonly advisorIndex?: number;
+    /** Dramatic intent selected from the prompt's directorBeatOptions. */
+    readonly directorBeatId?: HomesteadWorldBeatId;
+    /** Server facts selected from evidenceOptions; never free-form evidence. */
+    readonly evidenceIndices?: readonly number[];
+    /** Display-only next-day hook. It cannot schedule or mutate gameplay. */
+    readonly foreshadowing?: string;
     /**
      * Display navigation steps selected by index from a server-provided
      * whitelist. They never contain an executable game mutation.
