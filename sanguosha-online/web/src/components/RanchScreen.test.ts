@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type {
   RanchAnimalDefinition,
   RanchClientAction,
@@ -84,6 +85,16 @@ describe('RanchScreen real-time pen projection', () => {
       animal,
       601_000,
     ).estimatedYield).toBe(5);
+  });
+
+  it('offers queued one-click cleaning and collection', () => {
+    const source = readFileSync(
+      new URL('./RanchScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain("type: 'ranch_clean_all'");
+    expect(source).toContain("type: 'ranch_collect_all'");
+    expect(source).toContain('后台保存队列');
   });
 });
 

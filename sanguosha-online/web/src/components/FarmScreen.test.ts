@@ -173,6 +173,19 @@ describe('FarmScreen plot toolbar', () => {
     expect(source).toContain('作物、种子与本轮投入都不会返还');
   });
 
+  it('offers queued one-click maintenance and collection actions', () => {
+    const source = readFileSync(
+      new URL('./FarmScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain("type: 'farming_tend_all', care: 'water'");
+    expect(source).toContain("type: 'farming_tend_all', care: 'weed'");
+    expect(source).toContain("type: 'farming_tend_all', care: 'pest'");
+    expect(source).toContain("type: 'farming_harvest_all'");
+    expect(source).toContain('一键收取');
+    expect(source).toContain('后台保存队列');
+  });
+
   it('shows a planted crop and reduced seed inventory before the server responds', () => {
     const snapshot = {
       farm: {

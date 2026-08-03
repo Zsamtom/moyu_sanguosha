@@ -115,6 +115,7 @@ export default function App() {
   const [rawGame, setRawGame] = useState<unknown | null>(null);
   const [extraLogs, setExtraLogs] = useState<GameLogEntry[]>([]);
   const [workspaceView, setWorkspaceView] = useState<'lobby' | 'homestead' | 'farm' | 'ranch' | 'mine' | 'reader' | 'admin'>('lobby');
+  const [estateScreenKey, setEstateScreenKey] = useState(0);
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [llmSettings, setLlmSettings] = useState<LlmSettings>();
@@ -630,6 +631,14 @@ export default function App() {
       ? 'room'
       : workspaceView;
 
+  const navigateEstate = (next: HomesteadView) => {
+    if (workspaceView === next) {
+      setEstateScreenKey((value) => value + 1);
+      return;
+    }
+    setWorkspaceView(next);
+  };
+
   return (
     <ConfigProvider
       theme={documentTheme}
@@ -713,37 +722,37 @@ export default function App() {
           <>
             <HomesteadNav
               active="homestead"
-              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onNavigate={navigateEstate}
               onExit={() => setWorkspaceView('lobby')}
             />
-            <HomesteadScreen />
+            <HomesteadScreen key={`homestead:${estateScreenKey}`} />
           </>
         ) : workspaceView === 'farm' ? (
           <>
             <HomesteadNav
               active="farm"
-              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onNavigate={navigateEstate}
               onExit={() => setWorkspaceView('lobby')}
             />
-            <FarmScreen />
+            <FarmScreen key={`farm:${estateScreenKey}`} />
           </>
         ) : workspaceView === 'ranch' ? (
           <>
             <HomesteadNav
               active="ranch"
-              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onNavigate={navigateEstate}
               onExit={() => setWorkspaceView('lobby')}
             />
-            <RanchScreen />
+            <RanchScreen key={`ranch:${estateScreenKey}`} />
           </>
         ) : workspaceView === 'mine' ? (
           <>
             <HomesteadNav
               active="mine"
-              onNavigate={(next: HomesteadView) => setWorkspaceView(next)}
+              onNavigate={navigateEstate}
               onExit={() => setWorkspaceView('lobby')}
             />
-            <MineScreen />
+            <MineScreen key={`mine:${estateScreenKey}`} />
           </>
         ) : workspaceView === 'reader' ? (
           <NovelReaderScreen />

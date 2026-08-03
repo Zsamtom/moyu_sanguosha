@@ -161,6 +161,51 @@ describe("linked mine engine", () => {
     );
   });
 
+  it("reinforces and collects every eligible shaft in one revision", () => {
+    let mine = createMineGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "mine-batch",
+      now: start,
+    });
+    let linked = economy();
+    for (const shaftIndex of [0, 1]) {
+      const result = applyMineAction(
+        mine,
+        linked,
+        { type: "mine_start", depositId: "coal", shaftIndex },
+        start,
+      );
+      mine = result.mine;
+      linked = result.economy;
+    }
+    const readyAt = start + MINE_DEPOSITS.coal.durationSeconds * 1_000;
+    const mineRevision = mine.revision;
+    const ranchRevision = linked.ranchRevision;
+    let result = applyMineAction(
+      mine,
+      linked,
+      { type: "mine_reinforce_all" },
+      readyAt,
+    );
+    expect(result.mine.revision).toBe(mineRevision + 1);
+    expect(result.economy.ranchRevision).toBe(ranchRevision + 1);
+    expect(result.mine.shafts.slice(0, 2).every(({ reinforced }) => reinforced))
+      .toBe(true);
+
+    const collectRevision = result.mine.revision;
+    result = applyMineAction(
+      result.mine,
+      result.economy,
+      { type: "mine_collect_all" },
+      readyAt,
+    );
+    expect(result.mine.revision).toBe(collectRevision + 1);
+    expect(result.mine.ores.coal).toBe((MINE_DEPOSITS.coal.yield + 1) * 2);
+    expect(result.mine.shafts.slice(0, 2).every(({ depositId }) => depositId === null))
+      .toBe(true);
+  });
+
   it("captures disaster-time efficiency when an expedition starts", () => {
     const mine = createMineGame({
       ownerId: "owner",

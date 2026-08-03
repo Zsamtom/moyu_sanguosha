@@ -14,6 +14,7 @@ import {
   isRevisionVectorAtLeast,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
+import { useSerialActionQueue } from '../serialActionQueue';
 import type {
   RanchAnimalDefinition,
   RanchAnimalId,
@@ -197,6 +198,9 @@ export function RanchScreen() {
   const neighborRanchRef = useRef<RanchGameView>();
   const loadRequestSequence = useRef(0);
   const neighborRequestSequence = useRef(0);
+  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+    useSerialActionQueue();
+  const previousQueuedActionCount = useRef(queuedActionCount);
   const [selectedAnimal, setSelectedAnimal] =
     useState<RanchAnimalId | null>(null);
   const [movingPenIndex, setMovingPenIndex] = useState<number>();
@@ -308,6 +312,14 @@ export function RanchScreen() {
   }, []);
 
   useEffect(() => {
+    const previousCount = previousQueuedActionCount.current;
+    previousQueuedActionCount.current = queuedActionCount;
+    if (previousCount > 0 && queuedActionCount === 0) {
+      void load(true, true);
+    }
+  }, [queuedActionCount]);
+
+  useEffect(() => {
     if (!neighborRanch) return;
     const ownerId = neighborRanch.ownerId;
     const refresh = window.setInterval(() => {
@@ -320,15 +332,14 @@ export function RanchScreen() {
     return () => window.clearInterval(refresh);
   }, [neighborRanch?.ownerId]);
 
-  const runAction = async (action: RanchClientAction) => {
+  const executeAction = async (action: RanchClientAction, attempt = 0): Promise<void> => {
     const current = snapshotRef.current;
-    if (!current || actionInFlight.current) return;
+    if (!current) return;
     actionInFlight.current = true;
     loadRequestSequence.current += 1;
     if (action.type !== 'ranch_move_animal') {
       setMovingPenIndex(undefined);
     }
-    setBusy(true);
     setPendingAction(action);
     let refreshAfterAction = false;
     try {
@@ -353,6 +364,10 @@ export function RanchScreen() {
         );
       } else if (action.type === 'ranch_sell_animal') {
         toast.success(`已出售 ${action.penIndex + 1} 号畜舍的动物`);
+      } else if (action.type === 'ranch_clean_all') {
+        toast.success('已完成一键清扫');
+      } else if (action.type === 'ranch_collect_all') {
+        toast.success('已收取全部成熟产品');
       }
     } catch (error) {
       if (
@@ -362,21 +377,26 @@ export function RanchScreen() {
         )
       ) {
         refreshAfterAction = true;
+        if (attempt >= 2) toast.error(errorMessage(error));
+      } else {
+        toast.error(errorMessage(error));
       }
-      toast.error(errorMessage(error));
     } finally {
       if (!refreshAfterAction) {
         actionInFlight.current = false;
-        setBusy(false);
         setPendingAction(undefined);
       }
     }
     if (refreshAfterAction) {
       await load(true, true);
       actionInFlight.current = false;
-      setBusy(false);
       setPendingAction(undefined);
+      if (attempt < 2) return executeAction(action, attempt + 1);
     }
+  };
+
+  const runAction = (action: RanchClientAction) => {
+    enqueueAction(() => executeAction(action));
   };
 
   const openNeighbor = async (ownerId: string) => {
@@ -532,6 +552,20 @@ export function RanchScreen() {
         cropId !== undefined
       ),
   ));
+  const dirtyPenCount = ownGame.pens.filter((pen) =>
+    pen.unlocked &&
+    pen.animalId !== null &&
+    pen.fedAt !== null &&
+    pen.messAt !== null &&
+    now >= pen.messAt &&
+    !pen.messCleaned
+  ).length;
+  const readyPenCount = ownGame.pens.filter((pen) =>
+    pen.unlocked &&
+    pen.animalId !== null &&
+    pen.producesAt !== null &&
+    now >= pen.producesAt
+  ).length;
 
   return (
     <main className="farm-page ranch-page">
@@ -561,7 +595,11 @@ export function RanchScreen() {
           </Button>
         )}
         <span role="status" aria-live="polite">
-          {busy ? '正在保存操作，其他经营按钮暂不可用' : '操作就绪'}
+          {busy
+            ? '正在处理农友交互'
+            : queuedActionCount > 0
+              ? `后台保存队列 ${queuedActionCount} 项，可继续操作`
+              : '操作就绪'}
         </span>
       </section>
 
@@ -648,6 +686,22 @@ export function RanchScreen() {
                       </Button>
                     );
                   })}
+                  <Button
+                    disabled={busy || dirtyPenCount === 0}
+                    loading={pendingAction?.type === 'ranch_clean_all'}
+                    size="small"
+                    onClick={() => void runAction({ type: 'ranch_clean_all' })}
+                  >
+                    一键清扫 ({dirtyPenCount})
+                  </Button>
+                  <Button
+                    disabled={busy || readyPenCount === 0}
+                    loading={pendingAction?.type === 'ranch_collect_all'}
+                    size="small"
+                    onClick={() => void runAction({ type: 'ranch_collect_all' })}
+                  >
+                    一键收取 ({readyPenCount})
+                  </Button>
                   {movingPenIndex !== undefined && (
                     <Button
                       danger
@@ -791,7 +845,7 @@ export function RanchScreen() {
                               disabled={!canBuyHere && !canMoveHere}
                               title={
                                 busy
-                                  ? '正在保存另一项操作'
+                                  ? '正在切换农友页面'
                                   : !canMoveHere &&
                                       economy.coins < selectedDefinition.purchaseCost
                                     ? `金币不足，需要 ${selectedDefinition.purchaseCost}`
@@ -1010,7 +1064,7 @@ export function RanchScreen() {
                                 }
                                 title={
                                   busy
-                                    ? '正在保存另一项操作'
+                                    ? '正在切换农友页面'
                                     : inventoryCount(economy.products, animal.productId) <
                                         quantity
                                       ? `库存不足，当前有 ${inventoryCount(economy.products, animal.productId)}`

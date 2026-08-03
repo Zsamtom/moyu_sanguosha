@@ -149,6 +149,55 @@ describe("real-time farming engine", () => {
     expect(state.logs.at(-1)?.text).toContain("批量收获");
   });
 
+  it("performs one-click watering, weeding, pest control, and harvesting atomically", () => {
+    let state = game();
+    state.level = 3;
+    state.experience = FARMING_LEVEL_EXPERIENCE[2];
+    state = applyFarmingAction(
+      state,
+      {
+        type: "farming_batch_plant",
+        cropId: "wheat",
+        plotIndices: [0, 1, 2],
+      },
+      start,
+    );
+    for (const plot of state.plots.slice(0, 3)) {
+      plot.weedAt = start;
+      plot.pestAt = start;
+    }
+
+    state = applyFarmingAction(
+      state,
+      { type: "farming_tend_all", care: "water" },
+      start,
+    );
+    state = applyFarmingAction(
+      state,
+      { type: "farming_tend_all", care: "weed" },
+      start,
+    );
+    state = applyFarmingAction(
+      state,
+      { type: "farming_tend_all", care: "pest" },
+      start,
+    );
+    expect(state.plots.slice(0, 3).every((plot) =>
+      plot.watered && plot.weedCleared && plot.pestCleared
+    )).toBe(true);
+
+    const revision = state.revision;
+    state = applyFarmingAction(
+      state,
+      { type: "farming_harvest_all" },
+      start + FARMING_CROPS.wheat.growthSeconds * 1_000,
+    );
+    expect(state.revision).toBe(revision + 1);
+    expect(state.statistics.harvests).toBe(3);
+    expect(state.plots.slice(0, 3).every(({ cropId }) => cropId === null))
+      .toBe(true);
+  });
+
   it("captures estate weather bonuses when a crop is planted", () => {
     let state = applyFarmingAction(
       game(),

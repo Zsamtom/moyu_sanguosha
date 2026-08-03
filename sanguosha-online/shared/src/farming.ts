@@ -417,8 +417,15 @@ export type FarmingAction =
       readonly plotIndex: number;
     }
   | {
+      readonly type: "farming_tend_all";
+      readonly care: FarmingCareKind;
+    }
+  | {
       readonly type: "farming_harvest";
       readonly plotIndex: number;
+    }
+  | {
+      readonly type: "farming_harvest_all";
     }
   | {
       readonly type: "farming_batch_harvest";
@@ -1164,6 +1171,34 @@ export function applyFarmingAction(
       "plant",
       `在 ${plot.index + 1} 号田播种${crop.name}，预计 ${new Date(plot.maturesAt!).toLocaleString("zh-CN")} 成熟。`,
     );
+  } else if (action.type === "farming_tend_all") {
+    const targets = game.plots.filter((plot) => {
+      if (plot.index >= game.unlockedPlots || !plot.cropId) return false;
+      if (action.care === "water") return !plot.watered;
+      if (action.care === "weed") {
+        return cropIssueAppeared(plot.weedAt, plot.weedCleared, effectiveNow);
+      }
+      return cropIssueAppeared(plot.pestAt, plot.pestCleared, effectiveNow);
+    });
+    if (targets.length === 0) {
+      throw new FarmingRuleError(
+        "FARMING_CARE_NOT_NEEDED",
+        "当前没有需要执行这项维护的田地",
+      );
+    }
+    for (const plot of targets) {
+      applyCareToPlot(plot, action.care, effectiveNow);
+      addExperience(game, 2, effectiveNow);
+    }
+    const label = action.care === "water"
+      ? "浇水"
+      : action.care === "weed" ? "除草" : "除虫";
+    addLog(
+      game,
+      effectiveNow,
+      "care",
+      `一键${label}完成，共处理 ${targets.length} 块田地。`,
+    );
   } else if (action.type === "farming_tend") {
     const plot = requirePlot(game, action.plotIndex);
     if (!plot.cropId) {
@@ -1190,6 +1225,42 @@ export function applyFarmingAction(
       ? "浇水"
       : action.care === "weed" ? "除草" : "除虫";
     addLog(game, effectiveNow, "care", `完成 ${plot.index + 1} 号田${label}。`);
+  } else if (action.type === "farming_harvest_all") {
+    if (game.level < 3) {
+      throw new FarmingRuleError(
+        "FARMING_LEVEL_REQUIRED",
+        "农场达到 3 级后解锁一键收获",
+      );
+    }
+    const plotIndices = game.plots
+      .filter((plot) =>
+        plot.index < game.unlockedPlots &&
+        plot.cropId !== null &&
+        plot.maturesAt !== null &&
+        effectiveNow >= plot.maturesAt
+      )
+      .map(({ index }) => index);
+    if (plotIndices.length === 0) {
+      throw new FarmingRuleError("FARMING_NOT_READY", "当前没有成熟田地");
+    }
+    const baseRevision = game.revision;
+    for (const plotIndex of plotIndices) {
+      game = applyFarmingAction(
+        game,
+        { type: "farming_harvest", plotIndex },
+        effectiveNow,
+        production,
+      );
+    }
+    addLog(
+      game,
+      effectiveNow,
+      "harvest",
+      `一键收获完成，共处理 ${plotIndices.length} 块成熟田地。`,
+    );
+    game.updatedAt = effectiveNow;
+    game.revision = baseRevision + 1;
+    return game;
   } else if (action.type === "farming_batch_harvest") {
     if (game.level < 3) {
       throw new FarmingRuleError(

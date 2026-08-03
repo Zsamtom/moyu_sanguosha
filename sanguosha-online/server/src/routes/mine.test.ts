@@ -27,6 +27,20 @@ describe("mine HTTP schemas", () => {
       expectedMineRevision: 2,
       action: { type: "mine_abandon", shaftIndex: 0 },
     })).toBeTruthy();
+    expect(mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 5,
+      expectedMineRevision: 3,
+      action: { type: "mine_reinforce_all" },
+    })).toBeTruthy();
+    expect(mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 6,
+      expectedMineRevision: 4,
+      action: { type: "mine_collect_all" },
+    })).toBeTruthy();
   });
 
   it("rejects unsupported deposits, injected owners and invalid quantities", () => {

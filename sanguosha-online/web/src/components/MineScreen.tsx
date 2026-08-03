@@ -13,6 +13,7 @@ import {
   isLatestRequest,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
+import { useSerialActionQueue } from '../serialActionQueue';
 import type {
   MineClientAction,
   MineDepositDefinition,
@@ -221,13 +222,15 @@ export function MineScreen() {
   const [toast, toastContext] = message.useMessage();
   const [snapshot, setSnapshot] = useState<MineSnapshot>();
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<MineClientAction>();
   const [now, setNow] = useState(Date.now());
   const clockOffset = useRef(0);
   const actionInFlight = useRef(false);
   const snapshotRef = useRef<MineSnapshot>();
   const loadRequestSequence = useRef(0);
+  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+    useSerialActionQueue();
+  const previousQueuedActionCount = useRef(queuedActionCount);
   const [selectedDeposit, setSelectedDeposit] =
     useState<MineDepositId | null>(null);
   const [marketOpen, setMarketOpen] = useState(false);
@@ -293,12 +296,19 @@ export function MineScreen() {
     };
   }, []);
 
-  const runAction = async (action: MineClientAction) => {
+  useEffect(() => {
+    const previousCount = previousQueuedActionCount.current;
+    previousQueuedActionCount.current = queuedActionCount;
+    if (previousCount > 0 && queuedActionCount === 0) {
+      void load(true, true);
+    }
+  }, [queuedActionCount]);
+
+  const executeAction = async (action: MineClientAction, attempt = 0): Promise<void> => {
     const current = snapshotRef.current;
-    if (!current || actionInFlight.current) return;
+    if (!current) return;
     actionInFlight.current = true;
     loadRequestSequence.current += 1;
-    setBusy(true);
     setPendingAction(action);
     let refreshAfterAction = false;
     try {
@@ -317,6 +327,10 @@ export function MineScreen() {
         );
       } else if (action.type === 'mine_abandon') {
         toast.success(`已放弃 ${action.shaftIndex + 1} 号矿井的采掘任务`);
+      } else if (action.type === 'mine_reinforce_all') {
+        toast.success('已完成一键加固');
+      } else if (action.type === 'mine_collect_all') {
+        toast.success('已收取全部完成矿井');
       }
     } catch (error) {
       if (
@@ -328,21 +342,26 @@ export function MineScreen() {
         ].includes(error.code ?? '')
       ) {
         refreshAfterAction = true;
+        if (attempt >= 2) toast.error(errorMessage(error));
+      } else {
+        toast.error(errorMessage(error));
       }
-      toast.error(errorMessage(error));
     } finally {
       if (!refreshAfterAction) {
         actionInFlight.current = false;
-        setBusy(false);
         setPendingAction(undefined);
       }
     }
     if (refreshAfterAction) {
       await load(true, true);
       actionInFlight.current = false;
-      setBusy(false);
       setPendingAction(undefined);
+      if (attempt < 2) return executeAction(action, attempt + 1);
     }
+  };
+
+  const runAction = (action: MineClientAction) => {
+    enqueueAction(() => executeAction(action));
   };
 
   const game = snapshot?.mine;
@@ -449,6 +468,19 @@ export function MineScreen() {
         : [];
     }),
   ));
+  const hazardShaftCount = game.shafts.filter((shaft) =>
+    shaft.unlocked &&
+    shaft.depositId !== null &&
+    shaft.hazardAt !== null &&
+    now >= shaft.hazardAt &&
+    !shaft.reinforced
+  ).length;
+  const readyShaftCount = game.shafts.filter((shaft) =>
+    shaft.unlocked &&
+    shaft.depositId !== null &&
+    shaft.completesAt !== null &&
+    now >= shaft.completesAt
+  ).length;
 
   return (
     <main className="farm-page mine-page">
@@ -466,7 +498,9 @@ export function MineScreen() {
           M{String(game.revision).padStart(5, '0')}
         </span>
         <span role="status" aria-live="polite">
-          {busy ? '正在保存操作，其他经营按钮暂不可用' : '操作就绪'}
+          {queuedActionCount > 0
+            ? `后台保存队列 ${queuedActionCount} 项，可继续操作`
+            : '操作就绪'}
         </span>
       </section>
 
@@ -550,7 +584,6 @@ export function MineScreen() {
                     <Button
                       key={depositId}
                       aria-pressed={activeDepositId === depositId}
-                      disabled={busy}
                       size="small"
                       type={activeDepositId === depositId ? 'primary' : 'default'}
                       onClick={() => {
@@ -564,6 +597,22 @@ export function MineScreen() {
                     </Button>
                   );
                 })}
+                <Button
+                  disabled={hazardShaftCount === 0}
+                  loading={pendingAction?.type === 'mine_reinforce_all'}
+                  size="small"
+                  onClick={() => void runAction({ type: 'mine_reinforce_all' })}
+                >
+                  一键加固 ({hazardShaftCount})
+                </Button>
+                <Button
+                  disabled={readyShaftCount === 0}
+                  loading={pendingAction?.type === 'mine_collect_all'}
+                  size="small"
+                  onClick={() => void runAction({ type: 'mine_collect_all' })}
+                >
+                  一键收取 ({readyShaftCount})
+                </Button>
                 <span className="farm-tool-strip__hint">
                   {pendingAction
                     ? '正在保存本次矿山操作…'
@@ -589,7 +638,7 @@ export function MineScreen() {
                     pendingAction !== undefined &&
                     'shaftIndex' in pendingAction &&
                     pendingAction.shaftIndex === shaft.index;
-                  const canStartHere = !deposit && !busy && canStartSelected;
+                  const canStartHere = !deposit && canStartSelected;
                   if (!shaft.unlocked) {
                     return (
                       <article className="farm-plot farm-plot--locked mine-shaft" key={shaft.index}>
@@ -690,7 +739,6 @@ export function MineScreen() {
                           <Button
                             size="small"
                             disabled={
-                              busy ||
                               inventoryCount(
                                 game.economy.ranchProducts,
                                 deposit.supportProductId,
@@ -716,13 +764,12 @@ export function MineScreen() {
                             description="已投入的金币、口粮和加固材料不会返还。"
                             okText="确认放弃"
                             cancelText="取消"
-                            disabled={busy}
                             onConfirm={() => void runAction({
                               type: 'mine_abandon',
                               shaftIndex: shaft.index,
                             })}
                           >
-                            <Button danger size="small" disabled={busy}>
+                            <Button danger size="small">
                               放弃任务
                             </Button>
                           </Popconfirm>
@@ -731,7 +778,6 @@ export function MineScreen() {
                           <Button
                             type="primary"
                             size="small"
-                            disabled={busy}
                             onClick={() => void runAction({
                               type: 'mine_collect',
                               shaftIndex: shaft.index,
@@ -820,14 +866,11 @@ export function MineScreen() {
                             <Button
                               size="small"
                               disabled={
-                                busy ||
                                 inventoryCount(game.economy.ores, depositId) < quantity
                               }
                               title={
-                                busy
-                                  ? '正在保存另一项操作'
-                                  : inventoryCount(game.economy.ores, depositId) <
-                                      quantity
+                                inventoryCount(game.economy.ores, depositId) <
+                                    quantity
                                     ? `库存不足，当前有 ${inventoryCount(game.economy.ores, depositId)}`
                                     : undefined
                               }
@@ -898,7 +941,7 @@ export function MineScreen() {
                   </small>
                   <Button
                     size="small"
-                    disabled={busy || !canExpand}
+                    disabled={!canExpand}
                     onClick={() => void runAction({ type: 'mine_expand_shaft' })}
                   >
                     永久扩建
@@ -918,7 +961,7 @@ export function MineScreen() {
                   </small>
                   <Button
                     size="small"
-                    disabled={busy || !canUpgrade}
+                    disabled={!canUpgrade}
                     onClick={() => void runAction({ type: 'mine_upgrade_pickaxe' })}
                   >
                     升级工具

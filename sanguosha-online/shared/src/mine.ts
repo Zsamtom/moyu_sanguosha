@@ -310,12 +310,18 @@ export type MineAction =
       readonly shaftIndex: number;
     }
   | {
+      readonly type: "mine_reinforce_all";
+    }
+  | {
       readonly type: "mine_abandon";
       readonly shaftIndex: number;
     }
   | {
       readonly type: "mine_collect";
       readonly shaftIndex: number;
+    }
+  | {
+      readonly type: "mine_collect_all";
     }
   | {
       readonly type: "mine_sell";
@@ -734,6 +740,45 @@ export function applyMineAction(
       "expedition",
       `放弃 ${shaft.index + 1} 号矿井的${deposit.name}任务；已投入的经费和口粮不予返还。`,
     );
+  } else if (action.type === "mine_reinforce_all") {
+    const shaftIndices = mine.shafts
+      .filter((shaft) =>
+        shaft.index < mine.unlockedShafts &&
+        shaft.depositId !== null &&
+        shaft.startedAt !== null &&
+        hasHazard(shaft, effectiveNow)
+      )
+      .map(({ index }) => index);
+    if (shaftIndices.length === 0) {
+      throw new MineRuleError(
+        "MINE_CARE_NOT_NEEDED",
+        "当前没有需要加固的矿井",
+      );
+    }
+    const baseMineRevision = mine.revision;
+    const baseRanchRevision = economy.ranchRevision;
+    for (const shaftIndex of shaftIndices) {
+      const result = applyMineAction(
+        mine,
+        economy,
+        { type: "mine_reinforce", shaftIndex },
+        effectiveNow,
+        production,
+      );
+      Object.assign(mine, result.mine);
+      Object.assign(economy, result.economy);
+      ranchChanged ||= result.ranchChanged;
+    }
+    addLog(
+      mine,
+      effectiveNow,
+      "care",
+      `一键加固完成，共处理 ${shaftIndices.length} 条矿井。`,
+    );
+    mine.updatedAt = effectiveNow;
+    mine.revision = baseMineRevision + 1;
+    if (ranchChanged) economy.ranchRevision = baseRanchRevision + 1;
+    return { mine, economy, farmChanged: false, ranchChanged };
   } else if (action.type === "mine_reinforce") {
     const shaft = requireShaft(mine, action.shaftIndex);
     if (!shaft.depositId || shaft.startedAt === null) {
@@ -763,6 +808,38 @@ export function applyMineAction(
       "care",
       `${shaft.index + 1} 号矿井完成支护加固，避免产量损失并回收 1 份额外矿料。`,
     );
+  } else if (action.type === "mine_collect_all") {
+    const shaftIndices = mine.shafts
+      .filter((shaft) =>
+        shaft.index < mine.unlockedShafts &&
+        shaft.depositId !== null &&
+        shaft.completesAt !== null &&
+        effectiveNow >= shaft.completesAt
+      )
+      .map(({ index }) => index);
+    if (shaftIndices.length === 0) {
+      throw new MineRuleError("MINE_NOT_READY", "当前没有可收取的矿井");
+    }
+    const baseRevision = mine.revision;
+    for (const shaftIndex of shaftIndices) {
+      const result = applyMineAction(
+        mine,
+        economy,
+        { type: "mine_collect", shaftIndex },
+        effectiveNow,
+        production,
+      );
+      Object.assign(mine, result.mine);
+    }
+    addLog(
+      mine,
+      effectiveNow,
+      "collect",
+      `一键收取完成，共处理 ${shaftIndices.length} 条矿井。`,
+    );
+    mine.updatedAt = effectiveNow;
+    mine.revision = baseRevision + 1;
+    return { mine, economy, farmChanged: false, ranchChanged: false };
   } else if (action.type === "mine_collect") {
     const shaft = requireShaft(mine, action.shaftIndex);
     if (!shaft.depositId || shaft.completesAt === null) {

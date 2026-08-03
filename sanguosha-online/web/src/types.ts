@@ -197,7 +197,9 @@ export type FarmClientAction =
   | { type: 'farming_plant'; cropId: FarmCropId; plotIndex: number }
   | { type: 'farming_batch_plant'; cropId: FarmCropId; plotIndices: number[] }
   | { type: 'farming_tend'; care: 'water' | 'weed' | 'pest'; plotIndex: number }
+  | { type: 'farming_tend_all'; care: 'water' | 'weed' | 'pest' }
   | { type: 'farming_harvest'; plotIndex: number }
+  | { type: 'farming_harvest_all' }
   | { type: 'farming_batch_harvest'; plotIndices: number[] }
   | { type: 'farming_clear_plot'; plotIndex: number }
   | { type: 'farming_sell'; cropId: FarmCropId; quantity: number }
@@ -372,7 +374,9 @@ export type RanchClientAction =
   | { type: 'ranch_move_animal'; fromPenIndex: number; toPenIndex: number }
   | { type: 'ranch_sell_animal'; penIndex: number }
   | { type: 'ranch_clean'; penIndex: number }
+  | { type: 'ranch_clean_all' }
   | { type: 'ranch_collect'; penIndex: number }
+  | { type: 'ranch_collect_all' }
   | { type: 'ranch_sell'; productId: RanchProductId; quantity: number }
   | { type: 'ranch_expand_pen' };
 
@@ -520,8 +524,10 @@ export interface MineGameView {
 export type MineClientAction =
   | { type: 'mine_start'; depositId: MineDepositId; shaftIndex: number }
   | { type: 'mine_reinforce'; shaftIndex: number }
+  | { type: 'mine_reinforce_all' }
   | { type: 'mine_abandon'; shaftIndex: number }
   | { type: 'mine_collect'; shaftIndex: number }
+  | { type: 'mine_collect_all' }
   | { type: 'mine_sell'; depositId: MineDepositId; quantity: number }
   | { type: 'mine_expand_shaft' }
   | { type: 'mine_upgrade_pickaxe' };

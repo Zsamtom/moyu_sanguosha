@@ -339,8 +339,14 @@ export type RanchAction =
       readonly penIndex: number;
     }
   | {
+      readonly type: "ranch_clean_all";
+    }
+  | {
       readonly type: "ranch_collect";
       readonly penIndex: number;
+    }
+  | {
+      readonly type: "ranch_collect_all";
     }
   | {
       readonly type: "ranch_sell";
@@ -890,6 +896,41 @@ export function applyRanchAction(
       "animal",
       `给 ${pen.index + 1} 号畜舍的${animal.name}投喂，并支付 ${careCost} 金币垫料与诊疗费；预计 ${new Date(pen.producesAt).toLocaleString("zh-CN")} 可收取${animal.productName}。`,
     );
+  } else if (action.type === "ranch_clean_all") {
+    const penIndices = ranch.pens
+      .filter((pen) =>
+        pen.index < ranch.unlockedPens &&
+        pen.animalId !== null &&
+        pen.fedAt !== null &&
+        messAppeared(pen, effectiveNow)
+      )
+      .map(({ index }) => index);
+    if (penIndices.length === 0) {
+      throw new RanchRuleError(
+        "RANCH_CARE_NOT_NEEDED",
+        "当前没有需要清扫的畜舍",
+      );
+    }
+    const baseRevision = ranch.revision;
+    for (const penIndex of penIndices) {
+      const result = applyRanchAction(
+        ranch,
+        economy,
+        { type: "ranch_clean", penIndex },
+        effectiveNow,
+        production,
+      );
+      ranch = result.ranch;
+    }
+    addLog(
+      ranch,
+      effectiveNow,
+      "care",
+      `一键清扫完成，共处理 ${penIndices.length} 间畜舍。`,
+    );
+    ranch.updatedAt = effectiveNow;
+    ranch.revision = baseRevision + 1;
+    return { ranch, economy, economyChanged: false };
   } else if (action.type === "ranch_clean") {
     const pen = requirePen(ranch, action.penIndex);
     if (!pen.animalId || pen.fedAt === null) {
@@ -902,6 +943,38 @@ export function applyRanchAction(
     ranch.statistics.cleanings += 1;
     addExperience(ranch, 2, effectiveNow);
     addLog(ranch, effectiveNow, "care", `完成 ${pen.index + 1} 号畜舍清扫。`);
+  } else if (action.type === "ranch_collect_all") {
+    const penIndices = ranch.pens
+      .filter((pen) =>
+        pen.index < ranch.unlockedPens &&
+        pen.animalId !== null &&
+        pen.producesAt !== null &&
+        effectiveNow >= pen.producesAt
+      )
+      .map(({ index }) => index);
+    if (penIndices.length === 0) {
+      throw new RanchRuleError("RANCH_NOT_READY", "当前没有可收取的畜舍");
+    }
+    const baseRevision = ranch.revision;
+    for (const penIndex of penIndices) {
+      const result = applyRanchAction(
+        ranch,
+        economy,
+        { type: "ranch_collect", penIndex },
+        effectiveNow,
+        production,
+      );
+      ranch = result.ranch;
+    }
+    addLog(
+      ranch,
+      effectiveNow,
+      "collect",
+      `一键收取完成，共处理 ${penIndices.length} 间畜舍。`,
+    );
+    ranch.updatedAt = effectiveNow;
+    ranch.revision = baseRevision + 1;
+    return { ranch, economy, economyChanged: false };
   } else if (action.type === "ranch_collect") {
     const pen = requirePen(ranch, action.penIndex);
     if (!pen.animalId || pen.producesAt === null) {

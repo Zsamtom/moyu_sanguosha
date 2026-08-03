@@ -200,6 +200,55 @@ describe("persistent ranch engine", () => {
     );
   });
 
+  it("cleans and collects every eligible pen in one revision", () => {
+    let ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-batch",
+      now: start,
+    });
+    let linked = economy();
+    for (const penIndex of [0, 1]) {
+      let result = applyRanchAction(
+        ranch,
+        linked,
+        { type: "ranch_buy_animal", animalId: "chicken", penIndex },
+        start,
+      );
+      result = applyRanchAction(
+        result.ranch,
+        result.economy,
+        { type: "ranch_feed", penIndex },
+        start,
+      );
+      ranch = result.ranch;
+      linked = result.economy;
+    }
+    const readyAt = start + RANCH_ANIMALS.chicken.productionSeconds * 1_000;
+    const beforeCleanRevision = ranch.revision;
+    let result = applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_clean_all" },
+      readyAt,
+    );
+    expect(result.ranch.revision).toBe(beforeCleanRevision + 1);
+    expect(result.ranch.pens.slice(0, 2).every(({ messCleaned }) => messCleaned))
+      .toBe(true);
+
+    const beforeCollectRevision = result.ranch.revision;
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_collect_all" },
+      readyAt,
+    );
+    expect(result.ranch.revision).toBe(beforeCollectRevision + 1);
+    expect(result.ranch.products.egg).toBe(RANCH_ANIMALS.chicken.yield * 2);
+    expect(result.ranch.pens.slice(0, 2).every(({ fedAt }) => fedAt === null))
+      .toBe(true);
+  });
+
   it("captures disaster-time production bonuses when feeding starts", () => {
     let ranch = createRanchGame({
       ownerId: "owner",

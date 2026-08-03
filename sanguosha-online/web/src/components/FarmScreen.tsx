@@ -13,6 +13,7 @@ import {
   isLatestRequest,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
+import { useSerialActionQueue } from '../serialActionQueue';
 import type {
   FarmClientAction,
   FarmCropDefinition,
@@ -220,6 +221,26 @@ export function optimisticFarmAction(
         ? { pestCleared: true, hasPests: false }
         : {}),
     }));
+  } else if (action.type === 'farming_tend_all') {
+    for (const plot of plots) {
+      if (!plot.unlocked || !plot.cropId) continue;
+      const needed = action.care === 'water'
+        ? !plot.watered
+        : action.care === 'weed'
+          ? plot.weedAt !== null && at >= plot.weedAt && !plot.weedCleared
+          : plot.pestAt !== null && at >= plot.pestAt && !plot.pestCleared;
+      if (!needed) continue;
+      updatePlot(plot.index, (current) => ({
+        ...current,
+        ...(action.care === 'water' ? { watered: true } : {}),
+        ...(action.care === 'weed'
+          ? { weedCleared: true, hasWeeds: false }
+          : {}),
+        ...(action.care === 'pest'
+          ? { pestCleared: true, hasPests: false }
+          : {}),
+      }));
+    }
   } else if (action.type === 'farming_buy_seed') {
     const crop = game.crops[action.cropId];
     if (!crop) return snapshot;
@@ -362,6 +383,9 @@ export function FarmScreen() {
   const neighborFarmRef = useRef<FarmGameView>();
   const loadRequestSequence = useRef(0);
   const neighborRequestSequence = useRef(0);
+  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+    useSerialActionQueue();
+  const previousQueuedActionCount = useRef(queuedActionCount);
   const [selectedCrop, setSelectedCrop] = useState<FarmCropId | null>(null);
   const [toolMode, setToolMode] = useState<'plant' | 'shovel'>('plant');
   const [marketOpen, setMarketOpen] = useState(false);
@@ -470,6 +494,14 @@ export function FarmScreen() {
   }, []);
 
   useEffect(() => {
+    const previousCount = previousQueuedActionCount.current;
+    previousQueuedActionCount.current = queuedActionCount;
+    if (previousCount > 0 && queuedActionCount === 0) {
+      void load(true, true);
+    }
+  }, [queuedActionCount]);
+
+  useEffect(() => {
     if (!neighborFarm) return;
     const ownerId = neighborFarm.ownerId;
     const refresh = window.setInterval(() => {
@@ -482,13 +514,12 @@ export function FarmScreen() {
     return () => window.clearInterval(refresh);
   }, [neighborFarm?.ownerId]);
 
-  const runAction = async (action: FarmClientAction) => {
+  const executeAction = async (action: FarmClientAction, attempt = 0): Promise<void> => {
     const previous = snapshotRef.current;
-    if (!previous || actionInFlight.current) return;
+    if (!previous) return;
     const expectedRevision = previous.farm.revision;
     actionInFlight.current = true;
     loadRequestSequence.current += 1;
-    setBusy(true);
     setPendingAction(action);
     commitSnapshot(optimisticFarmAction(previous, action, now));
     let refreshAfterAction = false;
@@ -513,6 +544,13 @@ export function FarmScreen() {
         );
       } else if (action.type === 'farming_batch_harvest') {
         toast.success(`已批量收获 ${action.plotIndices.length} 块成熟田地`);
+      } else if (action.type === 'farming_harvest_all') {
+        toast.success('已收取全部成熟田地');
+      } else if (action.type === 'farming_tend_all') {
+        const label = action.care === 'water'
+          ? '浇水'
+          : action.care === 'weed' ? '除草' : '除虫';
+        toast.success(`已完成一键${label}`);
       } else if (action.type === 'farming_clear_plot') {
         toast.success(`已铲除 ${action.plotIndex + 1} 号田的作物`);
       } else if (action.type === 'farming_redeem_mutation') {
@@ -523,23 +561,27 @@ export function FarmScreen() {
     } catch (error) {
       if (error instanceof ApiError && error.code === 'FARM_REVISION_CONFLICT') {
         refreshAfterAction = true;
+        if (attempt >= 2) toast.error(errorMessage(error));
       } else {
         commitSnapshot(previous, true);
+        toast.error(errorMessage(error));
       }
-      toast.error(errorMessage(error));
     } finally {
       if (!refreshAfterAction) {
         actionInFlight.current = false;
-        setBusy(false);
         setPendingAction(undefined);
       }
     }
     if (refreshAfterAction) {
       await load(true, true);
       actionInFlight.current = false;
-      setBusy(false);
       setPendingAction(undefined);
+      if (attempt < 2) return executeAction(action, attempt + 1);
     }
+  };
+
+  const runAction = (action: FarmClientAction) => {
+    enqueueAction(() => executeAction(action));
   };
 
   const openNeighbor = async (ownerId: string) => {
@@ -711,6 +753,25 @@ export function FarmScreen() {
         now >= plot.maturesAt,
     )
     .map(({ index }) => index);
+  const careCounts = {
+    water: ownGame.plots.filter((plot) =>
+      plot.unlocked && plot.cropId !== null && !plot.watered
+    ).length,
+    weed: ownGame.plots.filter((plot) =>
+      plot.unlocked &&
+      plot.cropId !== null &&
+      plot.weedAt !== null &&
+      now >= plot.weedAt &&
+      !plot.weedCleared
+    ).length,
+    pest: ownGame.plots.filter((plot) =>
+      plot.unlocked &&
+      plot.cropId !== null &&
+      plot.pestAt !== null &&
+      now >= plot.pestAt &&
+      !plot.pestCleared
+    ).length,
+  };
   const batchOperationsUnlocked = ownGame.level >= 3;
 
   return (
@@ -737,7 +798,11 @@ export function FarmScreen() {
           </Button>
         )}
         <span role="status" aria-live="polite">
-          {busy ? '正在保存操作，其他经营按钮暂不可用' : '操作就绪'}
+          {busy
+            ? '正在处理农友交互'
+            : queuedActionCount > 0
+              ? `后台保存队列 ${queuedActionCount} 项，可继续操作`
+              : '操作就绪'}
         </span>
       </section>
 
@@ -822,20 +887,44 @@ export function FarmScreen() {
                   : 'LV 3 解锁批量播种'}
               </Button>
               <Button
+                disabled={busy || careCounts.water === 0}
+                loading={pendingAction?.type === 'farming_tend_all' && pendingAction.care === 'water'}
+                size="small"
+                onClick={() => void runAction({ type: 'farming_tend_all', care: 'water' })}
+              >
+                一键浇水 ({careCounts.water})
+              </Button>
+              <Button
+                disabled={busy || careCounts.weed === 0}
+                loading={pendingAction?.type === 'farming_tend_all' && pendingAction.care === 'weed'}
+                size="small"
+                onClick={() => void runAction({ type: 'farming_tend_all', care: 'weed' })}
+              >
+                一键除草 ({careCounts.weed})
+              </Button>
+              <Button
+                disabled={busy || careCounts.pest === 0}
+                loading={pendingAction?.type === 'farming_tend_all' && pendingAction.care === 'pest'}
+                size="small"
+                onClick={() => void runAction({ type: 'farming_tend_all', care: 'pest' })}
+              >
+                一键除虫 ({careCounts.pest})
+              </Button>
+              <Button
                 disabled={
                   busy ||
                   !batchOperationsUnlocked ||
-                  readyPlotIndices.length < 2
+                  readyPlotIndices.length === 0
                 }
+                loading={pendingAction?.type === 'farming_harvest_all'}
                 size="small"
                 onClick={() => void runAction({
-                  type: 'farming_batch_harvest',
-                  plotIndices: readyPlotIndices,
+                  type: 'farming_harvest_all',
                 })}
               >
                 {batchOperationsUnlocked
-                  ? `收取全部成熟 (${readyPlotIndices.length})`
-                  : 'LV 3 解锁批量收获'}
+                  ? `一键收取 (${readyPlotIndices.length})`
+                  : 'LV 3 解锁一键收取'}
               </Button>
               <Button
                 danger
@@ -1209,7 +1298,7 @@ export function FarmScreen() {
                               }
                               title={
                                 busy
-                                  ? '正在保存另一项操作'
+                                  ? '正在切换农友页面'
                                   : !unlocked
                                     ? `农场达到 LV ${crop.unlockLevel} 后开放`
                                     : inventory.coins < crop.seedCost * quantity
@@ -1233,7 +1322,7 @@ export function FarmScreen() {
                               }
                               title={
                                 busy
-                                  ? '正在保存另一项操作'
+                                  ? '正在切换农友页面'
                                   : inventoryCount(inventory.produce, cropId) < quantity
                                     ? `库存不足，当前有 ${inventoryCount(inventory.produce, cropId)}`
                                     : undefined

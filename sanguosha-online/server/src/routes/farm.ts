@@ -47,6 +47,10 @@ const actionSchema = z.discriminatedUnion("type", [
     plotIndex: plotIndexSchema,
   }).strict(),
   z.object({
+    type: z.literal("farming_tend_all"),
+    care: careSchema,
+  }).strict(),
+  z.object({
     type: z.literal("farming_harvest"),
     plotIndex: plotIndexSchema,
   }).strict(),
@@ -54,6 +58,7 @@ const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("farming_batch_harvest"),
     plotIndices: plotIndicesSchema,
   }).strict(),
+  z.object({ type: z.literal("farming_harvest_all") }).strict(),
   z.object({
     type: z.literal("farming_clear_plot"),
     plotIndex: plotIndexSchema,

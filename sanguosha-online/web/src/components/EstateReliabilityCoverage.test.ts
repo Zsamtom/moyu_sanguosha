@@ -19,5 +19,7 @@ describe('estate request reliability coverage', () => {
     expect(content).toContain('isLatestRequest');
     expect(content).toContain('isTownRevisionVectorAtLeast');
     expect(content).toContain('townChanged');
+    expect(content).toContain('useSerialActionQueue');
+    expect(content).toContain('previousCount > 0 && queuedActionCount === 0');
   });
 });

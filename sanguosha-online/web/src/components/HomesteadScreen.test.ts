@@ -158,6 +158,16 @@ describe('HomesteadScreen helpers', () => {
     expect(isHomesteadRevisionConflict(businessConflict)).toBe(false);
   });
 
+  it('queues overview actions without globally locking the interface', () => {
+    const source = readFileSync(
+      new URL('./HomesteadScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('useSerialActionQueue');
+    expect(source).toContain('正在后台依次保存，可继续安排其他操作');
+    expect(source).not.toContain('其他经营操作暂不可用');
+  });
+
   it('keeps every supported modular homestead action reachable from the interface', () => {
     const source = readFileSync(
       new URL('./HomesteadScreen.tsx', import.meta.url),

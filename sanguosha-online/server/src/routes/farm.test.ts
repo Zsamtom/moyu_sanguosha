@@ -66,6 +66,16 @@ describe("real-time farm HTTP schemas", () => {
         plotIndices: [0, 1],
       },
     })).toBeTruthy();
+    expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedRevision: 10,
+      action: { type: "farming_tend_all", care: "water" },
+    })).toBeTruthy();
+    expect(farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedRevision: 11,
+      action: { type: "farming_harvest_all" },
+    })).toBeTruthy();
   });
 
   it("rejects injected player ids and invalid quantities", () => {

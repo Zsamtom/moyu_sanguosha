@@ -43,6 +43,18 @@ describe("ranch HTTP schemas", () => {
     expect(ranchActionEnvelopeSchema.parse({
       townId: "greenvale",
       expectedFarmRevision: 8,
+      expectedRanchRevision: 4,
+      action: { type: "ranch_clean_all" },
+    })).toBeTruthy();
+    expect(ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 5,
+      action: { type: "ranch_collect_all" },
+    })).toBeTruthy();
+    expect(ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedFarmRevision: 8,
       expectedRanchRevision: 3,
       action: {
         type: "ranch_sell_animal",

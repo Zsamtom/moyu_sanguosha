@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type {
   MineClientAction,
   MineDepositDefinition,
@@ -85,6 +86,16 @@ describe('MineScreen real-time shaft projection', () => {
       2,
       901_000,
     ).estimatedYield).toBe(9);
+  });
+
+  it('offers queued one-click reinforcement and collection', () => {
+    const source = readFileSync(
+      new URL('./MineScreen.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain("type: 'mine_reinforce_all'");
+    expect(source).toContain("type: 'mine_collect_all'");
+    expect(source).toContain('后台保存队列');
   });
 });
 

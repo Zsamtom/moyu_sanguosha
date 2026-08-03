@@ -23,6 +23,7 @@ const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("mine_reinforce"),
     shaftIndex: shaftIndexSchema,
   }).strict(),
+  z.object({ type: z.literal("mine_reinforce_all") }).strict(),
   z.object({
     type: z.literal("mine_abandon"),
     shaftIndex: shaftIndexSchema,
@@ -31,6 +32,7 @@ const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("mine_collect"),
     shaftIndex: shaftIndexSchema,
   }).strict(),
+  z.object({ type: z.literal("mine_collect_all") }).strict(),
   z.object({
     type: z.literal("mine_sell"),
     depositId: depositIdSchema,
