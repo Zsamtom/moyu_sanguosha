@@ -22,6 +22,7 @@ import type {
   FarmSnapshot,
   FarmVisitClientAction,
 } from '../types';
+import { ProductionModifierTag } from './ProductionModifierTag';
 import '../farm.css';
 
 type FarmCatalogView = Pick<FarmGameView, 'crops' | 'townDefinition'>;
@@ -933,26 +934,11 @@ export function FarmScreen() {
                               : `${selectedDefinition.name}种子不足，请先到市场购入`}
                     </small>
                     <div className="farm-plot__tags">
-                      {crop && (plot.productionModifierPercent ?? 0) !== 0 && (
-                        <Tag color={(plot.productionModifierPercent ?? 0) > 0 ? 'green' : 'volcano'}>
-                          {plot.productionModifierLabel ?? '庄园环境'}
-                          {' '}· 产量 {(plot.productionModifierPercent ?? 0) > 0 ? '+' : ''}
-                          {plot.productionModifierPercent}%
-                        </Tag>
-                      )}
-                      {crop && (plot.durationModifierPercent ?? 0) !== 0 && (
-                        <Tag color={(plot.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
-                          {plot.productionModifierLabel ?? '庄园环境'}
-                          {' '}· 工期 {(plot.durationModifierPercent ?? 0) > 0 ? '+' : ''}
-                          {plot.durationModifierPercent}%
-                        </Tag>
-                      )}
-                      {crop && (plot.durationModifierPercent ?? 0) !== 0 && (
-                        <Tag color={(plot.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
-                          {plot.productionModifierLabel ?? '庄园环境'}
-                          {' '}· 工期 {(plot.durationModifierPercent ?? 0) > 0 ? '+' : ''}
-                          {plot.durationModifierPercent}%
-                        </Tag>
+                      {crop && (
+                        <ProductionModifierTag
+                          yieldPercent={plot.productionModifierPercent ?? 0}
+                          durationPercent={plot.durationModifierPercent ?? 0}
+                        />
                       )}
                       {plot.watered && <Tag color="blue">已浇水</Tag>}
                       {runtime.hasWeeds && <Tag color="orange">有杂草</Tag>}

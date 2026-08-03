@@ -1879,29 +1879,6 @@ export class FarmService {
         account.activeTownId,
         bundle,
       );
-      if (
-        (
-          action.type === "homestead_update_ai_profile" &&
-          action.enabled
-        ) ||
-        action.type === "homestead_choose_event" ||
-        action.type === "homestead_complete_order" ||
-        action.type === "homestead_complete_value_route" ||
-        action.type === "homestead_unlock_research" ||
-        action.type === "homestead_build_facility" ||
-        action.type === "homestead_upgrade_facility" ||
-        action.type === "homestead_upgrade_infrastructure" ||
-        action.type === "homestead_plan_rotation" ||
-        action.type === "homestead_run_feed_program" ||
-        action.type === "homestead_survey_layer" ||
-        action.type === "homestead_talk_npc"
-      ) {
-        this.scheduleHomesteadDirector(
-          user,
-          bundle,
-          `action:${action.type}:${account.revision}:${bundle.homestead.revision}`,
-        );
-      }
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2141,11 +2118,6 @@ export class FarmService {
         bundle.townId,
         bundle,
       );
-      this.scheduleHomesteadDirector(
-        user,
-        bundle,
-        `cargo:dispatch:${account.revision}`,
-      );
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2199,11 +2171,6 @@ export class FarmService {
         account,
         bundle.townId,
         bundle,
-      );
-      this.scheduleHomesteadDirector(
-        user,
-        bundle,
-        `cargo:collect:${account.revision}`,
       );
       return {
         homestead: getHomesteadGameView(
@@ -2725,7 +2692,14 @@ export class FarmService {
     bundle: TownEstateBundle,
     refreshKey = "daily",
   ): void {
-    if (!this.decisions.supports("homestead") || !bundle.homestead.aiProfile.enabled) {
+    if (!this.decisions.supports("homestead")) {
+      return;
+    }
+    if (
+      refreshKey === "daily" &&
+      bundle.homestead.advice.source === "llm" &&
+      bundle.homestead.advice.dayKey === bundle.homestead.dayKey
+    ) {
       return;
     }
     const continuingGeneratedEvent =

@@ -22,6 +22,7 @@ function request(input: {
   readonly withDisaster?: boolean;
   readonly liveWeather?: boolean;
   readonly withAdvisorContext?: boolean;
+  readonly profileEnabled?: boolean;
   readonly context?: HomesteadDirectorContext;
 } = {}) {
   const townId = input.townId ?? "greenvale";
@@ -71,6 +72,9 @@ function request(input: {
     };
     homestead.infrastructure.operations_center = 2;
     homestead.honor.score = 180;
+  }
+  if (input.profileEnabled !== undefined) {
+    homestead.aiProfile.enabled = input.profileEnabled;
   }
   if (input.liveWeather) {
     homestead = {
@@ -160,6 +164,10 @@ function provider(fetcher: typeof fetch) {
 }
 
 describe("homestead LLM narrative director", () => {
+  it("keeps the director backstage for legacy saves with the old toggle disabled", () => {
+    expect(request({ profileEnabled: false })).toBeDefined();
+  });
+
   it("projects all three sectors while keeping the server event fixed", () => {
     const decision = request({
       withAdvisorContext: true,

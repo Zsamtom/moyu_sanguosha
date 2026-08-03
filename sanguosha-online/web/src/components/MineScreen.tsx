@@ -22,6 +22,7 @@ import type {
   MineSnapshot,
   RanchProductId,
 } from '../types';
+import { ProductionModifierTag } from './ProductionModifierTag';
 import '../farm.css';
 
 const MINE_UNREINFORCED_YIELD_PENALTY = 1;
@@ -652,19 +653,11 @@ export function MineScreen() {
                             : `点击下方按钮开采${selectedDefinition.name}`}
                         </small>
                         <div className="farm-plot__tags">
-                          {deposit && (shaft.productionModifierPercent ?? 0) !== 0 && (
-                            <Tag color={(shaft.productionModifierPercent ?? 0) > 0 ? 'green' : 'volcano'}>
-                              {shaft.productionModifierLabel ?? '庄园环境'}
-                              {' '}· 产量 {(shaft.productionModifierPercent ?? 0) > 0 ? '+' : ''}
-                              {shaft.productionModifierPercent}%
-                            </Tag>
-                          )}
-                          {deposit && (shaft.durationModifierPercent ?? 0) !== 0 && (
-                            <Tag color={(shaft.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
-                              {shaft.productionModifierLabel ?? '庄园环境'}
-                              {' '}· 工期 {(shaft.durationModifierPercent ?? 0) > 0 ? '+' : ''}
-                              {shaft.durationModifierPercent}%
-                            </Tag>
+                          {deposit && (
+                            <ProductionModifierTag
+                              yieldPercent={shaft.productionModifierPercent ?? 0}
+                              durationPercent={shaft.durationModifierPercent ?? 0}
+                            />
                           )}
                           {runtime.hasHazard && <Tag color="orange">需加固</Tag>}
                           {shaft.reinforced && <Tag color="green">已加固</Tag>}

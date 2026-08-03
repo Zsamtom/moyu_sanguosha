@@ -4,7 +4,6 @@ import {
   Checkbox,
   Popconfirm,
   Progress,
-  Select,
   Spin,
   Tag,
   message,
@@ -187,13 +186,6 @@ const DISASTER_NAMES: Record<HomesteadDisasterView['eventId'], string> = {
   hail: '冰雹灾害',
   drought: '持续干旱',
 };
-
-const DEFAULT_AI_PROFILE = {
-  enabled: true,
-  goal: 'balanced',
-  risk: 'balanced',
-  focus: 'processing',
-} satisfies HomesteadSnapshot['homestead']['aiProfile'];
 
 const DEFAULT_ADVICE_STEPS = [
   {
@@ -397,13 +389,30 @@ export async function runHomesteadActionWithConflictRetry<T>(
   apply: (snapshot: HomesteadSnapshot) => Promise<T>,
   refresh: () => Promise<HomesteadSnapshot>,
 ): Promise<{ result: T; retried: boolean }> {
-  try {
-    return { result: await apply(initialSnapshot), retried: false };
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 409) throw error;
-    const latestSnapshot = await refresh();
-    return { result: await apply(latestSnapshot), retried: true };
+  let baseSnapshot = initialSnapshot;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return { result: await apply(baseSnapshot), retried: attempt > 0 };
+    } catch (error) {
+      if (!isHomesteadRevisionConflict(error) || attempt === 2) throw error;
+      baseSnapshot = await refresh();
+    }
   }
+  throw new Error('庄园操作重试次数异常');
+}
+
+const HOMESTEAD_REVISION_CONFLICT_CODES = new Set([
+  'FARM_REVISION_CONFLICT',
+  'RANCH_REVISION_CONFLICT',
+  'MINE_REVISION_CONFLICT',
+  'HOMESTEAD_REVISION_CONFLICT',
+  'ESTATE_ACCOUNT_REVISION_CONFLICT',
+]);
+
+export function isHomesteadRevisionConflict(error: unknown): boolean {
+  return error instanceof ApiError &&
+    error.status === 409 &&
+    Boolean(error.code && HOMESTEAD_REVISION_CONFLICT_CODES.has(error.code));
 }
 
 export function HomesteadScreen() {
@@ -515,7 +524,6 @@ export function HomesteadScreen() {
         current,
         (baseSnapshot) => api.applyHomesteadAction(baseSnapshot, action),
         async () => {
-          toast.warning('\u5e84\u56ed\u72b6\u6001\u5df2\u53d8\u5316\uff0c\u6b63\u5728\u540c\u6b65\u5e76\u91cd\u65b0\u6267\u884c\u672c\u6b21\u64cd\u4f5c');
           const refreshed = await load(true, true, true);
           if (!refreshed) {
             throw new Error('\u65e0\u6cd5\u83b7\u53d6\u6700\u65b0\u5e84\u56ed\u72b6\u6001\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
@@ -531,8 +539,8 @@ export function HomesteadScreen() {
           : success,
       );
     } catch (error) {
-      const text = error instanceof ApiError && error.status === 409
-        ? '\u5e84\u56ed\u72b6\u6001\u4ecd\u5728\u53d8\u5316\uff0c\u8bf7\u7a0d\u540e\u91cd\u65b0\u64cd\u4f5c'
+      const text = isHomesteadRevisionConflict(error)
+        ? '\u5e84\u56ed\u521a\u521a\u5b8c\u6210\u540e\u53f0\u540c\u6b65\uff0c\u672c\u6b21\u672a\u6267\u884c\uff1b\u754c\u9762\u5df2\u66f4\u65b0\uff0c\u8bf7\u91cd\u65b0\u70b9\u51fb'
         : errorMessage(error);
       setFailure(text);
       toast.error(text);
@@ -596,7 +604,6 @@ export function HomesteadScreen() {
   }
 
   const { homestead } = snapshot;
-  const aiProfile = homestead.aiProfile ?? DEFAULT_AI_PROFILE;
   const adviceSteps = homestead.advice.steps?.length === 3
     ? homestead.advice.steps
     : DEFAULT_ADVICE_STEPS;
@@ -644,9 +651,13 @@ export function HomesteadScreen() {
   const hasResearchCapability = (
     capability: keyof typeof capabilityResearchIds,
   ) => unlockedResearch.has(capabilityResearchIds[capability]);
+  const soilAmendmentGoodId = homestead.specializations.soilAmendmentGoodId ??
+    (homestead.activeTownId === 'frostpeak' ? 'thermal_compost' : 'soil_conditioner');
+  const soilAmendmentName = ITEM_NAMES[soilAmendmentGoodId] ?? soilAmendmentGoodId;
+  const soilAmendmentStock = homestead.goods[soilAmendmentGoodId] ?? 0;
   const fertilizerAvailable =
     hasResearchCapability('soil_science') &&
-    homestead.goods.soil_conditioner > 0;
+    soilAmendmentStock > 0;
   const activeTown = homestead.towns.find(({ active }) => active)
     ?? homestead.towns[0]!;
   const intertownLogistics = homestead.intertownLogistics ?? {
@@ -1223,18 +1234,15 @@ export function HomesteadScreen() {
       <section className="homestead-section homestead-advice homestead-panel-item homestead-panel-item--today">
         <div className="homestead-section__heading">
           <div>
-            <p className="farm-kicker">LLM WORLD DIRECTOR</p>
+            <p className="farm-kicker">ESTATE INTELLIGENCE</p>
             <h2>{homestead.advice.headline}</h2>
           </div>
           <div className="homestead-heading-tags">
             {homestead.advice.worldBeatId && (
               <Tag color="magenta">
-                今日节拍 · {WORLD_BEAT_LABELS[homestead.advice.worldBeatId]}
+                今日节奏 · {WORLD_BEAT_LABELS[homestead.advice.worldBeatId]}
               </Tag>
             )}
-            <Tag color={homestead.advice.source === 'llm' ? 'purple' : 'blue'}>
-              {homestead.advice.source === 'llm' ? 'LLM 世界导演' : '规则世界导演'}
-            </Tag>
           </div>
         </div>
         <p>{homestead.advice.narrative}</p>
@@ -1252,88 +1260,6 @@ export function HomesteadScreen() {
             <strong>跨日伏笔</strong>{homestead.advice.foreshadowing}
           </p>
         )}
-        <div className="homestead-ai-profile" aria-label="世界导演偏好">
-          <Checkbox
-            checked={aiProfile.enabled}
-            disabled={actionsBusy}
-            onChange={(event) => void act(
-              {
-                type: 'homestead_update_ai_profile',
-                ...aiProfile,
-                enabled: event.target.checked,
-              },
-              'ai-profile:enabled',
-              event.target.checked ? '世界导演已启用' : '世界导演已暂停',
-            )}
-          >
-            启用个性化世界导演
-          </Checkbox>
-          <label>
-            <span>世界倾向</span>
-            <Select
-              value={aiProfile.goal}
-              disabled={actionsBusy || !aiProfile.enabled}
-              options={[
-                { value: 'balanced', label: '均衡群像' },
-                { value: 'wealth', label: '商路繁荣' },
-                { value: 'reputation', label: '城镇共同体' },
-                { value: 'research', label: '探索发现' },
-              ]}
-              onChange={(goal) => void act(
-                {
-                  type: 'homestead_update_ai_profile',
-                  ...aiProfile,
-                  goal,
-                },
-                'ai-profile:goal',
-                '世界倾向已更新',
-              )}
-            />
-          </label>
-          <label>
-            <span>世界压力</span>
-            <Select
-              value={aiProfile.risk}
-              disabled={actionsBusy || !aiProfile.enabled}
-              options={[
-                { value: 'safe', label: '温和推进' },
-                { value: 'balanced', label: '均衡张力' },
-                { value: 'bold', label: '严峻挑战' },
-              ]}
-              onChange={(risk) => void act(
-                {
-                  type: 'homestead_update_ai_profile',
-                  ...aiProfile,
-                  risk,
-                },
-                'ai-profile:risk',
-                '世界压力已更新',
-              )}
-            />
-          </label>
-          <label>
-            <span>聚焦舞台</span>
-            <Select
-              value={aiProfile.focus}
-              disabled={actionsBusy || !aiProfile.enabled}
-              options={[
-                { value: 'farm', label: '农场' },
-                { value: 'ranch', label: '牧场' },
-                { value: 'mine', label: '矿山' },
-                { value: 'processing', label: '加工协作' },
-              ]}
-              onChange={(focus) => void act(
-                {
-                  type: 'homestead_update_ai_profile',
-                  ...aiProfile,
-                  focus,
-                },
-                'ai-profile:focus',
-                '聚焦舞台已更新',
-              )}
-            />
-          </label>
-        </div>
         <div className="homestead-advice-plan" aria-label="今日三步经营计划">
           {adviceSteps.map((step, index) => (
             <article key={step.id}>
@@ -2209,15 +2135,17 @@ export function HomesteadScreen() {
             />
             <p>
               连续轮作 {homestead.specializations.farm.rotationStreak} 次 ·
-              经营加成 +{homestead.specializations.farm.yieldBonusPercent}%
+              后续农场批次产量 +{homestead.specializations.farm.yieldBonusPercent}%
             </p>
+            <small>深度经营会写入下一次播种；已经生长的批次保持启动时效果。</small>
             <Checkbox
               checked={useFertilizer}
               disabled={actionsBusy || !fertilizerAvailable}
               onChange={(event) => setUseFertilizer(event.target.checked)}
             >
-              使用土壤改良剂（库存 {homestead.goods.soil_conditioner}）
+              使用{soilAmendmentName}（库存 {soilAmendmentStock}）
             </Checkbox>
+            <small>本次额外恢复 18 点土壤健康，提高后续农场产量；灾期也可用于温室抢种。</small>
             {!hasResearchCapability('soil_science') && (
               <small>完成“土壤科学”后可使用改良剂。</small>
             )}
@@ -2262,9 +2190,10 @@ export function HomesteadScreen() {
               format={(value) => `健康 ${value}`}
             />
             <p>
-              产品加成 +{homestead.specializations.ranch.productBonusPercent}% ·
+              后续牧场批次产量 +{homestead.specializations.ranch.productBonusPercent}% ·
               已发现 {homestead.specializations.ranch.discoveredTraits.length} 种特质
             </p>
+            <small>饲喂方案会写入下一次牧场投喂；正在生产的批次不追溯变化。</small>
             <div className="homestead-traits">
               {homestead.specializations.ranch.discoveredTraits.length
                 ? homestead.specializations.ranch.discoveredTraits.map((trait) => (
@@ -2280,7 +2209,7 @@ export function HomesteadScreen() {
                     健康 +{program.definition.healthGain} ·
                     特质机会 {program.definition.traitChance}%
                     {program.definition.goodCost
-                      ? ` · ${ITEM_NAMES[program.definition.goodCost.itemId]} ${program.definition.goodCost.quantity}`
+                      ? ` · ${ITEM_NAMES[program.requiredGoodId ?? program.definition.goodCost.itemId]} ${program.definition.goodCost.quantity}`
                       : ' · 无消耗'}
                   </small>
                   <Button
@@ -2316,8 +2245,9 @@ export function HomesteadScreen() {
             <p>
               防护 LV {homestead.specializations.mine.protectionLevel} ·
               勘探进度 {homestead.specializations.mine.surveyProgress} ·
-              矿石加成 +{homestead.specializations.mine.oreBonusPercent}%
+              后续矿山批次产量 +{homestead.specializations.mine.oreBonusPercent}%
             </p>
+            <small>防护升级和矿层勘探会更新下一次开采；正在采掘的矿井保持原批次效果。</small>
             {homestead.specializations.nextProtectionUpgrade ? (
               <Button
                 disabled={

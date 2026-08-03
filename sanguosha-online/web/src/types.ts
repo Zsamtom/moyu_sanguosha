@@ -990,6 +990,7 @@ export interface HomesteadSpecializationsView {
     lastManagedDayKey: string | null;
     oreBonusPercent: number;
   };
+  soilAmendmentGoodId?: HomesteadGoodId;
   cropFamilies: Array<{
     definition: {
       id: HomesteadCropFamily;
@@ -1017,6 +1018,7 @@ export interface HomesteadSpecializationsView {
     canRun: boolean;
     lockedByResearch: boolean;
     hasResources: boolean;
+    requiredGoodId: HomesteadGoodId | null;
   }>;
   mineLayers: Array<{
     definition: {

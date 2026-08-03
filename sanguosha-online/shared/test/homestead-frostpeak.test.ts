@@ -139,6 +139,12 @@ describe("Frostpeak complete homestead content pack", () => {
       route.townId === "frostpeak"
     )).toBe(true);
     expect(view.worldEvent.definition.townId).toBe("frostpeak");
+    expect(view.specializations.soilAmendmentGoodId).toBe("thermal_compost");
+    expect(
+      view.specializations.feedPrograms.find(
+        ({ definition }) => definition.id === "mineral",
+      )?.requiredGoodId,
+    ).toBe("alpine_feed");
   });
 
   it("exports stable, unique ID arrays and record-shaped catalogs", () => {

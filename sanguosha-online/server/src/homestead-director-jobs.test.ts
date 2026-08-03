@@ -207,7 +207,7 @@ describe("homestead director durable jobs", () => {
       source: "llm",
       worldBeatId: "trade",
     });
-    expect(afterChoice.homestead.statistics.llmCalls).toBe(2);
-    expect((await jobs.snapshot(10)).counts.applied).toBe(2);
+    expect(afterChoice.homestead.statistics.llmCalls).toBe(1);
+    expect((await jobs.snapshot(10)).counts.applied).toBe(1);
   });
 });

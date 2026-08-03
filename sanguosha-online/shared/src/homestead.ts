@@ -2643,6 +2643,7 @@ export interface HomesteadGameView {
     readonly cropFamilies: readonly HomesteadCropFamilyView[];
     readonly feedPrograms: readonly HomesteadFeedProgramView[];
     readonly mineLayers: readonly HomesteadMineLayerView[];
+    readonly soilAmendmentGoodId: HomesteadGoodId;
     readonly canManageFarmToday: boolean;
     readonly canManageRanchToday: boolean;
     readonly canManageMineToday: boolean;
@@ -6005,8 +6006,18 @@ export function applyHomesteadAction(
     game.goods[alloyGoodId] -= ironIngotCost;
     game.goods[kitGoodId] -= miningKitCost;
     mine.protectionLevel = level;
+    mine.oreBonusPercent = clamp(
+      mine.protectionLevel * 5 + mine.discoveredLayers.length * 3,
+      0,
+      25,
+    );
     addSeasonScore(game, 5, "specializations");
-    addLog(game, "mine", `矿山防护提升到 ${level} 级。`, effectiveNow);
+    addLog(
+      game,
+      "mine",
+      `矿山防护提升到 ${level} 级，后续采掘产量加成更新为 +${mine.oreBonusPercent}%。`,
+      effectiveNow,
+    );
   } else if (action.type === "homestead_survey_layer") {
     const mine = game.specializations.mine;
     const definition = HOMESTEAD_MINE_LAYERS[action.layerId];
@@ -7153,6 +7164,10 @@ export function getHomesteadGameView(
     }),
     specializations: {
       ...structuredClone(game.specializations),
+      soilAmendmentGoodId: localGoodId(
+        activeTownId,
+        "soil_conditioner",
+      ),
       cropFamilies: HOMESTEAD_CROP_FAMILY_IDS.map((cropFamily) => {
         const definition = HOMESTEAD_CROP_FAMILIES[cropFamily];
         return {

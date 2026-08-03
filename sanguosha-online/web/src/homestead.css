@@ -369,33 +369,6 @@
   margin: 14px 0;
 }
 
-.homestead-ai-profile {
-  display: grid;
-  grid-template-columns: minmax(210px, 1.2fr) repeat(3, minmax(140px, 1fr));
-  align-items: end;
-  gap: 8px;
-  margin: 14px 0;
-  padding: 10px;
-  border: 1px solid var(--estate-line);
-  border-radius: 7px;
-  background: var(--estate-soft-green);
-}
-
-.homestead-ai-profile label,
-.homestead-ai-profile label > span {
-  display: block;
-}
-
-.homestead-ai-profile label > span {
-  margin-bottom: 4px;
-  color: #68736d;
-  font-size: 11px;
-}
-
-.homestead-ai-profile .ant-select {
-  width: 100%;
-}
-
 .homestead-advice-plan article {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1379,10 +1352,6 @@
   }
 
   .homestead-advice-plan {
-    grid-template-columns: 1fr;
-  }
-
-  .homestead-ai-profile {
     grid-template-columns: 1fr;
   }
 

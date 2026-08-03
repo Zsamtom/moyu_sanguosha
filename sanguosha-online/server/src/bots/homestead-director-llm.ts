@@ -455,8 +455,6 @@ export function createHomesteadDirectorDecision(
   ) {
     return null;
   }
-  if (homestead.aiProfile?.enabled === false) return null;
-
   const activeTownId = homestead.townId ??
     homestead.townNetwork?.activeTownId ??
     "greenvale";

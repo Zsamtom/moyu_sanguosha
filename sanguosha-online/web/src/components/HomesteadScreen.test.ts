@@ -7,6 +7,7 @@ import {
   formatDisasterReputationImpact,
   formatHomesteadDuration,
   formatWeatherObservedAt,
+  isHomesteadRevisionConflict,
   isWeatherMechanicsEnabled,
   runHomesteadActionWithConflictRetry,
 } from './HomesteadScreen';
@@ -114,11 +115,11 @@ describe('HomesteadScreen helpers', () => {
     )).toBe(true);
   });
 
-  it('refreshes authoritatively and retries a stale action only once', async () => {
+  it('retries only revision conflicts and never disguises business errors as state churn', async () => {
     const initial = { homestead: { revision: 5 } } as unknown as HomesteadSnapshot;
     const latest = { homestead: { revision: 6 } } as unknown as HomesteadSnapshot;
     const apply = vi.fn()
-      .mockRejectedValueOnce(new ApiError('stale', 409, 'STALE_REVISION'))
+      .mockRejectedValueOnce(new ApiError('stale', 409, 'HOMESTEAD_REVISION_CONFLICT'))
       .mockResolvedValueOnce('applied');
     const refresh = vi.fn().mockResolvedValue(latest);
 
@@ -132,13 +133,29 @@ describe('HomesteadScreen helpers', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
 
     const stillStale = vi.fn()
-      .mockRejectedValue(new ApiError('stale', 409, 'STALE_REVISION'));
+      .mockRejectedValue(new ApiError('stale', 409, 'HOMESTEAD_REVISION_CONFLICT'));
     await expect(runHomesteadActionWithConflictRetry(
       initial,
       stillStale,
       refresh,
     )).rejects.toMatchObject({ status: 409 });
-    expect(stillStale).toHaveBeenCalledTimes(2);
+    expect(stillStale).toHaveBeenCalledTimes(3);
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    const businessConflict = new ApiError(
+      '今日物流容量不足',
+      409,
+      'ESTATE_LOGISTICS_INSUFFICIENT',
+    );
+    const rejectedBusinessAction = vi.fn().mockRejectedValue(businessConflict);
+    const unusedRefresh = vi.fn();
+    await expect(runHomesteadActionWithConflictRetry(
+      initial,
+      rejectedBusinessAction,
+      unusedRefresh,
+    )).rejects.toBe(businessConflict);
+    expect(unusedRefresh).not.toHaveBeenCalled();
+    expect(isHomesteadRevisionConflict(businessConflict)).toBe(false);
   });
 
   it('keeps every supported modular homestead action reachable from the interface', () => {
@@ -213,7 +230,7 @@ describe('HomesteadScreen helpers', () => {
     expect(typesSource).toContain('temporaryAlreadyUsed: boolean');
   });
 
-  it('shows the world director, local operation rhythm, and research milestones', () => {
+  it('shows backstage estate intelligence, local operation rhythm, and research milestones', () => {
     const source = readFileSync(
       new URL('./HomesteadScreen.tsx', import.meta.url),
       'utf8',
@@ -223,7 +240,9 @@ describe('HomesteadScreen helpers', () => {
       'utf8',
     );
 
-    expect(source).toContain('LLM WORLD DIRECTOR');
+    expect(source).toContain('ESTATE INTELLIGENCE');
+    expect(source).not.toContain('规则世界导演');
+    expect(source).not.toContain('启用个性化世界导演');
     expect(source).toContain('本次导演依据');
     expect(source).toContain('跨日伏笔');
     expect(source).toContain('LOCAL OPERATING RHYTHM');

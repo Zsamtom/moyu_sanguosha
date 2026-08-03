@@ -1113,6 +1113,7 @@ describe("homestead linked economy", () => {
 
   it("runs daily farm, ranch, and mine specialization programs", () => {
     const { homestead, economy } = setup();
+    const baselineRules = getHomesteadProductionRules(homestead);
 
     const farm = applyHomesteadAction(
       homestead,
@@ -1126,6 +1127,8 @@ describe("homestead linked economy", () => {
     );
     expect(farm.homestead.specializations.farm.lastCropFamily).toBe("grain");
     expect(farm.economy.farmProduce.wheat).toBe(1);
+    expect(getHomesteadProductionRules(farm.homestead).farm.yieldPercent)
+      .toBeGreaterThan(baselineRules.farm.yieldPercent);
 
     const ranch = applyHomesteadAction(
       farm.homestead,
@@ -1135,6 +1138,8 @@ describe("homestead linked economy", () => {
     );
     expect(ranch.homestead.specializations.ranch.herdHealth).toBeGreaterThan(65);
     expect(ranch.economy.ranchProducts.egg).toBeGreaterThan(0);
+    expect(getHomesteadProductionRules(ranch.homestead).ranch.yieldPercent)
+      .toBeGreaterThan(baselineRules.ranch.yieldPercent);
 
     const mine = applyHomesteadAction(
       ranch.homestead,
@@ -1146,7 +1151,72 @@ describe("homestead linked economy", () => {
       "shallow",
     );
     expect(mine.economy.mineOres.coal).toBe(1);
+    expect(getHomesteadProductionRules(mine.homestead).mine.yieldPercent)
+      .toBeGreaterThan(baselineRules.mine.yieldPercent);
     expect(mine.homestead.season.counters.specializations).toBe(3);
+  });
+
+  it("turns mine protection upgrades into an immediate next-batch mine bonus", () => {
+    const { homestead, economy } = setup();
+    homestead.goods.iron_ingot = 1;
+
+    const upgraded = applyHomesteadAction(
+      homestead,
+      economy,
+      { type: "homestead_upgrade_mine_protection" },
+      start,
+    );
+
+    expect(upgraded.homestead.specializations.mine.protectionLevel).toBe(1);
+    expect(upgraded.homestead.specializations.mine.oreBonusPercent).toBe(5);
+    expect(getHomesteadProductionRules(upgraded.homestead).mine.yieldPercent)
+      .toBeGreaterThan(getHomesteadProductionRules(homestead).mine.yieldPercent);
+  });
+
+  it("consumes soil conditioner and carries its soil gain into later farm batches", () => {
+    const { homestead, economy } = setup();
+    homestead.research.unlocked.push("soil_science");
+    homestead.goods.soil_conditioner = 1;
+    const baselineRules = getHomesteadProductionRules(homestead);
+
+    const improved = applyHomesteadAction(
+      homestead,
+      economy,
+      {
+        type: "homestead_plan_rotation",
+        cropFamily: "grain",
+        useFertilizer: true,
+      },
+      start,
+    );
+
+    expect(improved.homestead.goods.soil_conditioner).toBe(0);
+    expect(improved.homestead.specializations.farm.fertilizerApplications)
+      .toBe(1);
+    expect(improved.homestead.specializations.farm.soilHealth).toBe(82);
+    expect(getHomesteadProductionRules(improved.homestead).farm.yieldPercent)
+      .toBeGreaterThan(baselineRules.farm.yieldPercent);
+  });
+
+  it("consumes fortified feed and carries herd health into later ranch batches", () => {
+    const { homestead, economy } = setup();
+    homestead.research.unlocked.push("animal_nutrition", "animal_genetics");
+    homestead.goods.fortified_feed = 1;
+    const baselineRules = getHomesteadProductionRules(homestead);
+
+    const improved = applyHomesteadAction(
+      homestead,
+      economy,
+      { type: "homestead_run_feed_program", programId: "mineral" },
+      start,
+    );
+
+    expect(improved.homestead.goods.fortified_feed).toBe(0);
+    expect(improved.homestead.specializations.ranch.herdHealth).toBe(82);
+    expect(improved.homestead.specializations.ranch.lastFeedProgram)
+      .toBe("mineral");
+    expect(getHomesteadProductionRules(improved.homestead).ranch.yieldPercent)
+      .toBeGreaterThan(baselineRules.ranch.yieldPercent);
   });
 
   it("enforces one specialization action per sector per day", () => {

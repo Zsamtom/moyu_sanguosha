@@ -82,7 +82,6 @@ describe('three-sector interface capability coverage', () => {
       'homestead_switch_town',
       'homestead_buy_merchant_item',
       'homestead_use_acceleration_card',
-      'homestead_update_ai_profile',
       'homestead_complete_value_route',
       'homestead_dispatch_cargo',
       'homestead_collect_cargo',

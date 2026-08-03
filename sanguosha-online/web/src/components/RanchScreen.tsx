@@ -24,6 +24,7 @@ import type {
   RanchSnapshot,
   RanchVisitClientAction,
 } from '../types';
+import { ProductionModifierTag } from './ProductionModifierTag';
 import '../farm.css';
 import '../ranch.css';
 
@@ -764,19 +765,11 @@ export function RanchScreen() {
                               : `${remainingLabel(runtime.remainingMs)} · 预计 ${runtime.estimatedYield} 份${animal.productName}`}
                         </small>
                         <div className="farm-plot__tags">
-                          {pen.fedAt !== null && (pen.productionModifierPercent ?? 0) !== 0 && (
-                            <Tag color={(pen.productionModifierPercent ?? 0) > 0 ? 'green' : 'volcano'}>
-                              {pen.productionModifierLabel ?? '庄园环境'}
-                              {' '}· 产量 {(pen.productionModifierPercent ?? 0) > 0 ? '+' : ''}
-                              {pen.productionModifierPercent}%
-                            </Tag>
-                          )}
-                          {pen.fedAt !== null && (pen.durationModifierPercent ?? 0) !== 0 && (
-                            <Tag color={(pen.durationModifierPercent ?? 0) < 0 ? 'green' : 'volcano'}>
-                              {pen.productionModifierLabel ?? '庄园环境'}
-                              {' '}· 工期 {(pen.durationModifierPercent ?? 0) > 0 ? '+' : ''}
-                              {pen.durationModifierPercent}%
-                            </Tag>
+                          {pen.fedAt !== null && (
+                            <ProductionModifierTag
+                              yieldPercent={pen.productionModifierPercent ?? 0}
+                              durationPercent={pen.durationModifierPercent ?? 0}
+                            />
                           )}
                           {animal && pen.fedAt === null && <Tag>待投喂</Tag>}
                           {runtime.hasMess && <Tag color="orange">需清扫</Tag>}
