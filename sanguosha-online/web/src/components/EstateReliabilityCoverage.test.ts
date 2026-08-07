@@ -20,9 +20,15 @@ describe('estate request reliability coverage', () => {
     expect(content).toContain('isTownRevisionVectorAtLeast');
     expect(content).toContain('townChanged');
     expect(content).toContain('useSerialActionQueue');
-    expect(content).toContain('previousCount > 0 && queuedActionCount === 0');
     expect(content).toContain('awaitWithAbort');
     expect(content).toContain('cancelPendingActions');
     expect(content).not.toContain('attempt < 2');
+
+    if (screen === 'HomesteadScreen.tsx') {
+      expect(content).toContain('requiresAuthoritativeHomesteadRefresh');
+      expect(content).not.toContain('previousCount > 0 && queuedActionCount === 0');
+    } else {
+      expect(content).toContain('previousCount > 0 && queuedActionCount === 0');
+    }
   });
 });

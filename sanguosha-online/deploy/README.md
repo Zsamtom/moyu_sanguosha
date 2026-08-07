@@ -121,6 +121,17 @@ sudo certbot renew --dry-run
 
 `/socket.io/` 必须保留 HTTP/1.1、`Upgrade` 和 `Connection` 请求头，否则实时对局会断开。
 
+Certbot 会在首次签发后改写站点文件以加入 HTTPS；后续更新 Nginx 模板时，先用
+`sudo nginx -T` 确认正在生效的 TLS `server` 块，再把新增指令合并进去，**不要**
+直接覆盖已由 Certbot 管理的文件。庄园接口依赖 JSON gzip，合并后验证：
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+然后在已登录浏览器的 Network 面板中确认 `GET /api/homestead` 返回头包含
+`Content-Encoding: gzip`；`/version` 很小，低于压缩阈值时不适合作为此项验收。
+
 公网验收：
 
 ```bash

@@ -22,6 +22,7 @@ import {
 } from '../snapshotGuards';
 import {
   awaitWithAbort,
+  isSerialActionQueueCancelledError,
   isSerialActionTimeoutError,
   useSerialActionQueue,
 } from '../serialActionQueue';
@@ -410,6 +411,29 @@ export function isHomesteadRevisionConflict(error: unknown): boolean {
     Boolean(error.code && HOMESTEAD_REVISION_CONFLICT_CODES.has(error.code));
 }
 
+/**
+ * A transport failure can occur after the server has applied a mutation but
+ * before the browser receives its snapshot. Do not let another queued action
+ * use that potentially stale revision.
+ */
+export function requiresAuthoritativeHomesteadRefresh(error: unknown): boolean {
+  return isHomesteadRevisionConflict(error) ||
+    isSerialActionTimeoutError(error) ||
+    isSerialActionQueueCancelledError(error) ||
+    !(error instanceof ApiError) ||
+    error.status >= 500;
+}
+
+export async function recoverUncertainHomesteadAction<T>(
+  error: unknown,
+  cancelPending: () => void,
+  refresh: () => Promise<T>,
+): Promise<T | undefined> {
+  if (!requiresAuthoritativeHomesteadRefresh(error)) return undefined;
+  cancelPending();
+  return refresh();
+}
+
 export function HomesteadScreen() {
   const [snapshot, setSnapshot] = useState<HomesteadSnapshot>();
   const [loading, setLoading] = useState(true);
@@ -430,10 +454,10 @@ export function HomesteadScreen() {
   const {
     enqueue: enqueueAction,
     cancelPending: cancelPendingActions,
-    pendingCount: queuedActionCount,
+    pendingCount: pendingActionCount,
+    queuedCount: queuedActionCount,
   } =
     useSerialActionQueue();
-  const previousQueuedActionCount = useRef(queuedActionCount);
 
   const commitSnapshot = (
     next: HomesteadSnapshot,
@@ -511,13 +535,17 @@ export function HomesteadScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    const previousCount = previousQueuedActionCount.current;
-    previousQueuedActionCount.current = queuedActionCount;
-    if (previousCount > 0 && queuedActionCount === 0) {
-      void load(true, true, true);
-    }
-  }, [queuedActionCount]);
+  const refreshAfterUncertainAction = async (
+    error: unknown,
+  ): Promise<boolean> => {
+    const refreshed = await recoverUncertainHomesteadAction(
+      error,
+      cancelPendingActions,
+      () => load(true, true, true),
+    );
+    if (refreshed) setFailure(undefined);
+    return Boolean(refreshed);
+  };
 
   const executeAction = async (
     action: HomesteadClientAction,
@@ -540,15 +568,20 @@ export function HomesteadScreen() {
       toast.success(success);
     } catch (error) {
       if (isHomesteadRevisionConflict(error)) {
-        cancelPendingActions();
-        await load(true, true, true);
-        setFailure(undefined);
-        toast.warning('状态已刷新：本次及后续待处理操作已取消，请确认后重新提交。');
-      } else if (isSerialActionTimeoutError(error)) {
-        cancelPendingActions();
-        await load(true, true, true);
-        setFailure(undefined);
-        toast.warning('保存请求超时，已取消后续待处理操作并刷新状态；请确认结果后再试。');
+        const refreshed = await refreshAfterUncertainAction(error);
+        toast.warning(refreshed
+          ? '状态已刷新：本次及后续待处理操作已取消，请确认后重新提交。'
+          : '状态可能已变化，后续待处理操作已取消；刷新失败，请手动刷新后确认。');
+      } else if (requiresAuthoritativeHomesteadRefresh(error)) {
+        const refreshed = await refreshAfterUncertainAction(error);
+        const reason = isSerialActionTimeoutError(error)
+          ? '保存请求超时'
+          : isSerialActionQueueCancelledError(error)
+            ? '保存操作已取消'
+            : '保存结果不确定';
+        toast.warning(refreshed
+          ? `${reason}，已取消后续待处理操作并刷新状态；请确认结果后再试。`
+          : `${reason}，后续待处理操作已取消；刷新失败，请手动刷新后确认。`);
       } else {
         const text = errorMessage(error);
         setFailure(text);
@@ -625,7 +658,7 @@ export function HomesteadScreen() {
   const adviceSteps = homestead.advice.steps?.length === 3
     ? homestead.advice.steps
     : DEFAULT_ADVICE_STEPS;
-  const actionsSaving = queuedActionCount > 0;
+  const actionsSaving = pendingActionCount > 0;
   const unlockedResearch = new Set(
     homestead.research
       .filter(({ unlocked }) => unlocked)
@@ -933,7 +966,9 @@ export function HomesteadScreen() {
           className="homestead-alert homestead-operation-status"
           type="info"
           showIcon
-          message={`正在后台依次保存，可继续安排其他操作（队列 ${queuedActionCount}）`}
+          message={queuedActionCount > 0
+            ? `正在保存，另有 ${queuedActionCount} 项操作排队，可继续安排其他操作`
+            : '正在保存'}
         />
       )}
 

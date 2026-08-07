@@ -1902,117 +1902,164 @@ export class FarmService {
         : undefined,
     );
     return this.serializedMany([user.id], async () => {
-      let { account, bundle } = await this.loadActiveEstate(user);
-      this.assertExpectedTown(account.activeTownId, expectedTownId);
-      const { farm, ranch, mine, homestead } = bundle;
-      this.assertRevision(farm, expectedFarmRevision);
-      this.assertRanchRevision(ranch, expectedRanchRevision);
-      this.assertMineRevision(mine, expectedMineRevision);
-      this.assertHomesteadRevision(homestead, expectedHomesteadRevision);
-      if (
-        expectedAccountRevision !== null &&
-        account.revision !== expectedAccountRevision
-      ) {
-        throw new HttpError(
-          409,
-          "ESTATE_ACCOUNT_REVISION_CONFLICT",
-          "庄园账户已在其他页面更新，请刷新后重试",
-        );
-      }
-
-      const accountAction = await this.applyEstateAccountAction(
-        user,
-        account,
-        bundle,
-        action,
-        this.clock(),
-      );
-      if (accountAction) return accountAction;
-
-      let result: ReturnType<typeof applyHomesteadLinkedAction>;
+      let loaded:
+        | {
+          account: EstateAccountState;
+          bundle: TownEstateBundle;
+          needsPersist: boolean;
+          dayChanged: boolean;
+        }
+        | undefined;
       try {
-        result = applyHomesteadLinkedAction(
-          homestead,
-          this.homesteadEconomy(farm, ranch, mine, account),
-          action,
-          this.clock(),
-        );
-      } catch (error) {
-        this.mapHomesteadRuleError(error);
-      }
-
-      const nextFarm = structuredClone(farm);
-      const nextRanch = structuredClone(ranch);
-      const nextMine = structuredClone(mine);
-      const now = this.clock();
-      if (result!.farmChanged) {
-        nextFarm.coins = result!.economy.coins;
-        nextFarm.produce = structuredClone(result!.economy.farmProduce);
-        nextFarm.revision = result!.economy.farmRevision;
-        nextFarm.updatedAt = Math.max(nextFarm.updatedAt, now);
-      }
-      if (result!.ranchChanged) {
-        nextRanch.products = structuredClone(result!.economy.ranchProducts);
-        nextRanch.revision = result!.economy.ranchRevision;
-        nextRanch.updatedAt = Math.max(nextRanch.updatedAt, now);
-      }
-      if (result!.mineChanged) {
-        nextMine.ores = structuredClone(result!.economy.mineOres);
-        nextMine.revision = result!.economy.mineRevision;
-        nextMine.updatedAt = Math.max(nextMine.updatedAt, now);
-      }
-
-      bundle = {
-        ...bundle,
-        farm: nextFarm,
-        ranch: nextRanch,
-        mine: nextMine,
-        homestead: result!.homestead,
-      };
-      account = this.syncAccountFromBundle(account, bundle);
-      const logisticsCost = action.type === "homestead_complete_order"
-        ? 2
-        : action.type === "homestead_complete_value_route"
-          ? HOMESTEAD_VALUE_ROUTES[action.routeId].stage >= 3 ? 2 : 1
-          : action.type === "homestead_activate_emergency_boost"
-            ? 1
-            : 0;
-      if (logisticsCost > 0) {
-        try {
-          account = spendEstateLogistics(
-            account,
-            logisticsCost,
-            now,
-          );
-        } catch (error) {
+        // A homestead action needs the same time/weather refresh as a read,
+        // but must not persist that intermediate state before its revision
+        // check and final mutation. On a normal action this keeps the whole
+        // refresh + mutation flow to one account-and-estate transaction.
+        loaded = await this.loadActiveEstate(user, { persist: false });
+        let { account, bundle } = loaded;
+        this.assertExpectedTown(account.activeTownId, expectedTownId);
+        const { farm, ranch, mine, homestead } = bundle;
+        this.assertRevision(farm, expectedFarmRevision);
+        this.assertRanchRevision(ranch, expectedRanchRevision);
+        this.assertMineRevision(mine, expectedMineRevision);
+        this.assertHomesteadRevision(homestead, expectedHomesteadRevision);
+        if (
+          expectedAccountRevision !== null &&
+          account.revision !== expectedAccountRevision
+        ) {
           throw new HttpError(
             409,
-            "ESTATE_LOGISTICS_INSUFFICIENT",
-            error instanceof Error
-              ? error.message
-              : "今日物流容量不足",
+            "ESTATE_ACCOUNT_REVISION_CONFLICT",
+            "庄园账户已在其他页面更新，请刷新后重试",
           );
         }
-      }
-      bundle = this.syncBundleFromAccount(bundle, account);
-      await this.store.saveAccountAndTownEstate(
-        user.id,
-        account,
-        account.activeTownId,
-        bundle,
-      );
-      return {
-        homestead: getHomesteadGameView(
-          bundle.homestead,
-          this.homesteadEconomy(
-            bundle.farm,
-            bundle.ranch,
-            bundle.mine,
-            account,
+
+        let savedAccountActionBundle: TownEstateBundle | undefined;
+        const accountAction = await this.applyEstateAccountAction(
+          user,
+          account,
+          bundle,
+          action,
+          this.clock(),
+          (savedBundle) => {
+            savedAccountActionBundle = savedBundle;
+          },
+        );
+        if (accountAction) {
+          if (loaded.dayChanged && savedAccountActionBundle) {
+            this.scheduleHomesteadDirector(user, savedAccountActionBundle);
+          }
+          return accountAction;
+        }
+
+        let result: ReturnType<typeof applyHomesteadLinkedAction>;
+        try {
+          result = applyHomesteadLinkedAction(
+            homestead,
+            this.homesteadEconomy(farm, ranch, mine, account),
+            action,
+            this.clock(),
+          );
+        } catch (error) {
+          this.mapHomesteadRuleError(error);
+        }
+
+        const nextFarm = structuredClone(farm);
+        const nextRanch = structuredClone(ranch);
+        const nextMine = structuredClone(mine);
+        const now = this.clock();
+        if (result!.farmChanged) {
+          nextFarm.coins = result!.economy.coins;
+          nextFarm.produce = structuredClone(result!.economy.farmProduce);
+          nextFarm.revision = result!.economy.farmRevision;
+          nextFarm.updatedAt = Math.max(nextFarm.updatedAt, now);
+        }
+        if (result!.ranchChanged) {
+          nextRanch.products = structuredClone(result!.economy.ranchProducts);
+          nextRanch.revision = result!.economy.ranchRevision;
+          nextRanch.updatedAt = Math.max(nextRanch.updatedAt, now);
+        }
+        if (result!.mineChanged) {
+          nextMine.ores = structuredClone(result!.economy.mineOres);
+          nextMine.revision = result!.economy.mineRevision;
+          nextMine.updatedAt = Math.max(nextMine.updatedAt, now);
+        }
+
+        bundle = {
+          ...bundle,
+          farm: nextFarm,
+          ranch: nextRanch,
+          mine: nextMine,
+          homestead: result!.homestead,
+        };
+        account = this.syncAccountFromBundle(account, bundle);
+        const logisticsCost = action.type === "homestead_complete_order"
+          ? 2
+          : action.type === "homestead_complete_value_route"
+            ? HOMESTEAD_VALUE_ROUTES[action.routeId].stage >= 3 ? 2 : 1
+            : action.type === "homestead_activate_emergency_boost"
+              ? 1
+              : 0;
+        if (logisticsCost > 0) {
+          try {
+            account = spendEstateLogistics(
+              account,
+              logisticsCost,
+              now,
+            );
+          } catch (error) {
+            throw new HttpError(
+              409,
+              "ESTATE_LOGISTICS_INSUFFICIENT",
+              error instanceof Error
+                ? error.message
+                : "今日物流容量不足",
+            );
+          }
+        }
+        bundle = this.syncBundleFromAccount(bundle, account);
+        await this.store.saveAccountAndTownEstate(
+          user.id,
+          account,
+          account.activeTownId,
+          bundle,
+        );
+        if (loaded.dayChanged) {
+          this.scheduleHomesteadDirector(user, bundle);
+        }
+        return {
+          homestead: getHomesteadGameView(
+            bundle.homestead,
+            this.homesteadEconomy(
+              bundle.farm,
+              bundle.ranch,
+              bundle.mine,
+              account,
+            ),
+            now,
           ),
-          now,
-        ),
-      };
+        };
+      } catch (error) {
+        // Preserve time/weather refreshes even when the client supplied an
+        // out-of-date revision or the requested rule action is rejected. This
+        // matches the old read-before-action persistence semantics without
+        // introducing an intermediate write on successful actions.
+        // Only rule/revision rejections should flush the refreshed state here.
+        // Retrying a storage failure would turn one failed final write into an
+        // unexpected second write with the pre-action bundle.
+        if (loaded?.needsPersist && error instanceof HttpError) {
+          await this.store.saveAccountAndTownEstate(
+            user.id,
+            loaded.account,
+            loaded.account.activeTownId,
+            loaded.bundle,
+          );
+          if (loaded.dayChanged) {
+            this.scheduleHomesteadDirector(user, loaded.bundle);
+          }
+        }
+        throw error;
+      }
     });
   }
 
@@ -2022,6 +2069,7 @@ export class FarmService {
     currentBundle: TownEstateBundle,
     action: HomesteadClientAction,
     now: number,
+    onPersisted?: (bundle: TownEstateBundle) => void,
   ): Promise<HomesteadSnapshot | null> {
     if (action.type === "homestead_unlock_town") {
       let account: EstateAccountState;
@@ -2068,6 +2116,7 @@ export class FarmService {
         action.townId,
         target,
       );
+      onPersisted?.(source);
       return {
         homestead: getHomesteadGameView(
           source.homestead,
@@ -2162,6 +2211,7 @@ export class FarmService {
         action.townId,
         target,
       );
+      onPersisted?.(target);
       return {
         homestead: getHomesteadGameView(
           target.homestead,
@@ -2240,6 +2290,7 @@ export class FarmService {
         bundle.townId,
         bundle,
       );
+      onPersisted?.(bundle);
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2294,6 +2345,7 @@ export class FarmService {
         bundle.townId,
         bundle,
       );
+      onPersisted?.(bundle);
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2365,6 +2417,7 @@ export class FarmService {
         bundle.townId,
         bundle,
       );
+      onPersisted?.(bundle);
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2455,6 +2508,7 @@ export class FarmService {
         bundle.townId,
         bundle,
       );
+      onPersisted?.(bundle);
       return {
         homestead: getHomesteadGameView(
           bundle.homestead,
@@ -2777,9 +2831,14 @@ export class FarmService {
     return event.hazard?.affectedSectors.includes("logistics") ?? false;
   }
 
-  private async loadActiveEstate(user: PublicUser): Promise<{
+  private async loadActiveEstate(
+    user: PublicUser,
+    options: { readonly persist?: boolean } = {},
+  ): Promise<{
     account: EstateAccountState;
     bundle: TownEstateBundle;
+    needsPersist: boolean;
+    dayChanged: boolean;
   }> {
     const now = this.clock();
     let account = await this.loadOrCreateEstateAccount(user);
@@ -2789,6 +2848,8 @@ export class FarmService {
       account,
     );
     bundle = this.syncBundleFromAccount(bundle, account);
+    const initialAccount = structuredClone(account);
+    const initialBundle = structuredClone(bundle);
 
     const previousMarketDay = bundle.farm.marketDay;
     bundle.farm = refreshFarmingGame(bundle.farm, now);
@@ -2811,16 +2872,21 @@ export class FarmService {
     bundle = this.applyTownWeatherSnapshot(bundle, weather);
     account = this.syncAccountFromBundle(account, bundle);
     bundle = this.syncBundleFromAccount(bundle, account);
-    await this.store.saveAccountAndTownEstate(
-      user.id,
-      account,
-      account.activeTownId,
-      bundle,
-    );
-    if (dayChanged) {
+    const needsPersist =
+      !jsonValuesEqual(initialAccount, account) ||
+      !jsonValuesEqual(initialBundle, bundle);
+    if (options.persist !== false) {
+      await this.store.saveAccountAndTownEstate(
+        user.id,
+        account,
+        account.activeTownId,
+        bundle,
+      );
+    }
+    if (dayChanged && options.persist !== false) {
       this.scheduleHomesteadDirector(user, bundle);
     }
-    return { account, bundle };
+    return { account, bundle, needsPersist, dayChanged };
   }
 
   private scheduleHomesteadDirector(

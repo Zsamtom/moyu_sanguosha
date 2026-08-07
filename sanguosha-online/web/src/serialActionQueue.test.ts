@@ -21,17 +21,23 @@ describe('SerialActionQueue', () => {
       await firstGate;
       order.push('first:end');
     });
+    await Promise.resolve();
+    expect(queue.pendingCount).toBe(1);
+    expect(queue.queuedCount).toBe(0);
+
     queue.enqueue(async () => {
       order.push('second');
     });
 
     await Promise.resolve();
     expect(queue.pendingCount).toBe(2);
+    expect(queue.queuedCount).toBe(1);
     expect(order).toEqual(['first:start']);
     releaseFirst();
     await queue.whenIdle();
 
     expect(order).toEqual(['first:start', 'first:end', 'second']);
+    expect(queue.queuedCount).toBe(0);
     expect(pending).toEqual([1, 2, 1, 0]);
   });
 

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ApiError } from '../api';
+import {
+  SerialActionQueue,
+  SerialActionQueueCancelledError,
+  SerialActionTimeoutError,
+} from '../serialActionQueue';
 import type { HomesteadSnapshot } from '../types';
 import {
   canCommitHomesteadSnapshot,
@@ -9,6 +14,8 @@ import {
   formatWeatherObservedAt,
   isHomesteadRevisionConflict,
   isWeatherMechanicsEnabled,
+  recoverUncertainHomesteadAction,
+  requiresAuthoritativeHomesteadRefresh,
   runHomesteadActionOnce,
 } from './HomesteadScreen';
 
@@ -141,13 +148,89 @@ describe('HomesteadScreen helpers', () => {
     expect(isHomesteadRevisionConflict(businessConflict)).toBe(false);
   });
 
+  it('refreshes after an uncertain mutation outcome but not a known business rejection', () => {
+    const conflict = new ApiError('stale', 409, 'HOMESTEAD_REVISION_CONFLICT');
+    const businessConflict = new ApiError(
+      '今日物流容量不足',
+      409,
+      'ESTATE_LOGISTICS_INSUFFICIENT',
+    );
+
+    expect(requiresAuthoritativeHomesteadRefresh(conflict)).toBe(true);
+    expect(requiresAuthoritativeHomesteadRefresh(
+      new SerialActionTimeoutError(20_000),
+    )).toBe(true);
+    expect(requiresAuthoritativeHomesteadRefresh(
+      new SerialActionQueueCancelledError(),
+    )).toBe(true);
+    expect(requiresAuthoritativeHomesteadRefresh(new Error('network failed'))).toBe(true);
+    expect(requiresAuthoritativeHomesteadRefresh(
+      new ApiError('server failed', 500),
+    )).toBe(true);
+    expect(requiresAuthoritativeHomesteadRefresh(businessConflict)).toBe(false);
+    expect(requiresAuthoritativeHomesteadRefresh(
+      new ApiError('参数不合法', 400),
+    )).toBe(false);
+  });
+
+  it('cancels queued work and refreshes exactly once for an uncertain result', async () => {
+    const cancelPending = vi.fn();
+    const refresh = vi.fn().mockResolvedValue({ revision: 6 });
+
+    await expect(recoverUncertainHomesteadAction(
+      new Error('network failed'),
+      cancelPending,
+      refresh,
+    )).resolves.toEqual({ revision: 6 });
+    expect(cancelPending).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await expect(recoverUncertainHomesteadAction(
+      new ApiError('今日物流容量不足', 409, 'ESTATE_LOGISTICS_INSUFFICIENT'),
+      cancelPending,
+      refresh,
+    )).resolves.toBeUndefined();
+    expect(cancelPending).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh after a successful save and uses its response for the next revision', async () => {
+    let current = { homestead: { revision: 5 } } as HomesteadSnapshot;
+    const apply = vi.fn(async (baseSnapshot: HomesteadSnapshot) => ({
+      ...baseSnapshot,
+      homestead: {
+        ...baseSnapshot.homestead,
+        revision: baseSnapshot.homestead.revision + 1,
+      },
+    }));
+    const refresh = vi.fn();
+    const queue = new SerialActionQueue();
+    const save = () => queue.enqueue(async () => {
+      try {
+        current = await runHomesteadActionOnce(current, apply);
+      } catch (error) {
+        await recoverUncertainHomesteadAction(error, () => undefined, refresh);
+      }
+    });
+
+    await Promise.all([save(), save()]);
+
+    expect(apply.mock.calls.map(([snapshot]) => snapshot.homestead.revision))
+      .toEqual([5, 6]);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it('queues overview actions without globally locking the interface', () => {
     const source = readFileSync(
       new URL('./HomesteadScreen.tsx', import.meta.url),
       'utf8',
     );
     expect(source).toContain('useSerialActionQueue');
-    expect(source).toContain('正在后台依次保存，可继续安排其他操作');
+    expect(source).toContain('正在保存，另有 ${queuedActionCount} 项操作排队');
+    expect(source).toContain(": '正在保存'");
+    expect(source).not.toContain('previousQueuedActionCount');
+    expect(source).not.toContain('previousCount > 0 && queuedActionCount === 0');
+    expect(source).toContain('commitSnapshot(next, true);');
     expect(source).not.toContain('其他经营操作暂不可用');
     expect(source).not.toContain('weatherAnchor.cityName');
     expect(source).not.toContain('anchorCity');

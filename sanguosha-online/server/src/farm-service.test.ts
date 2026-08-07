@@ -951,6 +951,100 @@ describe("real-time FarmService", () => {
     expect(snapshot.homestead.goods.soil_conditioner).toBe(2);
   });
 
+  it("persists a successful homestead action with one final estate write", async () => {
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const snapshot = await service.getOrCreateHomestead(user);
+    const save = vi.spyOn(store, "saveAccountAndTownEstate");
+
+    const updated = await service.applyHomesteadAction(
+      user,
+      snapshot.homestead.revisions.farm,
+      snapshot.homestead.revisions.ranch,
+      snapshot.homestead.revisions.mine,
+      snapshot.homestead.revision,
+      snapshot.homestead.accountRevision,
+      {
+        type: "homestead_update_ai_profile",
+        enabled: true,
+        goal: "wealth",
+        risk: "safe",
+        focus: "farm",
+      },
+      "greenvale",
+    );
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(updated.homestead.aiProfile).toMatchObject({
+      enabled: true,
+      goal: "wealth",
+      risk: "safe",
+      focus: "farm",
+    });
+  });
+
+  it("persists a real refresh before rejecting a stale homestead action", async () => {
+    let now = start;
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => now,
+    );
+    const stale = await service.getOrCreateHomestead(user);
+    const save = vi.spyOn(store, "saveAccountAndTownEstate");
+    now += 24 * 60 * 60 * 1_000;
+
+    await expect(service.applyHomesteadAction(
+      user,
+      stale.homestead.revisions.farm,
+      stale.homestead.revisions.ranch,
+      stale.homestead.revisions.mine,
+      stale.homestead.revision,
+      stale.homestead.accountRevision,
+      {
+        type: "homestead_update_ai_profile",
+        enabled: true,
+        goal: "wealth",
+        risk: "safe",
+        focus: "farm",
+      },
+      "greenvale",
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "FARM_REVISION_CONFLICT",
+    });
+
+    expect(save).toHaveBeenCalledTimes(1);
+    const refreshed = await service.getOrCreateHomestead(user);
+    expect(refreshed.homestead.revisions.farm).toBeGreaterThan(
+      stale.homestead.revisions.farm,
+    );
+
+    const updated = await service.applyHomesteadAction(
+      user,
+      refreshed.homestead.revisions.farm,
+      refreshed.homestead.revisions.ranch,
+      refreshed.homestead.revisions.mine,
+      refreshed.homestead.revision,
+      refreshed.homestead.accountRevision,
+      {
+        type: "homestead_update_ai_profile",
+        enabled: true,
+        goal: "wealth",
+        risk: "safe",
+        focus: "farm",
+      },
+      "greenvale",
+    );
+
+    expect(updated.homestead.aiProfile.goal).toBe("wealth");
+  });
+
   it("quarantines only an invalid homestead save", async () => {
     const store = new MemoryFarmStateStore();
     const farm = mineReadyFarm(user);

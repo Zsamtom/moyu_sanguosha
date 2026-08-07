@@ -22,6 +22,12 @@ export function isSerialActionTimeoutError(
   return error instanceof SerialActionTimeoutError;
 }
 
+export function isSerialActionQueueCancelledError(
+  error: unknown,
+): error is SerialActionQueueCancelledError {
+  return error instanceof SerialActionQueueCancelledError;
+}
+
 /**
  * Lets a UI action stop waiting when its queue slot is cancelled or times out.
  * The request itself may still finish on the network, so callers must not commit
@@ -67,6 +73,15 @@ export class SerialActionQueue {
 
   get pendingCount(): number {
     return this.count;
+  }
+
+  /**
+   * A serial queue can save one action at a time. Everything beyond the first
+   * pending action is waiting for that save slot, so this is the number that
+   * should be presented to players as a queue.
+   */
+  get queuedCount(): number {
+    return Math.max(0, this.count - 1);
   }
 
   enqueue(task: (signal: AbortSignal) => Promise<void>): Promise<void> {
@@ -146,5 +161,10 @@ export function useSerialActionQueue(providedQueue?: SerialActionQueue) {
     void queue.enqueue(task).catch(() => undefined);
   }, [queue]);
   const cancelPending = useCallback(() => queue.cancelPending(), [queue]);
-  return { enqueue, cancelPending, pendingCount };
+  return {
+    enqueue,
+    cancelPending,
+    pendingCount,
+    queuedCount: Math.max(0, pendingCount - 1),
+  };
 }
