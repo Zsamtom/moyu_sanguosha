@@ -66,6 +66,19 @@ interface AdminUsersScreenProps {
   onDelete: (userId: string) => Promise<void>;
 }
 
+export const LLM_AUDIT_PAGE_SIZE = 10;
+
+export function clampLlmAuditCurrentPage(
+  current: number,
+  total: number,
+  pageSize = LLM_AUDIT_PAGE_SIZE,
+) {
+  return Math.min(
+    Math.max(1, current),
+    Math.max(1, Math.ceil(total / pageSize)),
+  );
+}
+
 export function AdminUsersScreen({
   currentUser,
   users,
@@ -99,6 +112,7 @@ export function AdminUsersScreen({
   const [llmTesting, setLlmTesting] = useState(false);
   const [weatherSaving, setWeatherSaving] = useState(false);
   const [weatherTesting, setWeatherTesting] = useState(false);
+  const [llmAuditCurrentPage, setLlmAuditCurrentPage] = useState(1);
   const [createForm] = Form.useForm<CreateUserValues>();
   const [resetForm] = Form.useForm<ResetPasswordValues>();
   const [displayNameForm] = Form.useForm<DisplayNameValues>();
@@ -106,6 +120,11 @@ export function AdminUsersScreen({
   const [weatherForm] = Form.useForm<TownWeatherSettingsValues>();
   const pendingLlmApiKey = Form.useWatch('apiKey', llmForm);
   const pendingWeatherApiKey = Form.useWatch('apiKey', weatherForm);
+  const llmAuditTotal = llmUsage?.recent.length ?? 0;
+  const llmAuditCurrent = clampLlmAuditCurrentPage(
+    llmAuditCurrentPage,
+    llmAuditTotal,
+  );
 
   const closeCreate = () => {
     createForm.resetFields();
@@ -157,6 +176,12 @@ export function AdminUsersScreen({
       towns: townWeatherSettings.towns,
     });
   }, [townWeatherSettings, weatherForm]);
+
+  useEffect(() => {
+    setLlmAuditCurrentPage((current) =>
+      clampLlmAuditCurrentPage(current, llmAuditTotal),
+    );
+  }, [llmAuditTotal]);
 
   const createUser = async (values: CreateUserValues) => {
     setSubmitting(true);
@@ -735,7 +760,14 @@ export function AdminUsersScreen({
           columns={llmAuditColumns}
           dataSource={llmUsage?.recent ?? []}
           loading={llmUsageLoading}
-          pagination={false}
+          pagination={{
+            current: llmAuditCurrent,
+            pageSize: LLM_AUDIT_PAGE_SIZE,
+            total: llmAuditTotal,
+            showSizeChanger: false,
+            showTotal: (total) => `共 ${total} 条调用记录`,
+            onChange: (current) => setLlmAuditCurrentPage(current),
+          }}
           scroll={{ x: 1_000 }}
           locale={{ emptyText: '暂无庄园 LLM 调用记录' }}
         />

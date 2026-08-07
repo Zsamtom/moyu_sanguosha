@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
+import { BotDecisionRegistry } from "./bots/decision-registry.js";
 import { createDatabasePool, migrateDatabase } from "./db.js";
+import { FarmService, PostgresFarmStateStore } from "./farm-service.js";
 import {
   loadRoomSnapshot,
   loadRoomSnapshotEntries,
@@ -9,6 +11,10 @@ import {
   saveRoomSnapshot,
 } from "./room-persistence.js";
 import { RoomService } from "./rooms.js";
+import {
+  TownWeatherService,
+  type TownWeatherProviderResult,
+} from "./town-weather.js";
 import { PostgresUserStore } from "./users.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -90,6 +96,79 @@ describe.skipIf(!databaseUrl)("PostgreSQL integration", () => {
       entries: [],
       invalidEntries: [],
     });
+  });
+
+  it("does not advance weather revision after a JSONB town-estate round trip", async () => {
+    const users = new PostgresUserStore(pool);
+    const suffix = randomUUID().slice(0, 8);
+    const user = await users.create({
+      username: `weather-jsonb-${suffix}`,
+      displayName: "气象集成测试玩家",
+      password: "integration-password",
+      mustChangePassword: false,
+    });
+    const now = Date.parse("2026-07-29T08:00:00+08:00");
+    const weather = new TownWeatherService({
+      provider: {
+        fetchTownWeather: async (): Promise<TownWeatherProviderResult> => ({
+          provider: "qweather",
+          observedAt: now,
+          conditionCode: "305",
+          conditionText: "小雨",
+          temperatureC: 18,
+          feelsLikeC: 18,
+          humidityPercent: 81,
+          precipitationMm: 4.2,
+          windSpeedKph: 13,
+          visibilityKm: 12,
+          alerts: [{
+            id: "weather-jsonb-alert",
+            eventCode: "test-alert",
+            eventName: "寒潮",
+            headline: "JSONB 键序回归预警",
+            description: "验证 JSONB 对象字段重排不会推进庄园 revision",
+            instruction: null,
+            senderName: "测试气象台",
+            messageType: "alert",
+            severity: "severe",
+            certainty: "likely",
+            urgency: "expected",
+            colorCode: "orange",
+            issuedAt: now,
+            effectiveAt: now,
+            expiresAt: now + 24 * 60 * 60 * 1_000,
+          }],
+          forecast: [{
+            forecastStartAt: now + 24 * 60 * 60 * 1_000,
+            forecastEndAt: now + 48 * 60 * 60 * 1_000,
+            conditionCode: "305",
+            conditionText: "小雨",
+            temperatureMinC: 12,
+            temperatureMaxC: 19,
+            precipitationMm: 4.2,
+            precipitationProbabilityPercent: 75,
+            humidityPercent: 81,
+            windSpeedKph: 13,
+          }],
+          attributions: ["QWeather"],
+        }),
+      },
+      rules: {
+        resolveWeatherId: () => "gentle_rain",
+        resolveDisaster: () => ({ mechanicId: "cold_snap", label: "寒潮" }),
+      },
+    });
+    const service = new FarmService(
+      new PostgresFarmStateStore(pool),
+      new BotDecisionRegistry(),
+      () => now,
+      weather,
+    );
+
+    const first = await service.getOrCreateHomestead(user);
+    const second = await service.getOrCreateHomestead(user);
+
+    expect(second.homestead.revision).toBe(first.homestead.revision);
   });
 
   it("isolates a malformed per-room row without losing a healthy room", async () => {

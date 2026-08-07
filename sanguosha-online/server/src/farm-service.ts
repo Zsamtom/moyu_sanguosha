@@ -169,6 +169,39 @@ export interface TownEstateBundle {
   homestead: HomesteadGameState;
 }
 
+/**
+ * Compares JSON-compatible values while ignoring object-property order.
+ * PostgreSQL JSONB normalizes object keys, so serialized JSON is not a stable
+ * change detector after a database round trip. Array order remains significant.
+ */
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => jsonValuesEqual(value, right[index]));
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+        jsonValuesEqual(leftRecord[key], rightRecord[key]),
+    );
+}
+
 export interface FarmStateStore {
   withUserLocks?<T>(
     userIds: readonly string[],
@@ -2584,11 +2617,14 @@ export class FarmService {
       current.alertsAvailable !== nextWeather.alertsAvailable ||
       current.forecastAvailable !== nextWeather.forecastAvailable ||
       current.weatherId !== nextWeather.weatherId;
-    const hazardsChanged =
-      JSON.stringify(current.liveHazards ?? []) !==
-        JSON.stringify(nextWeather.liveHazards ?? []);
-    const forecastChanged = JSON.stringify(current.forecast ?? []) !==
-      JSON.stringify(nextWeather.forecast ?? []);
+    const hazardsChanged = !jsonValuesEqual(
+      current.liveHazards ?? [],
+      nextWeather.liveHazards ?? [],
+    );
+    const forecastChanged = !jsonValuesEqual(
+      current.forecast ?? [],
+      nextWeather.forecast ?? [],
+    );
     if (!weatherWindowChanged && !hazardsChanged && !forecastChanged) {
       return bundle;
     }

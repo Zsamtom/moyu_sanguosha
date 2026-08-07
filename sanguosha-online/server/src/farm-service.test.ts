@@ -1208,6 +1208,84 @@ describe("real-time FarmService", () => {
     expect(messages).not.toContain("旧锚点城");
   });
 
+  it("does not advance weather revision when JSONB reorders forecast and hazard fields", () => {
+    const service = new FarmService(
+      new MemoryFarmStateStore(),
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const applicator = service as unknown as {
+      applyTownWeatherSnapshot(
+        state: TownEstateBundle,
+        snapshot: TownWeatherSnapshot,
+      ): TownEstateBundle;
+    };
+    const weather: TownWeatherSnapshot = {
+      ...liveWeatherSnapshot(),
+      forecastAvailable: true,
+      forecast: [{
+        forecastStartAt: start + 24 * 60 * 60 * 1_000,
+        forecastEndAt: start + 48 * 60 * 60 * 1_000,
+        weatherId: "gentle_rain",
+        conditionCode: "305",
+        conditionText: "小雨",
+        temperatureMinC: 12,
+        temperatureMaxC: 19,
+        precipitationMm: 4.2,
+        precipitationProbabilityPercent: 75,
+        humidityPercent: 81,
+        windSpeedKph: 13,
+      }],
+    };
+    const initial = applicator.applyTownWeatherSnapshot(
+      townEstateBundle(user),
+      weather,
+    );
+    const persisted = structuredClone(initial);
+    const forecast = persisted.homestead.weather.forecast![0]!;
+    const hazard = persisted.homestead.weather.liveHazards![0]!;
+    persisted.homestead.weather = {
+      ...persisted.homestead.weather,
+      forecast: [{
+        windSpeedKph: forecast.windSpeedKph,
+        humidityPercent: forecast.humidityPercent,
+        precipitationProbabilityPercent: forecast.precipitationProbabilityPercent,
+        precipitationMm: forecast.precipitationMm,
+        temperatureMaxC: forecast.temperatureMaxC,
+        temperatureMinC: forecast.temperatureMinC,
+        conditionText: forecast.conditionText,
+        conditionCode: forecast.conditionCode,
+        weatherId: forecast.weatherId,
+        forecastEndAt: forecast.forecastEndAt,
+        forecastStartAt: forecast.forecastStartAt,
+      }],
+      liveHazards: [{
+        expiresAt: hazard.expiresAt,
+        mechanicId: hazard.mechanicId,
+        affectsGameplay: hazard.affectsGameplay,
+        severity: hazard.severity,
+        headline: hazard.headline,
+        name: hazard.name,
+        id: hazard.id,
+      }],
+    };
+
+    const updated = applicator.applyTownWeatherSnapshot(persisted, weather);
+
+    expect(updated.homestead.revision).toBe(initial.homestead.revision);
+    expect(updated.homestead.updatedAt).toBe(initial.homestead.updatedAt);
+
+    const changed = applicator.applyTownWeatherSnapshot(persisted, {
+      ...weather,
+      disasters: weather.disasters.map((disaster) => ({
+        ...disaster,
+        headline: "更新后的寒潮预警",
+      })),
+    });
+
+    expect(changed.homestead.revision).toBe(initial.homestead.revision + 1);
+  });
+
   it("advances to the next unhandled playable weather alert", () => {
     const service = new FarmService(
       new MemoryFarmStateStore(),
