@@ -335,6 +335,20 @@ p {
   font-size: 12px;
 }
 
+.login-mode-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin-top: 18px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.login-mode-switch .ant-btn-link {
+  padding-inline: 4px;
+}
+
 /* Shell */
 .app-layout {
   min-height: 100vh;
@@ -591,6 +605,178 @@ p {
 .room-skeleton {
   width: 100% !important;
   height: 210px !important;
+}
+
+.lobby-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.lobby-games {
+  margin-bottom: 28px;
+}
+
+.game-project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 16px;
+}
+
+.game-project-card {
+  position: relative;
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--paper-line);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(124, 36, 40, 0.12), transparent 42%),
+    #fffdf7;
+  color: var(--ink);
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.game-project-card:hover,
+.game-project-card:focus-within {
+  transform: translateY(-3px);
+  border-color: rgba(124, 36, 40, 0.45);
+  box-shadow: 0 14px 28px rgba(64, 34, 26, 0.12);
+}
+
+.game-project-card__entry {
+  display: flex;
+  width: 100%;
+  min-height: 220px;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 24px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.game-project-card__entry:focus-visible {
+  outline: 2px solid var(--wine);
+  outline-offset: -4px;
+}
+
+.game-project-card__entry > strong {
+  margin: 14px 0 10px;
+  color: #402526;
+  font-size: 24px;
+}
+
+.game-project-card__description {
+  margin: 0 0 18px;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.game-project-card__meta {
+  margin-top: auto;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.game-project-card__enter {
+  margin-top: 10px;
+  color: var(--wine);
+  font-weight: 800;
+}
+
+.game-project-card__rooms {
+  width: 100%;
+  border-top: 1px solid var(--paper-line);
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.game-project-card__rooms-heading {
+  display: flex;
+  justify-content: space-between;
+  padding: 13px 16px 9px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.game-project-card__rooms-heading strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.game-project-card__empty {
+  margin: 0;
+  padding: 0 16px 15px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.game-project-room-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-project-room {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(222, 222, 222, 0.72);
+}
+
+.game-project-room__summary {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.game-project-room__summary strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-project-room__summary span,
+.game-project-room__unavailable {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.game-project-room__unavailable {
+  flex: 0 0 auto;
+}
+
+.game-project-room .ant-btn {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 700px) {
+  .lobby-hero__actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .lobby-hero__actions .ant-btn {
+    flex: 1;
+  }
+
+  .game-project-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Waiting room */

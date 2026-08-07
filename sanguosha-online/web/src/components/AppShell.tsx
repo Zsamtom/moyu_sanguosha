@@ -14,6 +14,7 @@ interface AppShellProps {
   onFarm: () => void;
   onReader: () => void;
   onAdmin: () => void;
+  onProfile: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
 }
@@ -27,6 +28,7 @@ export function AppShell({
   onFarm,
   onReader,
   onAdmin,
+  onProfile,
   onChangePassword,
   onLogout,
 }: AppShellProps) {
@@ -73,6 +75,7 @@ export function AppShell({
             <span>{user.displayName}</span>
             {user.role === 'admin' && <Tag color="gold">管理员</Tag>}
           </div>
+          <Button size="small" onClick={onProfile}>个人资料</Button>
           <Button size="small" onClick={onChangePassword}>修改密码</Button>
           <Button size="small" onClick={onLogout}>退出</Button>
         </Space>

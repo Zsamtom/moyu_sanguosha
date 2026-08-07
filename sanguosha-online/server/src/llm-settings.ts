@@ -92,7 +92,7 @@ export interface LoadedLlmSettings {
 
 export interface LlmSettingsStore {
   load(): Promise<LoadedLlmSettings | undefined>;
-  save(settings: PersistedLlmSettings, updatedBy: string): Promise<string>;
+  save(settings: PersistedLlmSettings, updatedBy?: string): Promise<string>;
 }
 
 export class PostgresLlmSettingsStore implements LlmSettingsStore {
@@ -116,7 +116,7 @@ export class PostgresLlmSettingsStore implements LlmSettingsStore {
     };
   }
 
-  async save(settings: PersistedLlmSettings, updatedBy: string): Promise<string> {
+  async save(settings: PersistedLlmSettings, updatedBy?: string): Promise<string> {
     const result = await this.pool.query<{ updated_at: Date | string }>(
       `INSERT INTO app_settings (key, value, updated_by, updated_at)
        VALUES ($1, $2::jsonb, $3, NOW())
@@ -193,6 +193,11 @@ function decryptApiKey(value: EncryptedValue, secret: string): string {
   ]).toString("utf8");
 }
 
+export type SettingsEncryptionKeyring = string | {
+  readonly current: string;
+  readonly previous?: readonly string[];
+};
+
 function isDeepSeekModel(value: string): value is DeepSeekModel {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 }
@@ -201,14 +206,21 @@ type FetchLike = typeof fetch;
 
 export class LlmSettingsService {
   private current: RuntimeLlmSettings;
+  private readonly secret: string;
+  private readonly decryptionSecrets: readonly string[];
 
   constructor(
     private readonly store: LlmSettingsStore,
     private readonly registry: BotDecisionRegistry,
-    private readonly secret: string,
+    encryption: SettingsEncryptionKeyring,
     bootstrap?: AppConfig["doudizhuLlm"],
     private readonly fetcher: FetchLike = fetch,
   ) {
+    this.secret = typeof encryption === "string" ? encryption : encryption.current;
+    this.decryptionSecrets = [
+      this.secret,
+      ...(typeof encryption === "string" ? [] : encryption.previous ?? []),
+    ].filter((value, index, values) => values.indexOf(value) === index);
     const bootstrapModel = bootstrap && isDeepSeekModel(bootstrap.model)
       ? bootstrap.model
       : undefined;
@@ -234,14 +246,31 @@ export class LlmSettingsService {
     const loaded = await this.store.load();
     if (loaded) {
       const { settings } = loaded;
+      let apiKey: string | undefined;
+      let decryptedWithPreviousKey = false;
+      if (settings.encryptedApiKey) {
+        let lastError: unknown;
+        for (const [index, secret] of this.decryptionSecrets.entries()) {
+          try {
+            apiKey = decryptApiKey(settings.encryptedApiKey, secret);
+            decryptedWithPreviousKey = index > 0;
+            break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        if (!apiKey) {
+          throw new Error("Stored LLM API key cannot be decrypted with the configured keyring", {
+            cause: lastError,
+          });
+        }
+      }
       this.current = {
         enabled: settings.enabled,
         model: isDeepSeekModel(settings.model)
           ? settings.model
           : DEFAULT_DEEPSEEK_MODEL,
-        ...(settings.encryptedApiKey
-          ? { apiKey: decryptApiKey(settings.encryptedApiKey, this.secret) }
-          : {}),
+        ...(apiKey ? { apiKey } : {}),
         thinkingEnabled: settings.thinkingEnabled,
         timeoutMs: settings.version === 1
           ? DEFAULT_LLM_TIMEOUT_MS
@@ -251,6 +280,19 @@ export class LlmSettingsService {
           : settings.maximumOutputTokens,
         updatedAt: loaded.updatedAt,
       };
+      if (apiKey && decryptedWithPreviousKey) {
+        this.current.updatedAt = await this.store.save({
+          version: 2,
+          enabled: this.current.enabled,
+          provider: "deepseek",
+          endpoint: DEEPSEEK_CHAT_ENDPOINT,
+          model: this.current.model,
+          encryptedApiKey: encryptApiKey(apiKey, this.secret),
+          thinkingEnabled: this.current.thinkingEnabled,
+          timeoutMs: this.current.timeoutMs,
+          maximumOutputTokens: this.current.maximumOutputTokens,
+        });
+      }
     }
     this.applyProvider();
   }

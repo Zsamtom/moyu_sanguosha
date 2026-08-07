@@ -16,9 +16,11 @@ import {
 import { PostgresHomesteadDirectorJobStore } from "./homestead-director-jobs.js";
 import { attachRealtimeServer } from "./realtime.js";
 import {
-  loadRoomSnapshot,
+  loadRoomSnapshotEntries,
   quarantineInvalidRoomSnapshot,
+  quarantineRoomSnapshotEntry,
   RoomSnapshotWriter,
+  selectRestorableRoomSnapshotEntries,
 } from "./room-persistence.js";
 import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
@@ -52,7 +54,10 @@ async function main(): Promise<void> {
     const llmSettings = new LlmSettingsService(
       new PostgresLlmSettingsStore(pool),
       botDecisions,
-      config.sessionSecret,
+      {
+        current: config.settingsEncryptionSecret,
+        previous: config.settingsEncryptionPreviousSecrets,
+      },
       config.doudizhuLlm,
     );
     await llmSettings.initialize();
@@ -64,7 +69,10 @@ async function main(): Promise<void> {
     const townWeatherSettings = new TownWeatherSettingsService(
       new PostgresTownWeatherSettingsStore(pool),
       townWeather,
-      config.sessionSecret,
+      {
+        current: config.settingsEncryptionSecret,
+        previous: config.settingsEncryptionPreviousSecrets,
+      },
       config.townWeather,
     );
     await townWeatherSettings.initialize();
@@ -76,25 +84,52 @@ async function main(): Promise<void> {
       llmGovernance,
       directorJobs,
     );
-    const rooms = new RoomService(
+    const createRooms = () => new RoomService(
       90_000,
       200,
       700,
       [1_000, 5_000],
       botDecisions,
     );
-    const savedRooms = await loadRoomSnapshot(pool);
-    if (savedRooms.kind === "valid") {
-      try {
-        rooms.restoreSnapshot(savedRooms.snapshot);
-        console.log(`Restored ${savedRooms.snapshot.rooms.length} room snapshot(s)`);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        console.error("Quarantining unrestorable persisted room state", error);
-        await quarantineInvalidRoomSnapshot(pool, reason);
+    const rooms = createRooms();
+    const savedRooms = await loadRoomSnapshotEntries(pool);
+    if (savedRooms.kind === "entries") {
+      const restoreValidation = selectRestorableRoomSnapshotEntries(
+        savedRooms.entries,
+        (snapshot) => {
+          // restoreSnapshot has a small set of runtime-only invariants that
+          // cannot be represented by the persistence schema. Validate the
+          // room in an isolated service before mutating the live service, so
+          // one runtime-only invariant failure cannot discard healthy rooms.
+          const probe = createRooms();
+          try {
+            probe.restoreSnapshot(snapshot);
+          } finally {
+            probe.restoreSnapshot({ version: 1, rooms: [] });
+          }
+        },
+      );
+      const invalidEntries = [
+        ...savedRooms.invalidEntries,
+        ...restoreValidation.invalidEntries,
+      ];
+      for (const entry of invalidEntries) {
+        await quarantineRoomSnapshotEntry(pool, entry);
       }
-    } else if (savedRooms.kind === "invalid") {
-      console.error(`Quarantining invalid persisted room state: ${savedRooms.reason}`);
+      if (restoreValidation.entries.length > 0) {
+        rooms.restoreSnapshot({
+          version: 1,
+          rooms: restoreValidation.entries.map((entry) => entry.snapshot),
+        });
+        console.log(`Restored ${restoreValidation.entries.length} room snapshot(s)`);
+      }
+      if (invalidEntries.length > 0) {
+        console.error(
+          `Quarantined ${invalidEntries.length} invalid room snapshot(s) while preserving healthy rooms`,
+        );
+      }
+    } else if (savedRooms.kind === "invalid_legacy") {
+      console.error(`Quarantining invalid legacy room state: ${savedRooms.reason}`);
       await quarantineInvalidRoomSnapshot(pool, savedRooms.reason);
     }
     const roomPersistence = new RoomSnapshotWriter(

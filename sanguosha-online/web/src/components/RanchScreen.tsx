@@ -14,7 +14,11 @@ import {
   isRevisionVectorAtLeast,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
-import { useSerialActionQueue } from '../serialActionQueue';
+import {
+  awaitWithAbort,
+  isSerialActionTimeoutError,
+  useSerialActionQueue,
+} from '../serialActionQueue';
 import type {
   RanchAnimalDefinition,
   RanchAnimalId,
@@ -198,7 +202,11 @@ export function RanchScreen() {
   const neighborRanchRef = useRef<RanchGameView>();
   const loadRequestSequence = useRef(0);
   const neighborRequestSequence = useRef(0);
-  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+  const {
+    enqueue: enqueueAction,
+    cancelPending: cancelPendingActions,
+    pendingCount: queuedActionCount,
+  } =
     useSerialActionQueue();
   const previousQueuedActionCount = useRef(queuedActionCount);
   const [selectedAnimal, setSelectedAnimal] =
@@ -332,7 +340,10 @@ export function RanchScreen() {
     return () => window.clearInterval(refresh);
   }, [neighborRanch?.ownerId]);
 
-  const executeAction = async (action: RanchClientAction, attempt = 0): Promise<void> => {
+  const executeAction = async (
+    action: RanchClientAction,
+    signal: AbortSignal,
+  ): Promise<void> => {
     const current = snapshotRef.current;
     if (!current) return;
     actionInFlight.current = true;
@@ -341,13 +352,16 @@ export function RanchScreen() {
       setMovingPenIndex(undefined);
     }
     setPendingAction(action);
-    let refreshAfterAction = false;
     try {
-      const next = await api.applyRanchAction(
-        current.ranch.farmRevision,
-        current.ranch.revision,
-        action,
-        current.ranch.townId,
+      const next = await awaitWithAbort(
+        api.applyRanchAction(
+          current.ranch.farmRevision,
+          current.ranch.revision,
+          action,
+          current.ranch.townId,
+          signal,
+        ),
+        signal,
       );
       commitSnapshot({
         ranch: next.ranch,
@@ -376,27 +390,26 @@ export function RanchScreen() {
           error.code ?? '',
         )
       ) {
-        refreshAfterAction = true;
-        if (attempt >= 2) toast.error(errorMessage(error));
+        cancelPendingActions();
+        await load(true, true);
+        toast.warning('状态已刷新：本次及后续待处理操作已取消，请确认后重新提交。');
       } else {
-        toast.error(errorMessage(error));
+        if (isSerialActionTimeoutError(error)) {
+          cancelPendingActions();
+          await load(true, true);
+          toast.warning('保存请求超时，已取消后续待处理操作并刷新状态；请确认结果后再试。');
+        } else {
+          toast.error(errorMessage(error));
+        }
       }
     } finally {
-      if (!refreshAfterAction) {
-        actionInFlight.current = false;
-        setPendingAction(undefined);
-      }
-    }
-    if (refreshAfterAction) {
-      await load(true, true);
       actionInFlight.current = false;
       setPendingAction(undefined);
-      if (attempt < 2) return executeAction(action, attempt + 1);
     }
   };
 
   const runAction = (action: RanchClientAction) => {
-    enqueueAction(() => executeAction(action));
+    enqueueAction((signal) => executeAction(action, signal));
   };
 
   const openNeighbor = async (ownerId: string) => {

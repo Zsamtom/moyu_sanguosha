@@ -269,6 +269,18 @@ export interface FarmStateStore {
     secondTownId: EstateTownId,
     secondState: TownEstateBundle,
   ): Promise<void>;
+  saveAccountsAndTownEstatePair(
+    firstAccountUserId: string,
+    firstAccount: EstateAccountState,
+    secondAccountUserId: string,
+    secondAccount: EstateAccountState,
+    firstUserId: string,
+    firstTownId: EstateTownId,
+    firstState: TownEstateBundle,
+    secondUserId: string,
+    secondTownId: EstateTownId,
+    secondState: TownEstateBundle,
+  ): Promise<void>;
   quarantineTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -893,6 +905,54 @@ export class PostgresFarmStateStore implements FarmStateStore {
     }
   }
 
+  async saveAccountsAndTownEstatePair(
+    firstAccountUserId: string,
+    firstAccount: EstateAccountState,
+    secondAccountUserId: string,
+    secondAccount: EstateAccountState,
+    firstUserId: string,
+    firstTownId: EstateTownId,
+    firstState: TownEstateBundle,
+    secondUserId: string,
+    secondTownId: EstateTownId,
+    secondState: TownEstateBundle,
+  ): Promise<void> {
+    const { client, release } = await this.acquireClient();
+    try {
+      await client.query("BEGIN");
+      for (const [userId, account] of [
+        [firstAccountUserId, firstAccount],
+        [secondAccountUserId, secondAccount],
+      ] as const) {
+        await client.query(
+          `INSERT INTO estate_account_state (user_id, state, updated_at)
+           VALUES ($1, $2::jsonb, NOW())
+           ON CONFLICT (user_id) DO UPDATE
+           SET state = EXCLUDED.state, updated_at = NOW()`,
+          [userId, JSON.stringify(account)],
+        );
+      }
+      for (const [userId, townId, state] of [
+        [firstUserId, firstTownId, firstState],
+        [secondUserId, secondTownId, secondState],
+      ] as const) {
+        await client.query(
+          `INSERT INTO town_estate_state (user_id, town_id, state, updated_at)
+           VALUES ($1, $2, $3::jsonb, NOW())
+           ON CONFLICT (user_id, town_id) DO UPDATE
+           SET state = EXCLUDED.state, updated_at = NOW()`,
+          [userId, townId, JSON.stringify(state)],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      release();
+    }
+  }
+
   async quarantineTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -1240,6 +1300,30 @@ export class MemoryFarmStateStore implements FarmStateStore {
     );
   }
 
+  async saveAccountsAndTownEstatePair(
+    firstAccountUserId: string,
+    firstAccount: EstateAccountState,
+    secondAccountUserId: string,
+    secondAccount: EstateAccountState,
+    firstUserId: string,
+    firstTownId: EstateTownId,
+    firstState: TownEstateBundle,
+    secondUserId: string,
+    secondTownId: EstateTownId,
+    secondState: TownEstateBundle,
+  ): Promise<void> {
+    this.estateAccounts.set(firstAccountUserId, structuredClone(firstAccount));
+    this.estateAccounts.set(secondAccountUserId, structuredClone(secondAccount));
+    await this.saveTownEstatePair(
+      firstUserId,
+      firstTownId,
+      firstState,
+      secondUserId,
+      secondTownId,
+      secondState,
+    );
+  }
+
   async quarantineTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -1415,10 +1499,11 @@ export class FarmService {
       let { account, bundle: visitorBundle } =
         await this.loadActiveEstate(user);
       this.assertExpectedTown(account.activeTownId, expectedTownId);
-      const ownerBundle = await this.loadExistingTownEstate(
+      let ownerBundle = await this.loadExistingTownEstate(
         neighborId,
         account.activeTownId,
       );
+      let ownerAccount = await this.loadExistingEstateAccount(neighborId);
       const visitor = visitorBundle.farm;
       const owner = ownerBundle.farm;
       this.assertRevision(visitor, expectedRevision);
@@ -1439,9 +1524,13 @@ export class FarmService {
       ownerBundle.farm = result!.owner;
       account = this.syncAccountFromBundle(account, visitorBundle);
       visitorBundle = this.syncBundleFromAccount(visitorBundle, account);
-      await this.store.saveAccountAndTownEstatePair(
+      ownerAccount = this.syncAccountFromBundle(ownerAccount, ownerBundle);
+      ownerBundle = this.syncBundleFromAccount(ownerBundle, ownerAccount);
+      await this.store.saveAccountsAndTownEstatePair(
         user.id,
         account,
+        neighborId,
+        ownerAccount,
         result!.owner.ownerId,
         account.activeTownId,
         ownerBundle,
@@ -2438,6 +2527,18 @@ export class FarmService {
     snapshot: TownWeatherSnapshot,
   ): TownEstateBundle {
     const bundle = structuredClone(state);
+    bundle.homestead.logs = bundle.homestead.logs.map((entry) => {
+      if (!/^\d+:weather:(?:greenvale|frostpeak)$/.test(entry.id)) {
+        return entry;
+      }
+      const condition = /实时天气：([^。]+)(?:。|$)/.exec(entry.message)?.[1];
+      const message = entry.message.includes("最近可信实况")
+        ? "实时天气暂时不可用，当前仅展示最近可信实况；本轮不应用天气或预警数值。"
+        : entry.message.includes("未取得")
+          ? "未取得可信实况，当前按中性安全规则运行，不应用天气或灾害倍率。"
+          : `庄园气象站已同步实时天气${condition ? `：${condition}` : ""}。本轮效果冻结至下一个 8 小时窗口。`;
+      return { ...entry, message };
+    });
     const current = bundle.homestead.weather;
     const source = snapshot.source === "qweather"
       ? "live"
@@ -2452,7 +2553,6 @@ export class FarmService {
         ? { observedAt: snapshot.observation.observedAt }
         : {}),
       validUntil: snapshot.validUntil,
-      anchorCity: snapshot.anchor.realCityName,
       temperatureC: snapshot.observation.temperatureC,
       humidityPercent: snapshot.observation.humidityPercent,
       precipitationMm: snapshot.observation.precipitationMm,
@@ -2577,22 +2677,22 @@ export class FarmService {
       this.clock(),
     );
     if (weatherWindowChanged) {
+      while (bundle.homestead.logs.some(
+        ({ id }) => id === `homestead:${bundle.homestead.nextLogId}`,
+      )) {
+        bundle.homestead.nextLogId += 1;
+      }
       bundle.homestead.logs.unshift({
-        id: `${snapshot.validFrom}:weather:${bundle.townId}`,
+        id: `homestead:${bundle.homestead.nextLogId}`,
         at: snapshot.fetchedAt,
         type: "event",
         message: snapshot.source === "qweather"
-          ? `${TOWN_DEFINITIONS[bundle.townId].name}已同步${
-            snapshot.anchor.realCityName
-          }的实时天气：${snapshot.observation.conditionText}。本轮效果冻结至下一个 8 小时窗口。`
+          ? `庄园气象站已同步实时天气：${snapshot.observation.conditionText}。本轮效果冻结至下一个 8 小时窗口。`
           : snapshot.source === "last_known_good"
-            ? `实时天气暂时不可用，当前仅展示${
-              snapshot.anchor.realCityName
-            }最近可信实况；本轮不应用天气或预警数值。`
-            : `未取得${
-              snapshot.anchor.realCityName
-            }的可信实况，当前按中性安全规则运行，不应用天气或灾害倍率。`,
+            ? "实时天气暂时不可用，当前仅展示最近可信实况；本轮不应用天气或预警数值。"
+            : "未取得可信实况，当前按中性安全规则运行，不应用天气或灾害倍率。",
       });
+      bundle.homestead.nextLogId += 1;
     }
     return bundle;
   }
@@ -3121,6 +3221,29 @@ export class FarmService {
     ];
     await this.store.saveEstateAccount(user.id, account);
     return account;
+  }
+
+  private async loadExistingEstateAccount(
+    userId: string,
+  ): Promise<EstateAccountState> {
+    const loaded = await this.store.loadEstateAccount(userId);
+    if (loaded === undefined) {
+      throw new HttpError(
+        404,
+        "FARMING_NEIGHBOR_NOT_FOUND",
+        "该好友尚未建立庄园账户",
+      );
+    }
+    try {
+      assertRestorableEstateAccount(loaded);
+      return refreshEstateAccount(structuredClone(loaded), this.clock());
+    } catch {
+      throw new HttpError(
+        404,
+        "FARMING_NEIGHBOR_NOT_FOUND",
+        "该好友的庄园账户暂时无法访问",
+      );
+    }
   }
 
   private async loadOrCreateTownEstate(

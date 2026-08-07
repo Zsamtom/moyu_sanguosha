@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start:local": "node dist/local-dev.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run src/postgres.integration.test.ts"
   },
   "dependencies": {
     "@sanguosha/shared": "workspace:*",
@@ -21,7 +22,7 @@
     "express-session": "^1.18.1",
     "helmet": "^8.1.0",
     "pg": "^8.16.3",
-    "socket.io": "^4.8.1",
+    "socket.io": "^4.8.3",
     "zod": "^3.25.67"
   },
   "devDependencies": {

@@ -21,5 +21,8 @@ describe('estate request reliability coverage', () => {
     expect(content).toContain('townChanged');
     expect(content).toContain('useSerialActionQueue');
     expect(content).toContain('previousCount > 0 && queuedActionCount === 0');
+    expect(content).toContain('awaitWithAbort');
+    expect(content).toContain('cancelPendingActions');
+    expect(content).not.toContain('attempt < 2');
   });
 });

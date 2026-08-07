@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import session from "express-session";
 import type { Pool } from "pg";
 import { createApplication } from "./app.js";
+import { HttpError } from "./errors.js";
 import type { AppConfig } from "./config.js";
 import { createBotDecisionRegistry } from "./bots/index.js";
 import { FarmService, MemoryFarmStateStore } from "./farm-service.js";
@@ -21,6 +22,7 @@ import { RoomService } from "./rooms.js";
 import { SecurityEvents } from "./security-events.js";
 import {
   ensureInitialAdmin,
+  normalizeUsername,
   type CreateUserInput,
   type PublicUser,
   type SessionUser,
@@ -44,7 +46,7 @@ class LocalMemoryUserStore implements UserStore {
   }
 
   async findByUsernameWithPassword(username: string): Promise<UserWithPassword | undefined> {
-    const normalized = username.trim().toLowerCase();
+    const normalized = normalizeUsername(username);
     return [...this.users.values()].find((user) => user.username.toLowerCase() === normalized);
   }
 
@@ -56,12 +58,12 @@ class LocalMemoryUserStore implements UserStore {
 
   async create(input: CreateUserInput): Promise<PublicUser> {
     if (await this.findByUsernameWithPassword(input.username)) {
-      throw Object.assign(new Error("用户名已存在"), { code: "23505" });
+      throw new HttpError(409, "USERNAME_EXISTS", "用户名已存在");
     }
     const now = new Date().toISOString();
     const user: UserWithPassword = {
       id: randomUUID(),
-      username: input.username.trim(),
+      username: normalizeUsername(input.username),
       displayName: input.displayName.trim(),
       role: input.role ?? "player",
       disabled: false,
@@ -133,11 +135,14 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3_000);
   const adminUsername = process.env.INITIAL_ADMIN_USERNAME ?? "admin";
   const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? "moyu-local-2026";
+  const sessionSecret = randomBytes(32).toString("hex");
   const config: AppConfig = {
     nodeEnv: "development",
     port,
     databaseUrl: "memory://local-preview",
-    sessionSecret: randomBytes(32).toString("hex"),
+    sessionSecret,
+    settingsEncryptionSecret: sessionSecret,
+    settingsEncryptionPreviousSecrets: [],
     initialAdmin: {
       username: adminUsername,
       password: adminPassword,

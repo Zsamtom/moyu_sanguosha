@@ -5,6 +5,7 @@ import {
   MINE_DEPOSITS,
   RANCH_ANIMALS,
   applyFarmAction,
+  applyFarmingVisitAction,
   createEstateAccount,
   createFarmGame,
   createFarmingGame,
@@ -424,6 +425,103 @@ describe("real-time FarmService", () => {
     expect(stolen.neighbors).toEqual(expect.arrayContaining([
       expect.objectContaining({ ownerId: neighbor.id }),
     ]));
+  });
+
+  it("atomically settles a dog block in both players' accounts and town bundles", async () => {
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    await service.getOrCreate(user);
+    await service.getOrCreate(neighbor);
+
+    const visitorAccount = structuredClone(
+      await store.loadEstateAccount(user.id),
+    ) as EstateAccountState;
+    const ownerAccount = structuredClone(
+      await store.loadEstateAccount(neighbor.id),
+    ) as EstateAccountState;
+    const visitorBundle = structuredClone(
+      await store.loadTownEstate(user.id, "greenvale"),
+    ) as TownEstateBundle;
+    const ownerBundle = structuredClone(
+      await store.loadTownEstate(neighbor.id, "greenvale"),
+    ) as TownEstateBundle;
+    visitorAccount.coins = 10;
+    ownerAccount.coins = 100;
+    visitorBundle.farm.coins = visitorAccount.coins;
+    ownerBundle.farm.coins = ownerAccount.coins;
+    ownerBundle.farm.dogLevel = 3;
+    ownerBundle.farm.level = 13;
+    ownerBundle.farm.experience = 2_100;
+    ownerBundle.farm.plots[0] = {
+      ...ownerBundle.farm.plots[0]!,
+      cycle: 1,
+      cropId: "wheat",
+      plantedAt: start - 300_000,
+      maturesAt: start,
+      watered: true,
+      weedAt: null,
+      pestAt: null,
+      weedCleared: false,
+      pestCleared: false,
+      stolen: 0,
+      stealAttempts: [],
+      stolenBy: [],
+    };
+    const action = { type: "farming_steal" as const, plotIndex: 0 };
+    let blockingSeed: string | undefined;
+    for (let index = 0; index < 200; index += 1) {
+      const candidate = {
+        ...structuredClone(ownerBundle.farm),
+        seed: `dog-block-${index}`,
+      };
+      const outcome = applyFarmingVisitAction(
+        candidate,
+        structuredClone(visitorBundle.farm),
+        action,
+        start,
+      );
+      if (outcome.outcome === "blocked") {
+        blockingSeed = candidate.seed;
+        break;
+      }
+    }
+    expect(blockingSeed).toBeDefined();
+    ownerBundle.farm = { ...ownerBundle.farm, seed: blockingSeed! };
+    store.setRawEstateAccount(user.id, visitorAccount);
+    store.setRawEstateAccount(neighbor.id, ownerAccount);
+    store.setRawTownEstate(user.id, "greenvale", visitorBundle);
+    store.setRawTownEstate(neighbor.id, "greenvale", ownerBundle);
+    const saveBoth = vi.spyOn(store, "saveAccountsAndTownEstatePair");
+
+    const result = await service.applyVisitAction(
+      user,
+      neighbor.id,
+      visitorBundle.farm.revision,
+      ownerBundle.farm.revision,
+      action,
+      "greenvale",
+    );
+
+    expect(result.outcome).toBe("blocked");
+    expect(saveBoth).toHaveBeenCalledOnce();
+    const persistedVisitorAccount = await store.loadEstateAccount(user.id) as EstateAccountState;
+    const persistedOwnerAccount = await store.loadEstateAccount(neighbor.id) as EstateAccountState;
+    const persistedVisitorBundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    const persistedOwnerBundle = await store.loadTownEstate(
+      neighbor.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(persistedVisitorAccount.coins).toBe(7);
+    expect(persistedOwnerAccount.coins).toBe(103);
+    expect(persistedVisitorBundle.farm.coins).toBe(persistedVisitorAccount.coins);
+    expect(persistedOwnerBundle.farm.coins).toBe(persistedOwnerAccount.coins);
   });
 
   it("lets the market director choose only a legal daily scenario", async () => {
@@ -1078,6 +1176,36 @@ describe("real-time FarmService", () => {
       ranch: false,
       mine: false,
     });
+  });
+
+  it("does not expose the real weather anchor city in player estate state or logs", () => {
+    const service = new FarmService(
+      new MemoryFarmStateStore(),
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    const applicator = service as unknown as {
+      applyTownWeatherSnapshot(
+        state: TownEstateBundle,
+        snapshot: TownWeatherSnapshot,
+      ): TownEstateBundle;
+    };
+    const weather = liveWeatherSnapshot();
+
+    const initial = townEstateBundle(user);
+    initial.homestead.logs.push({
+      id: `${start - 1}:weather:greenvale`,
+      at: start - 1,
+      type: "event",
+      message: "青禾镇已同步旧锚点城的实时天气：晴。旧窗口记录。",
+    });
+    const updated = applicator.applyTownWeatherSnapshot(initial, weather);
+
+    expect(updated.homestead.weather.anchorCity).toBeUndefined();
+    const messages = updated.homestead.logs.map(({ message }) => message).join("\n");
+    expect(messages).not.toContain(weather.anchor.realCityName);
+    expect(messages).not.toContain("青禾镇");
+    expect(messages).not.toContain("旧锚点城");
   });
 
   it("advances to the next unhandled playable weather alert", () => {

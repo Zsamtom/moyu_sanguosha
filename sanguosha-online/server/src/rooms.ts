@@ -761,6 +761,7 @@ export class RoomService {
       throw new HttpError(409, "ROOM_ALREADY_STARTED", "游戏已经开始");
     }
     const player = room.players.find((candidate) => candidate.id === userId)!;
+    if (player.ready === ready) return this.toView(room, userId);
     player.ready = ready;
     this.changed();
     return this.toView(room, userId);

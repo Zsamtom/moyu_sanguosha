@@ -9,6 +9,31 @@ const requiredEnvironment: NodeJS.ProcessEnv = {
 };
 
 describe("build metadata configuration", () => {
+  it("uses an independent settings key with session-secret migration fallbacks", () => {
+    const config = loadConfig({
+      ...requiredEnvironment,
+      SETTINGS_ENCRYPTION_KEY: "settings-encryption-key-at-least-32-characters",
+      SETTINGS_ENCRYPTION_PREVIOUS_KEYS: "older-settings-key, oldest-settings-key ",
+    });
+
+    expect(config.settingsEncryptionSecret).toBe(
+      "settings-encryption-key-at-least-32-characters",
+    );
+    expect(config.settingsEncryptionPreviousSecrets).toEqual([
+      requiredEnvironment.SESSION_SECRET,
+      "older-settings-key",
+      "oldest-settings-key",
+    ]);
+  });
+
+  it("requires an independent settings key in production", () => {
+    expect(() => loadConfig({
+      ...requiredEnvironment,
+      NODE_ENV: "production",
+      APP_ORIGIN: "https://games.example.com",
+    })).toThrow(/SETTINGS_ENCRYPTION_KEY is required/);
+  });
+
   it("uses a safe development label and ignores an empty build SHA", () => {
     const config = loadConfig({ ...requiredEnvironment, BUILD_SHA: "" });
 

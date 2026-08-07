@@ -13,7 +13,11 @@ import {
   isLatestRequest,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
-import { useSerialActionQueue } from '../serialActionQueue';
+import {
+  awaitWithAbort,
+  isSerialActionTimeoutError,
+  useSerialActionQueue,
+} from '../serialActionQueue';
 import type {
   MineClientAction,
   MineDepositDefinition,
@@ -228,7 +232,11 @@ export function MineScreen() {
   const actionInFlight = useRef(false);
   const snapshotRef = useRef<MineSnapshot>();
   const loadRequestSequence = useRef(0);
-  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+  const {
+    enqueue: enqueueAction,
+    cancelPending: cancelPendingActions,
+    pendingCount: queuedActionCount,
+  } =
     useSerialActionQueue();
   const previousQueuedActionCount = useRef(queuedActionCount);
   const [selectedDeposit, setSelectedDeposit] =
@@ -304,21 +312,27 @@ export function MineScreen() {
     }
   }, [queuedActionCount]);
 
-  const executeAction = async (action: MineClientAction, attempt = 0): Promise<void> => {
+  const executeAction = async (
+    action: MineClientAction,
+    signal: AbortSignal,
+  ): Promise<void> => {
     const current = snapshotRef.current;
     if (!current) return;
     actionInFlight.current = true;
     loadRequestSequence.current += 1;
     setPendingAction(action);
-    let refreshAfterAction = false;
     try {
       const game = current.mine;
-      const next = await api.applyMineAction(
-        game.farmRevision,
-        game.ranchRevision,
-        game.revision,
-        action,
-        game.townId,
+      const next = await awaitWithAbort(
+        api.applyMineAction(
+          game.farmRevision,
+          game.ranchRevision,
+          game.revision,
+          action,
+          game.townId,
+          signal,
+        ),
+        signal,
       );
       commitSnapshot(next);
       if (action.type === 'mine_start') {
@@ -341,27 +355,26 @@ export function MineScreen() {
           'MINE_REVISION_CONFLICT',
         ].includes(error.code ?? '')
       ) {
-        refreshAfterAction = true;
-        if (attempt >= 2) toast.error(errorMessage(error));
+        cancelPendingActions();
+        await load(true, true);
+        toast.warning('状态已刷新：本次及后续待处理操作已取消，请确认后重新提交。');
       } else {
-        toast.error(errorMessage(error));
+        if (isSerialActionTimeoutError(error)) {
+          cancelPendingActions();
+          await load(true, true);
+          toast.warning('保存请求超时，已取消后续待处理操作并刷新状态；请确认结果后再试。');
+        } else {
+          toast.error(errorMessage(error));
+        }
       }
     } finally {
-      if (!refreshAfterAction) {
-        actionInFlight.current = false;
-        setPendingAction(undefined);
-      }
-    }
-    if (refreshAfterAction) {
-      await load(true, true);
       actionInFlight.current = false;
       setPendingAction(undefined);
-      if (attempt < 2) return executeAction(action, attempt + 1);
     }
   };
 
   const runAction = (action: MineClientAction) => {
-    enqueueAction(() => executeAction(action));
+    enqueueAction((signal) => executeAction(action, signal));
   };
 
   const game = snapshot?.mine;

@@ -134,6 +134,45 @@ describe("town weather runtime settings", () => {
     expect(fetcher).toHaveBeenCalledTimes(6);
   });
 
+  it("migrates a stored API key from a previous encryption key", async () => {
+    const store = new MemoryTownWeatherSettingsStore();
+    const original = new TownWeatherSettingsService(
+      store,
+      new TownWeatherService(),
+      "old-weather-encryption-secret",
+    );
+    await original.initialize();
+    await original.update({
+      enabled: true,
+      apiHost: "https://abc123.qweatherapi.com",
+      apiKey: "weather-rotated-secret",
+      timeoutMs: 2_000,
+      forecastDays: 3,
+      towns: {
+        greenvale: { realCityName: "郑州", latitude: 34.75, longitude: 113.62 },
+        frostpeak: { realCityName: "拉萨", latitude: 29.65, longitude: 91.1 },
+      },
+    }, "admin-1");
+
+    const migrating = new TownWeatherSettingsService(
+      store,
+      new TownWeatherService(),
+      {
+        current: "new-weather-encryption-secret",
+        previous: ["old-weather-encryption-secret"],
+      },
+    );
+    await migrating.initialize();
+
+    const currentOnly = new TownWeatherSettingsService(
+      store,
+      new TownWeatherService(),
+      "new-weather-encryption-secret",
+    );
+    await currentOnly.initialize();
+    expect(currentOnly.getPublicSettings().apiKeyConfigured).toBe(true);
+  });
+
   it("accepts only dedicated HTTPS QWeather API hosts", () => {
     expect(normalizeQWeatherApiHost("https://abc.qweatherapi.com/"))
       .toBe("https://abc.qweatherapi.com");

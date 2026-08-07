@@ -491,7 +491,10 @@ function addLog(
   text: string,
 ): void {
   game.logs.push({
-    id: game.revision + game.logs.length + 1,
+    id: Math.max(
+      -1,
+      ...game.logs.map((entry) => entry.id).filter(Number.isSafeInteger),
+    ) + 1,
     at,
     kind,
     text,
@@ -651,6 +654,7 @@ export function applyMineAction(
 ): MineActionResult {
   assertTime(now);
   const mine = structuredClone(state);
+  normalizeLogIds(mine);
   if (!isEstateTownId(mine.townId)) mine.townId = "greenvale";
   if (!Number.isFinite(mine.productionRemainder)) {
     mine.productionRemainder = 0;
@@ -984,6 +988,29 @@ export function applyMineAction(
   return { mine, economy, farmChanged, ranchChanged };
 }
 
+function normalizeLogIds(game: MineGameState): void {
+  game.logs = normalizedMineLogs(game.logs);
+}
+
+function normalizedMineLogs(
+  logs: readonly MineLogEntry[],
+): MineLogEntry[] {
+  const used = new Set<number>();
+  let nextId = Math.max(
+    -1,
+    ...logs.map((entry) => entry.id).filter(Number.isSafeInteger),
+  );
+  return logs.map((entry) => {
+    if (Number.isSafeInteger(entry.id) && entry.id >= 0 && !used.has(entry.id)) {
+      used.add(entry.id);
+      return entry;
+    }
+    nextId += 1;
+    used.add(nextId);
+    return { ...entry, id: nextId };
+  });
+}
+
 function shaftView(
   game: MineGameState,
   shaft: MineShaftState,
@@ -1080,7 +1107,7 @@ export function getMineGameView(
       (candidate) => candidate.level === state.pickaxeLevel + 1,
     ) ?? null,
     statistics: structuredClone(state.statistics),
-    logs: structuredClone(state.logs),
+    logs: normalizedMineLogs(state.logs),
   };
 }
 

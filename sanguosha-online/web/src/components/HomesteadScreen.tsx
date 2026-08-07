@@ -20,7 +20,11 @@ import {
   isLatestRequest,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
-import { useSerialActionQueue } from '../serialActionQueue';
+import {
+  awaitWithAbort,
+  isSerialActionTimeoutError,
+  useSerialActionQueue,
+} from '../serialActionQueue';
 import type {
   HomesteadClientAction,
   HomesteadDisasterView,
@@ -385,21 +389,11 @@ export function canCommitHomesteadSnapshot(
   );
 }
 
-export async function runHomesteadActionWithConflictRetry<T>(
-  initialSnapshot: HomesteadSnapshot,
+export async function runHomesteadActionOnce<T>(
+  snapshot: HomesteadSnapshot,
   apply: (snapshot: HomesteadSnapshot) => Promise<T>,
-  refresh: () => Promise<HomesteadSnapshot>,
-): Promise<{ result: T; retried: boolean }> {
-  let baseSnapshot = initialSnapshot;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return { result: await apply(baseSnapshot), retried: attempt > 0 };
-    } catch (error) {
-      if (!isHomesteadRevisionConflict(error) || attempt === 2) throw error;
-      baseSnapshot = await refresh();
-    }
-  }
-  throw new Error('庄园操作重试次数异常');
+): Promise<T> {
+  return apply(snapshot);
 }
 
 const HOMESTEAD_REVISION_CONFLICT_CODES = new Set([
@@ -433,7 +427,11 @@ export function HomesteadScreen() {
   const snapshotRef = useRef<HomesteadSnapshot>();
   const actionInFlight = useRef(false);
   const loadRequestSequence = useRef(0);
-  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+  const {
+    enqueue: enqueueAction,
+    cancelPending: cancelPendingActions,
+    pendingCount: queuedActionCount,
+  } =
     useSerialActionQueue();
   const previousQueuedActionCount = useRef(queuedActionCount);
 
@@ -525,6 +523,7 @@ export function HomesteadScreen() {
     action: HomesteadClientAction,
     key: string,
     success: string,
+    signal: AbortSignal,
   ) => {
     const current = snapshotRef.current;
     if (!current) return;
@@ -532,29 +531,24 @@ export function HomesteadScreen() {
     loadRequestSequence.current += 1;
     setBusyKey(key);
     try {
-      const outcome = await runHomesteadActionWithConflictRetry(
+      const next = await awaitWithAbort(runHomesteadActionOnce(
         current,
-        (baseSnapshot) => api.applyHomesteadAction(baseSnapshot, action),
-        async () => {
-          const refreshed = await load(true, true, true);
-          if (!refreshed) {
-            throw new Error('\u65e0\u6cd5\u83b7\u53d6\u6700\u65b0\u5e84\u56ed\u72b6\u6001\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
-          }
-          return refreshed;
-        },
-      );
-      commitSnapshot(outcome.result, true);
+        (baseSnapshot) => api.applyHomesteadAction(baseSnapshot, action, signal),
+      ), signal);
+      commitSnapshot(next, true);
       setFailure(undefined);
-      toast.success(
-        outcome.retried
-          ? `${success}\uff08\u5df2\u540c\u6b65\u6700\u65b0\u72b6\u6001\uff09`
-          : success,
-      );
+      toast.success(success);
     } catch (error) {
       if (isHomesteadRevisionConflict(error)) {
+        cancelPendingActions();
         await load(true, true, true);
         setFailure(undefined);
-        toast.warning('后台状态已同步，本次指令未执行；后续队列将继续处理');
+        toast.warning('状态已刷新：本次及后续待处理操作已取消，请确认后重新提交。');
+      } else if (isSerialActionTimeoutError(error)) {
+        cancelPendingActions();
+        await load(true, true, true);
+        setFailure(undefined);
+        toast.warning('保存请求超时，已取消后续待处理操作并刷新状态；请确认结果后再试。');
       } else {
         const text = errorMessage(error);
         setFailure(text);
@@ -571,7 +565,7 @@ export function HomesteadScreen() {
     key: string,
     success: string,
   ) => {
-    enqueueAction(() => executeAction(action, key, success));
+    enqueueAction((signal) => executeAction(action, key, success, signal));
   };
 
   const openAdviceStep = (
@@ -888,7 +882,6 @@ export function HomesteadScreen() {
             <p>{town.description}</p>
             <div className="homestead-town-card__meta">
               <span>{town.plannedSpecialties.join(' · ')}</span>
-              <span>未来天气锚点：{town.weatherAnchor.cityName}</span>
             </div>
             <Button disabled block>尚未开放</Button>
           </article>
@@ -1354,8 +1347,7 @@ export function HomesteadScreen() {
                   ? 'green'
                   : 'blue'
           }>
-            {homestead.weather.anchorCity ?? activeTown?.definition.name}
-            {' · '}{homestead.weather.conditionText ?? homestead.weather.definition.name}
+            {homestead.weather.conditionText ?? homestead.weather.definition.name}
           </Tag>
         </div>
         <p className="homestead-weather-summary">
@@ -1383,7 +1375,7 @@ export function HomesteadScreen() {
                 ? '—'
                 : `${homestead.weather.temperatureC}℃`}
             </strong>
-            <small>{homestead.weather.anchorCity ?? '本地规则城市'}</small>
+            <small>庄园气象站</small>
           </div>
           <div>
             <span>湿度 / 降水</span>

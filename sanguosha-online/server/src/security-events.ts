@@ -18,4 +18,15 @@ export class SecurityEvents extends EventEmitter {
     this.on("sessionRevoked", listener);
     return () => this.off("sessionRevoked", listener);
   }
+
+  sessionEnded(userId: string, sessionId: string): void {
+    this.emit("sessionEnded", userId, sessionId);
+  }
+
+  onSessionEnded(
+    listener: (userId: string, sessionId: string) => void,
+  ): () => void {
+    this.on("sessionEnded", listener);
+    return () => this.off("sessionEnded", listener);
+  }
 }

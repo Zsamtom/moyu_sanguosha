@@ -96,7 +96,7 @@
    cp .env.example .env
    ```
 
-3. 修改 `.env` 中的 `DATABASE_URL`、`SESSION_SECRET` 和初始管理员密码。
+3. 修改 `.env` 中的 `DATABASE_URL`、`SESSION_SECRET`、必填且独立的 `SETTINGS_ENCRYPTION_KEY` 和初始管理员密码。
    三国杀与斗地主大模型机器人推荐在管理员 Web 后台配置；环境变量仅作为可选的首次启动引导配置，留空时默认禁用。
 4. 安装依赖并启动：
 
@@ -130,6 +130,7 @@ pnpm --filter @sanguosha/server start:local
    ```dotenv
    POSTGRES_PASSWORD=使用仅含字母数字下划线或短横线的随机密码
    SESSION_SECRET=至少32位随机字符串
+   SETTINGS_ENCRYPTION_KEY=另一组至少32位随机字符串
    INITIAL_ADMIN_USERNAME=admin
    INITIAL_ADMIN_PASSWORD=首次登录密码至少8位
    INITIAL_ADMIN_DISPLAY_NAME=管理员

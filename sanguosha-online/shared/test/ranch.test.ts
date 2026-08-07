@@ -11,6 +11,7 @@ import {
   createRanchGame,
   getRanchGameView,
   getRanchNeighborSummary,
+  refreshRanchGame,
   type RanchEconomyState,
 } from "../src/index.js";
 
@@ -37,6 +38,28 @@ function economy(input: Partial<RanchEconomyState> = {}): RanchEconomyState {
 }
 
 describe("persistent ranch engine", () => {
+  it("normalizes historical duplicate log ids and allocates the next stable id", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "ranch-log-ids",
+      now: start,
+    });
+    ranch.logs.push({ ...ranch.logs[0]!, text: "重复旧日志" });
+
+    const refreshed = refreshRanchGame(ranch, start);
+    expect(new Set(refreshed.logs.map((entry) => entry.id)).size)
+      .toBe(refreshed.logs.length);
+    const result = applyRanchAction(
+      refreshed,
+      economy({ farmLevel: 1 }),
+      { type: "ranch_buy_animal", animalId: "chicken", penIndex: 0 },
+      start,
+    );
+    expect(new Set(result.ranch.logs.map((entry) => entry.id)).size)
+      .toBe(result.ranch.logs.length);
+  });
+
   it("keeps permanent animals as multi-cycle capital investments", () => {
     for (const animal of Object.values(RANCH_ANIMALS)) {
       const feedValue =

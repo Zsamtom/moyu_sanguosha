@@ -4792,12 +4792,31 @@ const roomSnapshotSchema = z.object({
 export type RoomSnapshotLoadResult =
   | { readonly kind: "empty" }
   | { readonly kind: "valid"; readonly snapshot: RoomServiceSnapshot }
+  | {
+      readonly kind: "partial";
+      readonly snapshot: RoomServiceSnapshot;
+      readonly invalidRooms: readonly {
+        readonly snapshot: unknown;
+        readonly reason: string;
+      }[];
+    }
   | { readonly kind: "invalid"; readonly reason: string };
 
 function plainRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function schemaIssueMessage(error: z.ZodError): string {
+  return error.issues.flatMap((issue): string[] => {
+    if (issue.code === z.ZodIssueCode.invalid_union) {
+      return issue.unionErrors.flatMap((nested) =>
+        nested.issues.map((item) => item.message)
+      );
+    }
+    return [issue.message];
+  }).join("; ").slice(0, 2_000);
 }
 
 /** Adds the missing DyingStack identity from the only unambiguous legacy UI cursor. */
@@ -5019,17 +5038,302 @@ export async function loadRoomSnapshot(pool: Pool): Promise<RoomSnapshotLoadResu
   );
   const value = result.rows[0]?.snapshot;
   if (value === undefined) return { kind: "empty" };
-  const parsed = roomSnapshotSchema.safeParse(migrateRoomSnapshot(value));
+  const migrated = migrateRoomSnapshot(value);
+  const parsed = roomSnapshotSchema.safeParse(migrated);
   if (!parsed.success) {
-    const messages = parsed.error.issues.flatMap((issue): string[] => {
-      if (issue.code === z.ZodIssueCode.invalid_union) {
-        return issue.unionErrors.flatMap((error) => error.issues.map((nested) => nested.message));
+    const root = plainRecord(migrated);
+    const candidates = root?.version === 1 && Array.isArray(root.rooms) && root.rooms.length <= 1_000
+      ? root.rooms
+      : undefined;
+    if (!candidates) return { kind: "invalid", reason: schemaIssueMessage(parsed.error) };
+
+    const validRooms: RoomServiceSnapshot["rooms"] = [];
+    const invalidRooms: Array<{ snapshot: unknown; reason: string }> = [];
+    const roomIds = new Set<string>();
+    const activeUserIds = new Set<string>();
+    for (const candidate of candidates) {
+      const room = roomSchema.safeParse(candidate);
+      if (!room.success) {
+        invalidRooms.push({ snapshot: candidate, reason: schemaIssueMessage(room.error) });
+        continue;
       }
-      return [issue.message];
-    });
-    return { kind: "invalid", reason: messages.join("; ").slice(0, 2_000) };
+      const roomActiveUserIds = room.data.players
+        .filter((player) => !player.departed)
+        .map((player) => player.id);
+      const conflictReason = roomIds.has(room.data.id)
+        ? "Snapshot contains duplicate rooms"
+        : roomActiveUserIds.some((userId) => activeUserIds.has(userId))
+          ? "User appears in multiple rooms"
+          : undefined;
+      if (conflictReason) {
+        invalidRooms.push({ snapshot: candidate, reason: conflictReason });
+        continue;
+      }
+      roomIds.add(room.data.id);
+      for (const userId of roomActiveUserIds) activeUserIds.add(userId);
+      validRooms.push(room.data as RoomServiceSnapshot["rooms"][number]);
+    }
+    if (validRooms.length > 0 && invalidRooms.length > 0) {
+      return {
+        kind: "partial",
+        snapshot: { version: 1, rooms: validRooms },
+        invalidRooms,
+      };
+    }
+    return { kind: "invalid", reason: schemaIssueMessage(parsed.error) };
   }
   return { kind: "valid", snapshot: parsed.data as unknown as RoomServiceSnapshot };
+}
+
+export type PersistedRoomSnapshotSource = "room_state_entry" | "legacy_room_state";
+
+export interface RestorableRoomSnapshotEntry {
+  readonly roomId: string;
+  readonly snapshot: RoomServiceSnapshot["rooms"][number];
+  readonly rawSnapshot: unknown;
+  readonly source: PersistedRoomSnapshotSource;
+  /** The per-room table key. Legacy entries have no independent storage row. */
+  readonly storageRoomId: string | null;
+}
+
+export interface InvalidRoomSnapshotEntry {
+  readonly roomId: string | null;
+  readonly rawSnapshot: unknown;
+  readonly source: PersistedRoomSnapshotSource;
+  readonly storageRoomId: string | null;
+  readonly reason: string;
+}
+
+export type RoomEntryLoadResult =
+  | { readonly kind: "empty" }
+  | {
+      readonly kind: "entries";
+      readonly entries: readonly RestorableRoomSnapshotEntry[];
+      readonly invalidEntries: readonly InvalidRoomSnapshotEntry[];
+    }
+  | { readonly kind: "invalid_legacy"; readonly reason: string };
+
+function roomIdFromSnapshot(snapshot: unknown): string | null {
+  const room = plainRecord(snapshot);
+  return typeof room?.id === "string" && room.id.length > 0 ? room.id : null;
+}
+
+function migrateSingleRoomSnapshot(snapshot: unknown): unknown {
+  const migrated = migrateRoomSnapshot({ version: 1, rooms: [snapshot] });
+  const rooms = plainRecord(migrated)?.rooms;
+  return Array.isArray(rooms) ? rooms[0] : snapshot;
+}
+
+function classifyRoomEntries(
+  candidates: readonly {
+    readonly rawSnapshot: unknown;
+    readonly source: PersistedRoomSnapshotSource;
+    readonly storageRoomId: string | null;
+  }[],
+): Extract<RoomEntryLoadResult, { kind: "entries" }> {
+  const entries: RestorableRoomSnapshotEntry[] = [];
+  const invalidEntries: InvalidRoomSnapshotEntry[] = [];
+  const roomIds = new Set<string>();
+  const activeUserIds = new Set<string>();
+
+  for (const candidate of candidates) {
+    const migrated = migrateSingleRoomSnapshot(candidate.rawSnapshot);
+    const parsed = roomSchema.safeParse(migrated);
+    const roomId = roomIdFromSnapshot(migrated) ?? candidate.storageRoomId;
+    if (!parsed.success) {
+      invalidEntries.push({
+        roomId,
+        rawSnapshot: candidate.rawSnapshot,
+        source: candidate.source,
+        storageRoomId: candidate.storageRoomId,
+        reason: schemaIssueMessage(parsed.error),
+      });
+      continue;
+    }
+    if (
+      candidate.storageRoomId !== null &&
+      candidate.storageRoomId !== parsed.data.id
+    ) {
+      invalidEntries.push({
+        roomId: candidate.storageRoomId,
+        rawSnapshot: candidate.rawSnapshot,
+        source: candidate.source,
+        storageRoomId: candidate.storageRoomId,
+        reason: "Persistent room row key does not match the snapshot room id",
+      });
+      continue;
+    }
+    const roomActiveUserIds = parsed.data.players
+      .filter((player) => !player.isBot && !player.departed)
+      .map((player) => player.id);
+    const conflictReason = roomIds.has(parsed.data.id)
+      ? "Snapshot contains duplicate rooms"
+      : roomActiveUserIds.some((userId) => activeUserIds.has(userId))
+        ? "User appears in multiple rooms"
+        : undefined;
+    if (conflictReason) {
+      invalidEntries.push({
+        roomId: parsed.data.id,
+        rawSnapshot: candidate.rawSnapshot,
+        source: candidate.source,
+        storageRoomId: candidate.storageRoomId,
+        reason: conflictReason,
+      });
+      continue;
+    }
+    roomIds.add(parsed.data.id);
+    for (const userId of roomActiveUserIds) activeUserIds.add(userId);
+    entries.push({
+      roomId: parsed.data.id,
+      snapshot: parsed.data as RoomServiceSnapshot["rooms"][number],
+      rawSnapshot: candidate.rawSnapshot,
+      source: candidate.source,
+      storageRoomId: candidate.storageRoomId,
+    });
+  }
+  return { kind: "entries", entries, invalidEntries };
+}
+
+/**
+ * Reads the new per-room store first. A database still containing only the
+ * legacy room_state row is imported entry-by-entry on this path; the next
+ * dual-write persists every accepted room to room_state_entry.
+ */
+export async function loadRoomSnapshotEntries(
+  pool: Pool,
+): Promise<RoomEntryLoadResult> {
+  const perRoom = await pool.query<{ room_id: string; snapshot: unknown }>(
+    `SELECT room_id::text AS room_id, snapshot
+     FROM room_state_entry
+     ORDER BY updated_at ASC, room_id ASC`,
+  );
+  if (perRoom.rows.length > 0) {
+    return classifyRoomEntries(perRoom.rows.map((row) => ({
+      rawSnapshot: row.snapshot,
+      source: "room_state_entry" as const,
+      storageRoomId: row.room_id,
+    })));
+  }
+
+  const legacy = await pool.query<{ snapshot: unknown }>(
+    "SELECT snapshot FROM room_state WHERE id = 1",
+  );
+  const value = legacy.rows[0]?.snapshot;
+  if (value === undefined) return { kind: "empty" };
+  const migrated = migrateRoomSnapshot(value);
+  const root = plainRecord(migrated);
+  if (
+    root?.version !== 1 ||
+    !Array.isArray(root.rooms) ||
+    root.rooms.length > 1_000
+  ) {
+    const parsed = roomSnapshotSchema.safeParse(migrated);
+    return {
+      kind: "invalid_legacy",
+      reason: parsed.success
+        ? "Legacy room snapshot contains an invalid room collection"
+        : schemaIssueMessage(parsed.error),
+    };
+  }
+  return classifyRoomEntries(root.rooms.map((snapshot) => ({
+    rawSnapshot: snapshot,
+    source: "legacy_room_state" as const,
+    storageRoomId: null,
+  })));
+}
+
+/**
+ * RoomService performs a few runtime-only checks beyond Zod validation. Test
+ * each candidate independently, so an invariant failure quarantines only that
+ * room instead of the whole startup snapshot. Cross-room identifiers and user
+ * conflicts were already resolved by classifyRoomEntries above.
+ */
+export function selectRestorableRoomSnapshotEntries(
+  entries: readonly RestorableRoomSnapshotEntry[],
+  assertRestorable: (snapshot: RoomServiceSnapshot) => void,
+): {
+  readonly entries: readonly RestorableRoomSnapshotEntry[];
+  readonly invalidEntries: readonly InvalidRoomSnapshotEntry[];
+} {
+  const restored: RestorableRoomSnapshotEntry[] = [];
+  const invalidEntries: InvalidRoomSnapshotEntry[] = [];
+  for (const entry of entries) {
+    try {
+      assertRestorable({
+        version: 1,
+        rooms: [entry.snapshot],
+      });
+      restored.push(entry);
+    } catch (error) {
+      invalidEntries.push({
+        roomId: entry.roomId,
+        rawSnapshot: entry.rawSnapshot,
+        source: entry.source,
+        storageRoomId: entry.storageRoomId,
+        reason: error instanceof Error ? error.message.slice(0, 2_000) : String(error).slice(0, 2_000),
+      });
+    }
+  }
+  return { entries: restored, invalidEntries };
+}
+
+export async function quarantineRoomSnapshotEntry(
+  pool: Pool,
+  entry: InvalidRoomSnapshotEntry,
+): Promise<void> {
+  if (entry.source === "room_state_entry") {
+    await pool.query(
+      `WITH quarantined AS (
+         INSERT INTO room_state_entry_quarantine
+           (room_id, snapshot, reason, source)
+         VALUES ($1, $2::jsonb, $3, $4)
+       )
+       DELETE FROM room_state_entry WHERE room_id = $5::uuid`,
+      [
+        entry.roomId ?? entry.storageRoomId,
+        JSON.stringify(entry.rawSnapshot),
+        entry.reason,
+        entry.source,
+        entry.storageRoomId,
+      ],
+    );
+    return;
+  }
+  await pool.query(
+    `INSERT INTO room_state_entry_quarantine
+       (room_id, snapshot, reason, source)
+     VALUES ($1, $2::jsonb, $3, $4)`,
+    [
+      entry.roomId,
+      JSON.stringify(entry.rawSnapshot),
+      entry.reason,
+      entry.source,
+    ],
+  );
+}
+
+export async function quarantineInvalidRoomEntries(
+  pool: Pool,
+  entries: readonly { readonly snapshot: unknown; readonly reason: string }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const entry of entries) {
+      await client.query(
+        `INSERT INTO room_state_quarantine (snapshot, reason)
+         VALUES ($1::jsonb, $2)`,
+        [JSON.stringify(entry.snapshot), entry.reason],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function quarantineInvalidRoomSnapshot(pool: Pool, reason: string): Promise<void> {
@@ -5053,10 +5357,27 @@ export async function quarantineInvalidRoomSnapshot(pool: Pool, reason: string):
 
 export async function saveRoomSnapshot(pool: Pool, snapshot: RoomServiceSnapshot): Promise<void> {
   await pool.query(
-    `INSERT INTO room_state (id, snapshot, updated_at)
-     VALUES (1, $1::jsonb, NOW())
-     ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()`,
-    [JSON.stringify(snapshot)],
+    `WITH incoming AS (
+       SELECT (entry ->> 'id')::uuid AS room_id, entry AS snapshot
+       FROM jsonb_array_elements($1::jsonb) AS entries(entry)
+     ),
+     upserted AS (
+       INSERT INTO room_state_entry (room_id, snapshot, updated_at)
+       SELECT room_id, snapshot, NOW() FROM incoming
+       ON CONFLICT (room_id) DO UPDATE
+       SET snapshot = EXCLUDED.snapshot, updated_at = NOW()
+     ),
+     removed AS (
+       DELETE FROM room_state_entry AS existing
+       WHERE NOT EXISTS (
+         SELECT 1 FROM incoming WHERE incoming.room_id = existing.room_id
+       )
+     )
+     INSERT INTO room_state (id, snapshot, updated_at)
+     VALUES (1, $2::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE
+     SET snapshot = EXCLUDED.snapshot, updated_at = NOW()`,
+    [JSON.stringify(snapshot.rooms), JSON.stringify(snapshot)],
   );
 }
 
@@ -5069,7 +5390,11 @@ export class RoomSnapshotWriter {
   private pending: RoomServiceSnapshot | undefined;
   private running: Promise<void> | undefined;
   private retryTimer: NodeJS.Timeout | undefined;
-  private waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
+  private idleBarrier: {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  } | undefined;
   private stopped = false;
 
   constructor(
@@ -5081,7 +5406,16 @@ export class RoomSnapshotWriter {
   enqueue(snapshot: RoomServiceSnapshot): Promise<void> {
     if (this.stopped) return Promise.reject(new Error("Room snapshot writer is stopped"));
     this.pending = snapshot;
-    const persisted = new Promise<void>((resolve, reject) => this.waiters.push({ resolve, reject }));
+    if (!this.idleBarrier) {
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+      });
+      this.idleBarrier = { promise, resolve, reject };
+    }
+    const persisted = this.idleBarrier.promise;
     this.start();
     return persisted;
   }
@@ -5111,13 +5445,15 @@ export class RoomSnapshotWriter {
   }
 
   private resolveWaiters(): void {
-    const waiters = this.waiters.splice(0);
-    for (const waiter of waiters) waiter.resolve();
+    const barrier = this.idleBarrier;
+    this.idleBarrier = undefined;
+    barrier?.resolve();
   }
 
   private rejectWaiters(error: unknown): void {
-    const waiters = this.waiters.splice(0);
-    for (const waiter of waiters) waiter.reject(error);
+    const barrier = this.idleBarrier;
+    this.idleBarrier = undefined;
+    barrier?.reject(error);
   }
 
   private async drain(): Promise<void> {

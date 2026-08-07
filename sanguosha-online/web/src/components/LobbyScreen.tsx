@@ -1,6 +1,6 @@
 import { Button, Checkbox, Collapse, Empty, Form, Input, InputNumber, Modal, Progress, Select, Skeleton, Tag } from 'antd';
 import { useMemo, useRef, useState } from 'react';
-import { GAME_REGISTRY, gameRegistration, isSplendorGameType } from '../games/registry';
+import { GAME_REGISTRY, gameRegistration, isSplendorGameType, type GameRegistration } from '../games/registry';
 import {
   BOT_INTELLIGENCE_NAMES,
   DIGIT_BOMB_BOT_INTELLIGENCE_NAMES,
@@ -65,7 +65,87 @@ const packOptions: Array<{ label: string; value: PackId }> = [
   { label: '神', value: 'god' },
 ];
 
+export function isRoomJoinable(room: RoomSummary): boolean {
+  return room.status === 'waiting' && room.playerCount < room.maxPlayers;
+}
+
+interface GameProjectCardProps {
+  gameType: GameType;
+  registration: GameRegistration;
+  rooms: RoomSummary[];
+  joiningId?: string;
+  onEnter: (gameType: GameType) => void;
+  onJoin: (roomId: string) => void;
+}
+
+export function GameProjectCard({
+  gameType,
+  registration,
+  rooms,
+  joiningId,
+  onEnter,
+  onJoin,
+}: GameProjectCardProps) {
+  const gameRooms = rooms.filter((room) => room.gameType === gameType);
+  const joinableRooms = gameRooms.filter(isRoomJoinable).length;
+
+  return (
+    <article className={`game-project-card game-project-card--${gameType}`}>
+      <button
+        className="game-project-card__entry"
+        type="button"
+        onClick={() => onEnter(gameType)}
+        aria-label={`进入${registration.label}项目`}
+      >
+        <span className="section-kicker">{registration.kicker}</span>
+        <strong>{registration.label}</strong>
+        <span className="game-project-card__description">{registration.noteLines[0]}</span>
+        <span className="game-project-card__meta">
+          {gameRooms.length} 个房间 · {joinableRooms} 个可加入
+        </span>
+        <span className="game-project-card__enter">进入项目 →</span>
+      </button>
+      <div className="game-project-card__rooms" aria-label={`${registration.label}房间`}>
+        <div className="game-project-card__rooms-heading">
+          <strong>当前房间</strong>
+          <span>{gameRooms.length} 个</span>
+        </div>
+        {gameRooms.length === 0 ? (
+          <p className="game-project-card__empty">暂时没有房间</p>
+        ) : (
+          <ul className="game-project-room-list">
+            {gameRooms.map((room) => {
+              const joinable = isRoomJoinable(room);
+              return (
+                <li className="game-project-room" key={room.id}>
+                  <div className="game-project-room__summary">
+                    <strong title={room.name}>{room.name}</strong>
+                    <span>{statusLabel[room.status]} · 席位 {room.playerCount} / {room.maxPlayers}</span>
+                  </div>
+                  {joinable ? (
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={joiningId === room.id}
+                      onClick={() => onJoin(room.id)}
+                    >
+                      快速加入
+                    </Button>
+                  ) : (
+                    <span className="game-project-room__unavailable">{room.status === 'waiting' ? '已满' : '暂不可加入'}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </article>
+  );
+}
+
 export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: LobbyScreenProps) {
+  const [selectedGameType, setSelectedGameType] = useState<GameType>();
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const createInFlight = useRef(false);
@@ -73,22 +153,44 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
   const [filter, setFilter] = useState<'all' | RoomSummary['status']>('all');
   const [keyword, setKeyword] = useState('');
   const [form] = Form.useForm<CreateRoomValues>();
-  const gameType = Form.useWatch('gameType', form) ?? 'sanguosha';
+  const gameType = Form.useWatch('gameType', form) ?? selectedGameType ?? 'sanguosha';
   const selectionMode = Form.useWatch('selectionMode', form);
   const enabledPacks = Form.useWatch('enabledGeneralPacks', form);
 
   const visibleRooms = useMemo(() => {
     const lowerKeyword = keyword.trim().toLowerCase();
     return rooms.filter((room) => {
+      const gameMatches = selectedGameType === undefined || room.gameType === selectedGameType;
       const statusMatches = filter === 'all' || room.status === filter;
       const keywordMatches = !lowerKeyword || room.name.toLowerCase().includes(lowerKeyword) || room.hostName.toLowerCase().includes(lowerKeyword);
-      return statusMatches && keywordMatches;
+      return gameMatches && statusMatches && keywordMatches;
     });
-  }, [filter, keyword, rooms]);
+  }, [filter, keyword, rooms, selectedGameType]);
 
   const waitingCount = rooms.filter((room) => room.status === 'waiting').length;
   const playingCount = rooms.filter((room) => room.status === 'drafting' || room.status === 'playing').length;
   const playerCount = rooms.reduce((total, room) => total + room.playerCount, 0);
+
+  const enterGame = (nextGameType: GameType) => {
+    const registration = gameRegistration(nextGameType);
+    setSelectedGameType(nextGameType);
+    setFilter('all');
+    setKeyword('');
+    form.setFieldsValue({
+      gameType: nextGameType,
+      maxPlayers: registration.defaultPlayers,
+    });
+  };
+
+  const openCreateRoom = () => {
+    if (!selectedGameType) return;
+    const registration = gameRegistration(selectedGameType);
+    form.setFieldsValue({
+      gameType: selectedGameType,
+      maxPlayers: registration.defaultPlayers,
+    });
+    setCreateOpen(true);
+  };
 
   const createRoom = async (values: CreateRoomValues) => {
     if (createInFlight.current) return;
@@ -142,13 +244,55 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
       <section className="lobby-hero">
         <div>
           <span className="section-kicker">Workspace / Rooms</span>
-          <h1>房间目录</h1>
-          <p>查看实时协作房间，或按当前规则模板新建一个工作区。</p>
+          <h1>{selectedGameType ? gameRegistration(selectedGameType).label : '游戏大厅'}</h1>
+          <p>
+            {selectedGameType
+              ? gameRegistration(selectedGameType).noteLines[0]
+              : '选择游戏项目进入专属大厅，或从下方房间列表直接加入。'}
+          </p>
         </div>
-        <Button className="primary-ink-button" type="primary" size="large" onClick={() => setCreateOpen(true)}>
-          创建房间
-        </Button>
+        <div className="lobby-hero__actions">
+          {selectedGameType && (
+            <Button size="large" onClick={() => setSelectedGameType(undefined)}>
+              返回全部游戏
+            </Button>
+          )}
+          {selectedGameType ? (
+            <Button className="primary-ink-button" type="primary" size="large" onClick={openCreateRoom}>
+              创建{gameRegistration(selectedGameType).label}房间
+            </Button>
+          ) : (
+            <Button size="large" loading={loading} onClick={() => void onRefresh()}>
+              刷新房间
+            </Button>
+          )}
+        </div>
       </section>
+
+      {!selectedGameType && (
+        <section className="lobby-games" aria-labelledby="lobby-games-title">
+          <div className="section-title-row">
+            <div>
+              <h2 id="lobby-games-title">选择游戏</h2>
+              <p>进入游戏项目后配置并创建房间</p>
+            </div>
+          </div>
+          <div className="game-project-grid">
+            {(Object.entries(GAME_REGISTRY) as Array<[GameType, (typeof GAME_REGISTRY)[GameType]]>)
+              .map(([registeredGameType, registration]) => (
+                <GameProjectCard
+                  gameType={registeredGameType}
+                  joiningId={joiningId}
+                  key={registeredGameType}
+                  onEnter={enterGame}
+                  onJoin={(roomId) => void joinRoom(roomId)}
+                  registration={registration}
+                  rooms={rooms}
+                />
+              ))}
+          </div>
+        </section>
+      )}
 
       <section className="lobby-stats" aria-label="大厅统计">
         <div><strong>{waitingCount}</strong><span>等待房间</span></div>
@@ -159,8 +303,8 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
       <section className="paper-card lobby-list-section">
         <div className="section-toolbar">
           <div>
-            <h2>房间索引</h2>
-            <p>状态由服务器实时同步</p>
+            <h2>{selectedGameType ? `${gameRegistration(selectedGameType).label}房间` : '全部房间'}</h2>
+            <p>状态由服务器实时同步，可在这里快速加入</p>
           </div>
           <div className="room-filters">
             <Input.Search
@@ -189,8 +333,8 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
             {[0, 1, 2].map((item) => <Skeleton.Node key={item} active className="room-skeleton" />)}
           </div>
         ) : visibleRooms.length === 0 ? (
-          <Empty description={rooms.length ? '没有符合条件的房间' : '还没有房间，来开第一局吧'}>
-            {!rooms.length && <Button type="primary" onClick={() => setCreateOpen(true)}>创建房间</Button>}
+          <Empty description={rooms.length ? '没有符合条件的房间' : '还没有房间，选择上方游戏来开第一局吧'}>
+            {selectedGameType && <Button type="primary" onClick={openCreateRoom}>创建房间</Button>}
           </Empty>
         ) : (
           <div className="room-grid">
@@ -238,7 +382,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
       </section>
 
       <Modal
-        title="创建新房间"
+        title={selectedGameType ? `创建${gameRegistration(selectedGameType).label}房间` : '创建新房间'}
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         footer={null}
@@ -275,15 +419,7 @@ export function LobbyScreen({ rooms, loading, onRefresh, onCreate, onJoin }: Lob
           >
             <Input placeholder="例如：周末欢乐局" maxLength={24} showCount autoFocus />
           </Form.Item>
-          <Form.Item label="游戏类型" name="gameType">
-            <Select
-              onChange={(value: GameType) => form.setFieldValue('maxPlayers', gameRegistration(value).defaultPlayers)}
-              options={Object.entries(GAME_REGISTRY).map(([value, registration]) => ({
-                value,
-                label: registration.createLabel,
-              }))}
-            />
-          </Form.Item>
+          <Form.Item name="gameType" hidden><Input /></Form.Item>
           {gameType === 'gouji' ? (
             <>
               <div className="game-type-note">

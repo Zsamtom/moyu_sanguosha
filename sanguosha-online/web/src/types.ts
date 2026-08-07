@@ -1687,6 +1687,17 @@ export interface AuthUser {
   updatedAt?: string;
 }
 
+export interface RegistrationInput {
+  invitationCode: string;
+  username: string;
+  displayName?: string;
+  password: string;
+}
+
+export interface UpdateProfileInput {
+  displayName: string;
+}
+
 export type DeepSeekModel = string;
 
 export interface LlmSettings {

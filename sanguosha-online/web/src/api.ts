@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmGovernanceSnapshot, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RoomDetail, RoomRuleConfig, RoomSummary, TownWeatherConnectionTestResult, TownWeatherSettings, UpdateLlmSettings, UpdateTownWeatherSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmGovernanceSnapshot, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RegistrationInput, RoomDetail, RoomRuleConfig, RoomSummary, TownWeatherConnectionTestResult, TownWeatherSettings, UpdateLlmSettings, UpdateProfileInput, UpdateTownWeatherSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -62,6 +62,14 @@ export const api = {
     return extractUser(result);
   },
 
+  async register(input: RegistrationInput): Promise<AuthUser> {
+    const result = await request<AuthUser | { user: AuthUser }>('/api/auth/register', {
+      method: 'POST',
+      ...jsonBody(input),
+    });
+    return extractUser(result);
+  },
+
   async logout(): Promise<void> {
     await request('/api/auth/logout', { method: 'POST' });
   },
@@ -75,6 +83,14 @@ export const api = {
     const result = await request<AuthUser | { user: AuthUser }>('/api/auth/change-password', {
       method: 'POST',
       ...jsonBody({ currentPassword, newPassword }),
+    });
+    return extractUser(result);
+  },
+
+  async updateProfile(input: UpdateProfileInput): Promise<AuthUser> {
+    const result = await request<AuthUser | { user: AuthUser }>('/api/auth/profile', {
+      method: 'PATCH',
+      ...jsonBody(input),
     });
     return extractUser(result);
   },
@@ -206,9 +222,11 @@ export const api = {
     expectedRevision: number,
     action: FarmClientAction,
     townId: EstateTownId,
+    signal?: AbortSignal,
   ): Promise<FarmActionSnapshot> {
     return request<FarmActionSnapshot>('/api/farm/actions', {
       method: 'POST',
+      signal,
       ...jsonBody({ townId, expectedRevision, action }),
     });
   },
@@ -255,9 +273,11 @@ export const api = {
     expectedRanchRevision: number,
     action: RanchClientAction,
     townId: EstateTownId,
+    signal?: AbortSignal,
   ): Promise<RanchActionSnapshot> {
     return request<RanchActionSnapshot>('/api/ranch/actions', {
       method: 'POST',
+      signal,
       ...jsonBody({
         townId,
         expectedFarmRevision,
@@ -312,9 +332,11 @@ export const api = {
     expectedMineRevision: number,
     action: MineClientAction,
     townId: EstateTownId,
+    signal?: AbortSignal,
   ): Promise<MineSnapshot> {
     return request<MineSnapshot>('/api/mine/actions', {
       method: 'POST',
+      signal,
       ...jsonBody({
         townId,
         expectedFarmRevision,
@@ -332,9 +354,11 @@ export const api = {
   async applyHomesteadAction(
     snapshot: HomesteadSnapshot,
     action: HomesteadClientAction,
+    signal?: AbortSignal,
   ): Promise<HomesteadSnapshot> {
     return request<HomesteadSnapshot>('/api/homestead/actions', {
       method: 'POST',
+      signal,
       ...jsonBody({
         townId: snapshot.homestead.activeTownId,
         expectedFarmRevision: snapshot.homestead.revisions.farm,

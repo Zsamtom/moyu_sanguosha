@@ -46,6 +46,32 @@ function economy(input: Partial<MineLinkedEconomy> = {}): MineLinkedEconomy {
 }
 
 describe("linked mine engine", () => {
+  it("normalizes historical duplicate log ids before an action appends a new entry", () => {
+    const mine = createMineGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "mine-log-ids",
+      now: start,
+    });
+    mine.logs.push({ ...mine.logs[0]!, text: "重复旧日志" });
+    const view = getMineGameView(
+      mine,
+      economy({ farmLevel: 1, ranchLevel: 1 }),
+      start,
+    );
+    expect(new Set(view.logs.map((entry) => entry.id)).size)
+      .toBe(view.logs.length);
+
+    const result = applyMineAction(
+      mine,
+      economy({ farmLevel: 1, ranchLevel: 1 }),
+      { type: "mine_start", depositId: "coal", shaftIndex: 0 },
+      start,
+    );
+    expect(new Set(result.mine.logs.map((entry) => entry.id)).size)
+      .toBe(result.mine.logs.length);
+  });
+
   it("opens starter deposits on day one while retaining deeper progression", () => {
     const mine = createMineGame({
       ownerId: "owner",

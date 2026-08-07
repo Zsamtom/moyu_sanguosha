@@ -2,7 +2,7 @@ import { ConfigProvider, Spin, message } from 'antd';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, errorMessage } from './api';
 import { AppShell } from './components/AppShell';
-import { ChangePasswordModal, RequiredPasswordChangeScreen } from './components/ChangePasswordScreen';
+import { ChangePasswordModal, ProfileModal, RequiredPasswordChangeScreen } from './components/ChangePasswordScreen';
 import { HomesteadNav, type HomesteadView } from './components/HomesteadNav';
 import { LoginScreen } from './components/LoginScreen';
 import {
@@ -127,6 +127,9 @@ export default function App() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string>();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string>();
 
   const game = useMemo(() => {
     if (
@@ -272,6 +275,29 @@ export default function App() {
     }
   };
 
+  const register = async (values: {
+    invitationCode: string;
+    username: string;
+    displayName?: string;
+    password: string;
+  }) => {
+    setLoginLoading(true);
+    setLoginError(undefined);
+    try {
+      const registered = await api.register({
+        invitationCode: values.invitationCode.trim(),
+        username: values.username.trim(),
+        displayName: values.displayName?.trim() || undefined,
+        password: values.password,
+      });
+      setUser(registered);
+    } catch (error) {
+      setLoginError(errorMessage(error));
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   const logout = async () => {
     try {
       await api.logout();
@@ -288,6 +314,8 @@ export default function App() {
     setWorkspaceView('lobby');
     setPasswordOpen(false);
     setPasswordError(undefined);
+    setProfileOpen(false);
+    setProfileError(undefined);
   };
 
   const changePassword = async (values: { currentPassword: string; newPassword: string }) => {
@@ -302,6 +330,22 @@ export default function App() {
       setPasswordError(errorMessage(error));
     } finally {
       setPasswordLoading(false);
+    }
+  };
+
+  const updateProfile = async ({ displayName }: { displayName: string }) => {
+    setProfileLoading(true);
+    setProfileError(undefined);
+    try {
+      const updated = await api.updateProfile({ displayName: displayName.trim() });
+      setUser(updated);
+      setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setProfileOpen(false);
+      toast.success('个人资料已保存');
+    } catch (error) {
+      setProfileError(errorMessage(error));
+    } finally {
+      setProfileLoading(false);
     }
   };
 
@@ -576,8 +620,8 @@ export default function App() {
     try {
       const result = await api.testTownWeatherConnection(values);
       toast.success(
-        `两镇天气连接成功 · ${result.towns.map((town) =>
-          `${town.cityName} ${town.forecastDayCount} 日预报`
+        `两镇天气连接成功 · ${result.towns.map((town, index) =>
+          `气象源 ${index + 1}：${town.forecastDayCount} 日预报`
         ).join(' / ')} · ${result.latencyMs} ms`,
       );
     } catch (error) {
@@ -600,7 +644,13 @@ export default function App() {
     return (
       <ConfigProvider theme={documentTheme}>
         {toastContext}
-        <LoginScreen loading={loginLoading} error={loginError} onLogin={login} />
+        <LoginScreen
+          loading={loginLoading}
+          error={loginError}
+          onLogin={login}
+          onRegister={register}
+          onModeChange={() => setLoginError(undefined)}
+        />
       </ConfigProvider>
     );
   }
@@ -652,6 +702,10 @@ export default function App() {
         onFarm={() => setWorkspaceView('homestead')}
         onReader={() => setWorkspaceView('reader')}
         onAdmin={() => setWorkspaceView('admin')}
+        onProfile={() => {
+          setProfileError(undefined);
+          setProfileOpen(true);
+        }}
         onChangePassword={() => {
           setPasswordError(undefined);
           setPasswordOpen(true);
@@ -807,6 +861,19 @@ export default function App() {
           }
         }}
         onChangePassword={changePassword}
+      />
+      <ProfileModal
+        open={profileOpen}
+        displayName={user.displayName}
+        loading={profileLoading}
+        error={profileError}
+        onClose={() => {
+          if (!profileLoading) {
+            setProfileOpen(false);
+            setProfileError(undefined);
+          }
+        }}
+        onUpdateProfile={updateProfile}
       />
     </ConfigProvider>
   );

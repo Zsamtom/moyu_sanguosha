@@ -90,6 +90,7 @@ interface ServerToClientEvents {
 
 interface SocketData {
   user: PublicUser;
+  assertMutationAllowed: () => void;
 }
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, object, SocketData>;
@@ -98,6 +99,10 @@ const readyPayload = roomIdPayload.extend({ ready: z.boolean() });
 
 function userChannel(userId: string): string {
   return `user:${userId}`;
+}
+
+function sessionChannel(sessionId: string): string {
+  return `session:${sessionId}`;
 }
 
 function errorPayload(error: unknown): { code: string; message: string } {
@@ -122,6 +127,19 @@ export function attachRealtimeServer(options: {
   securityEvents: SecurityEvents;
 }): Server<ClientToServerEvents, ServerToClientEvents, object, SocketData> {
   const { httpServer, config, sessionMiddleware, users, rooms, securityEvents } = options;
+  const mutationWindows = new Map<string, { startedAt: number; count: number }>();
+  const assertMutationAllowed = (userId: string): void => {
+    const now = Date.now();
+    const current = mutationWindows.get(userId);
+    if (!current || now - current.startedAt >= 10_000) {
+      mutationWindows.set(userId, { startedAt: now, count: 1 });
+      return;
+    }
+    current.count += 1;
+    if (current.count > 120) {
+      throw new HttpError(429, "ROOM_RATE_LIMITED", "房间操作过于频繁，请稍后再试");
+    }
+  };
   const io = new Server<ClientToServerEvents, ServerToClientEvents, object, SocketData>(httpServer, {
     cors: config.appOrigin ? { origin: config.appOrigin, credentials: true } : undefined,
     transports: ["websocket", "polling"],
@@ -149,6 +167,7 @@ export function attachRealtimeServer(options: {
       if (authenticated.user.disabled) return next(new Error("ACCOUNT_DISABLED"));
       if (authenticated.user.mustChangePassword) return next(new Error("PASSWORD_CHANGE_REQUIRED"));
       socket.data.user = authenticated.user;
+      socket.data.assertMutationAllowed = () => assertMutationAllowed(authenticated.user.id);
       next();
     } catch (error) {
       next(error instanceof Error ? error : new Error("INTERNAL_ERROR"));
@@ -188,10 +207,17 @@ export function attachRealtimeServer(options: {
   securityEvents.onSessionRevoked((userId) => {
     revokeRealtimeAccess(userId);
   });
+  securityEvents.onSessionEnded((_userId, sessionId) => {
+    // A normal logout only ends one browser session. Other signed-in devices
+    // remain valid and must not be removed from their active room.
+    io.in(sessionChannel(sessionId)).disconnectSockets(true);
+  });
 
   io.on("connection", (socket) => {
     const userId = socket.data.user.id;
+    const request = socket.request as Request;
     void socket.join(userChannel(userId));
+    void socket.join(sessionChannel(request.sessionID));
     rooms.setConnected(userId, true);
     void rooms.waitForPersistence().then(() => {
       if (!socket.connected) return;
@@ -277,6 +303,7 @@ async function withAck<T>(
   operation: (user: PublicUser) => Promise<T>,
 ): Promise<void> {
   try {
+    socket.data.assertMutationAllowed();
     const user = await verifySocketSession(socket, users);
     const data = await operation(user);
     await rooms.waitForPersistence();

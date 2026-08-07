@@ -46,6 +46,26 @@ describe("real-time farming engine", () => {
     expect(() => assertRestorableFarmingGameState(state)).not.toThrow();
   });
 
+  it("normalizes historical duplicate log ids and allocates the next stable id", () => {
+    const state = game();
+    state.logs.push({ ...state.logs[0]!, text: "重复旧日志" });
+
+    const refreshed = refreshFarmingGame(state, start);
+    expect(new Set(refreshed.logs.map((entry) => entry.id)).size)
+      .toBe(refreshed.logs.length);
+
+    const next = applyFarmingAction(
+      refreshed,
+      { type: "farming_plant", cropId: "wheat", plotIndex: 0 },
+      start,
+    );
+    expect(new Set(next.logs.map((entry) => entry.id)).size)
+      .toBe(next.logs.length);
+    expect(next.logs.at(-1)?.id).toBeGreaterThan(
+      Math.max(...refreshed.logs.map((entry) => entry.id)),
+    );
+  });
+
   it("grows crops from server time while the player is offline", () => {
     let state = game();
     state = applyFarmingAction(state, {

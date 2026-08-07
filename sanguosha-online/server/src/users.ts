@@ -63,6 +63,10 @@ interface UserRow {
 
 const PASSWORD_ROUNDS = 12;
 
+export function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase();
+}
+
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
@@ -112,7 +116,7 @@ export class PostgresUserStore implements UserStore {
   async findByUsernameWithPassword(username: string): Promise<UserWithPassword | undefined> {
     const result = await this.pool.query<UserRow>(
       "SELECT * FROM users WHERE LOWER(username) = LOWER($1)",
-      [username.trim()],
+      [normalizeUsername(username)],
     );
     const row = result.rows[0];
     return row ? toUserWithPassword(row) : undefined;
@@ -134,7 +138,7 @@ export class PostgresUserStore implements UserStore {
          RETURNING *`,
         [
           randomUUID(),
-          input.username.trim(),
+          normalizeUsername(input.username),
           input.displayName.trim(),
           passwordHash,
           input.role ?? "player",
@@ -163,13 +167,57 @@ export class PostgresUserStore implements UserStore {
   }
 
   async setDisplayName(id: string, displayName: string): Promise<PublicUser | undefined> {
-    const result = await this.pool.query<UserRow>(
-      `UPDATE users SET display_name = $2, updated_at = NOW()
-       WHERE id = $1 RETURNING *`,
-      [id, displayName.trim()],
-    );
-    const row = result.rows[0];
-    return row ? toPublicUser(row) : undefined;
+    const normalizedDisplayName = displayName.trim();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<UserRow>(
+        `UPDATE users SET display_name = $2, updated_at = NOW()
+         WHERE id = $1 RETURNING *`,
+        [id, normalizedDisplayName],
+      );
+      const row = result.rows[0];
+      if (row) {
+        for (const table of [
+          "farm_state",
+          "ranch_state",
+          "mine_state",
+          "homestead_state",
+          "estate_account_state",
+        ] as const) {
+          await client.query(
+            `UPDATE ${table}
+             SET state = jsonb_set(state, '{ownerName}', to_jsonb($2::text), false),
+                 updated_at = NOW()
+             WHERE user_id = $1`,
+            [id, normalizedDisplayName],
+          );
+        }
+        await client.query(
+          `UPDATE town_estate_state
+           SET state = jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 jsonb_set(state, '{farm,ownerName}', to_jsonb($2::text), false),
+                 '{ranch,ownerName}', to_jsonb($2::text), false
+               ),
+               '{mine,ownerName}', to_jsonb($2::text), false
+             ),
+             '{homestead,ownerName}', to_jsonb($2::text), false
+           ),
+           updated_at = NOW()
+           WHERE user_id = $1`,
+          [id, normalizedDisplayName],
+        );
+      }
+      await client.query("COMMIT");
+      return row ? toPublicUser(row) : undefined;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async delete(id: string): Promise<PublicUser | undefined> {

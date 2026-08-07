@@ -90,7 +90,7 @@ export interface TownWeatherSettingsStore {
   load(): Promise<LoadedTownWeatherSettings | undefined>;
   save(
     settings: PersistedTownWeatherSettings,
-    updatedBy: string,
+    updatedBy?: string,
   ): Promise<string>;
 }
 
@@ -118,7 +118,7 @@ export class PostgresTownWeatherSettingsStore
 
   async save(
     settings: PersistedTownWeatherSettings,
-    updatedBy: string,
+    updatedBy?: string,
   ): Promise<string> {
     const result = await this.pool.query<{ updated_at: Date | string }>(
       `INSERT INTO app_settings (key, value, updated_by, updated_at)
@@ -197,6 +197,11 @@ function decryptApiKey(value: EncryptedValue, secret: string): string {
   ]).toString("utf8");
 }
 
+type SettingsEncryptionKeyring = string | {
+  readonly current: string;
+  readonly previous?: readonly string[];
+};
+
 function defaultTownSettings(): Record<
   TownWeatherTownId,
   TownWeatherLocationSettings
@@ -252,14 +257,21 @@ type FetchLike = typeof fetch;
 
 export class TownWeatherSettingsService {
   private current: RuntimeTownWeatherSettings;
+  private readonly secret: string;
+  private readonly decryptionSecrets: readonly string[];
 
   constructor(
     private readonly store: TownWeatherSettingsStore,
     private readonly weather: TownWeatherService,
-    private readonly secret: string,
+    encryption: SettingsEncryptionKeyring,
     bootstrap?: AppConfig["townWeather"],
     private readonly fetcher: FetchLike = fetch,
   ) {
+    this.secret = typeof encryption === "string" ? encryption : encryption.current;
+    this.decryptionSecrets = [
+      this.secret,
+      ...(typeof encryption === "string" ? [] : encryption.previous ?? []),
+    ].filter((value, index, values) => values.indexOf(value) === index);
     this.current = {
       enabled: Boolean(bootstrap),
       apiHost: bootstrap?.apiHost ?? "",
@@ -279,19 +291,42 @@ export class TownWeatherSettingsService {
       if (settings.version !== 1 || settings.provider !== "qweather") {
         throw new Error("Unsupported town weather settings version");
       }
+      let apiKey: string | undefined;
+      let decryptedWithPreviousKey = false;
+      if (settings.encryptedApiKey) {
+        let lastError: unknown;
+        for (const [index, secret] of this.decryptionSecrets.entries()) {
+          try {
+            apiKey = decryptApiKey(settings.encryptedApiKey, secret);
+            decryptedWithPreviousKey = index > 0;
+            break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        if (!apiKey) {
+          throw new Error("Stored weather API key cannot be decrypted with the configured keyring", {
+            cause: lastError,
+          });
+        }
+      }
       this.current = {
         enabled: settings.enabled,
         apiHost: settings.apiHost
           ? normalizeQWeatherApiHost(settings.apiHost)
           : "",
-        ...(settings.encryptedApiKey
-          ? { apiKey: decryptApiKey(settings.encryptedApiKey, this.secret) }
-          : {}),
+        ...(apiKey ? { apiKey } : {}),
         timeoutMs: settings.timeoutMs,
         forecastDays: settings.forecastDays,
         towns: structuredClone(settings.towns),
         updatedAt: loaded.updatedAt,
       };
+      if (apiKey && decryptedWithPreviousKey) {
+        this.current.updatedAt = await this.store.save({
+          ...settings,
+          encryptedApiKey: encryptApiKey(apiKey, this.secret),
+        });
+      }
     }
     this.applyProvider();
   }

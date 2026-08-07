@@ -47,6 +47,47 @@ function jsonResponse(value: unknown): Response {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe('account API', () => {
+  it('registers with the invitation and updates the current user profile', async () => {
+    const user = {
+      id: 'user-1',
+      username: 'new_player',
+      displayName: '新玩家',
+      role: 'player' as const,
+      disabled: false,
+      mustChangePassword: false,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ user }))
+      .mockResolvedValueOnce(jsonResponse({ user: { ...user, displayName: '新昵称' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const registered = await api.register({
+      invitationCode: 'moyu2026',
+      username: 'new_player',
+      password: 'new-player-password',
+    });
+    const updated = await api.updateProfile({ displayName: '新昵称' });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/auth/register', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+      body: JSON.stringify({
+        invitationCode: 'moyu2026',
+        username: 'new_player',
+        password: 'new-player-password',
+      }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/auth/profile', expect.objectContaining({
+      method: 'PATCH',
+      credentials: 'include',
+      body: JSON.stringify({ displayName: '新昵称' }),
+    }));
+    expect(registered).toEqual(user);
+    expect(updated.displayName).toBe('新昵称');
+  });
+});
+
 describe('room draft API', () => {
   it('keeps existing room creation calls compatible and optionally sends rule configuration', async () => {
     const fetchMock = vi.fn()

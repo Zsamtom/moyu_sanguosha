@@ -53,7 +53,21 @@ export function createApplication(options: {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", config.trustProxy);
-  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        fontSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+  }));
   if (config.appOrigin) app.use(cors({ origin: config.appOrigin, credentials: true }));
   app.use(express.json({ limit: "64kb" }));
   app.use("/api", (request, _response, next) => {

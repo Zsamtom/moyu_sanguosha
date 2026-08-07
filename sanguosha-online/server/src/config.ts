@@ -36,6 +36,8 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(3_000),
   DATABASE_URL: z.string().min(1),
   SESSION_SECRET: z.string().min(16),
+  SETTINGS_ENCRYPTION_KEY: optionalTrimmedString,
+  SETTINGS_ENCRYPTION_PREVIOUS_KEYS: optionalTrimmedString,
   INITIAL_ADMIN_USERNAME: z.string().min(3).max(32).default("admin"),
   INITIAL_ADMIN_PASSWORD: z.string().min(8).max(128),
   INITIAL_ADMIN_DISPLAY_NAME: z.string().min(1).max(40).default("管理员"),
@@ -81,6 +83,8 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   sessionSecret: string;
+  settingsEncryptionSecret: string;
+  settingsEncryptionPreviousSecrets: string[];
   initialAdmin: {
     username: string;
     password: string;
@@ -112,6 +116,16 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   if (parsed.NODE_ENV === "production" && parsed.SESSION_SECRET.length < 32) {
     throw new Error("SESSION_SECRET must contain at least 32 characters in production");
   }
+  if (parsed.NODE_ENV === "production" && parsed.SETTINGS_ENCRYPTION_KEY === undefined) {
+    throw new Error("SETTINGS_ENCRYPTION_KEY is required in production");
+  }
+  if (
+    parsed.NODE_ENV === "production" &&
+    parsed.SETTINGS_ENCRYPTION_KEY !== undefined &&
+    parsed.SETTINGS_ENCRYPTION_KEY.length < 32
+  ) {
+    throw new Error("SETTINGS_ENCRYPTION_KEY must contain at least 32 characters in production");
+  }
   if (parsed.NODE_ENV === "production") {
     if (!appOrigin) {
       throw new Error("APP_ORIGIN is required in production");
@@ -126,6 +140,17 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     port: parsed.PORT,
     databaseUrl: parsed.DATABASE_URL,
     sessionSecret: parsed.SESSION_SECRET,
+    settingsEncryptionSecret: parsed.SETTINGS_ENCRYPTION_KEY ?? parsed.SESSION_SECRET,
+    settingsEncryptionPreviousSecrets: [
+      parsed.SESSION_SECRET,
+      ...(parsed.SETTINGS_ENCRYPTION_PREVIOUS_KEYS
+        ?.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean) ?? []),
+    ].filter((value, index, values) =>
+      value !== (parsed.SETTINGS_ENCRYPTION_KEY ?? parsed.SESSION_SECRET) &&
+      values.indexOf(value) === index
+    ),
     initialAdmin: {
       username: parsed.INITIAL_ADMIN_USERNAME,
       password: parsed.INITIAL_ADMIN_PASSWORD,

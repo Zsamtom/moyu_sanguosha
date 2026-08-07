@@ -9,7 +9,7 @@ import {
   formatWeatherObservedAt,
   isHomesteadRevisionConflict,
   isWeatherMechanicsEnabled,
-  runHomesteadActionWithConflictRetry,
+  runHomesteadActionOnce,
 } from './HomesteadScreen';
 
 describe('HomesteadScreen helpers', () => {
@@ -115,32 +115,17 @@ describe('HomesteadScreen helpers', () => {
     )).toBe(true);
   });
 
-  it('retries only revision conflicts and never disguises business errors as state churn', async () => {
+  it('does not replay a non-idempotent action after a revision conflict', async () => {
     const initial = { homestead: { revision: 5 } } as unknown as HomesteadSnapshot;
-    const latest = { homestead: { revision: 6 } } as unknown as HomesteadSnapshot;
-    const apply = vi.fn()
-      .mockRejectedValueOnce(new ApiError('stale', 409, 'HOMESTEAD_REVISION_CONFLICT'))
-      .mockResolvedValueOnce('applied');
-    const refresh = vi.fn().mockResolvedValue(latest);
+    const conflict = new ApiError('stale', 409, 'HOMESTEAD_REVISION_CONFLICT');
+    const apply = vi.fn().mockRejectedValue(conflict);
 
-    await expect(runHomesteadActionWithConflictRetry(
+    await expect(runHomesteadActionOnce(
       initial,
       apply,
-      refresh,
-    )).resolves.toEqual({ result: 'applied', retried: true });
-    expect(apply).toHaveBeenNthCalledWith(1, initial);
-    expect(apply).toHaveBeenNthCalledWith(2, latest);
-    expect(refresh).toHaveBeenCalledTimes(1);
-
-    const stillStale = vi.fn()
-      .mockRejectedValue(new ApiError('stale', 409, 'HOMESTEAD_REVISION_CONFLICT'));
-    await expect(runHomesteadActionWithConflictRetry(
-      initial,
-      stillStale,
-      refresh,
-    )).rejects.toMatchObject({ status: 409 });
-    expect(stillStale).toHaveBeenCalledTimes(3);
-    expect(refresh).toHaveBeenCalledTimes(3);
+    )).rejects.toBe(conflict);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith(initial);
 
     const businessConflict = new ApiError(
       '今日物流容量不足',
@@ -148,13 +133,11 @@ describe('HomesteadScreen helpers', () => {
       'ESTATE_LOGISTICS_INSUFFICIENT',
     );
     const rejectedBusinessAction = vi.fn().mockRejectedValue(businessConflict);
-    const unusedRefresh = vi.fn();
-    await expect(runHomesteadActionWithConflictRetry(
+    await expect(runHomesteadActionOnce(
       initial,
       rejectedBusinessAction,
-      unusedRefresh,
     )).rejects.toBe(businessConflict);
-    expect(unusedRefresh).not.toHaveBeenCalled();
+    expect(rejectedBusinessAction).toHaveBeenCalledTimes(1);
     expect(isHomesteadRevisionConflict(businessConflict)).toBe(false);
   });
 
@@ -166,6 +149,9 @@ describe('HomesteadScreen helpers', () => {
     expect(source).toContain('useSerialActionQueue');
     expect(source).toContain('正在后台依次保存，可继续安排其他操作');
     expect(source).not.toContain('其他经营操作暂不可用');
+    expect(source).not.toContain('weatherAnchor.cityName');
+    expect(source).not.toContain('anchorCity');
+    expect(source).not.toContain("{activeTown?.definition.name ?? '庄园天气'}");
   });
 
   it('keeps every supported modular homestead action reachable from the interface', () => {

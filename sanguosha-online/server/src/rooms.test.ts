@@ -152,7 +152,9 @@ describe("RoomService", () => {
       name: "大模型三国杀",
       maxPlayers: 2,
       botIntelligence: 7,
-      botMode: "llm",
+      // Start deterministically with rules so the test can install its exact
+      // bot turn before enabling the asynchronous provider.
+      botMode: "rules",
     });
     rooms.setConnected(owner.id, true);
     const withBot = rooms.addBot(created.id, owner.id);
@@ -161,7 +163,27 @@ describe("RoomService", () => {
     rooms.start(created.id, owner.id);
 
     const internal = roomInternals(rooms).rooms.get(created.id)!;
-    const game = internal.game!;
+    internal.botMode = "llm";
+    const cleanDraft: GeneralDraftState = {
+      version: 1,
+      playerIds: [owner.id, bot.id],
+      allowDuplicateGenerals: false,
+      godFactionChoice: internal.ruleConfig.godFactionChoice,
+      roles: { [owner.id]: "lord", [bot.id]: "rebel" },
+      candidates: { [owner.id]: ["liu_bei"], [bot.id]: ["cao_cao"] },
+      selections: { [owner.id]: "liu_bei", [bot.id]: "cao_cao" },
+      factionSelections: { [owner.id]: "shu", [bot.id]: "wei" },
+      stage: "complete",
+      rng: { key: "7".padStart(64, "0"), counter: 0 },
+    };
+    const game = createGameFromDraft({
+      draft: cleanDraft,
+      config: internal.ruleConfig,
+    });
+    internal.game = game;
+    const botPlayer = game.players.find((player) => player.id === bot.id)!;
+    game.discardPile.push(...botPlayer.hand);
+    botPlayer.hand = [];
     game.currentPlayerId = bot.id;
     game.turn = {
       ...game.turn,
@@ -170,7 +192,6 @@ describe("RoomService", () => {
       slashUsed: false,
       requiredDiscardCount: 0,
     };
-    game.pendingResponse = null;
     roomInternals(rooms).runBots(internal);
 
     await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
@@ -664,6 +685,20 @@ describe("RoomService", () => {
     barriers[1]!();
     await rooms.waitForPersistence();
     expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not persist an unchanged ready state", async () => {
+    const rooms = new RoomService();
+    const persist = vi.fn().mockResolvedValue(undefined);
+    rooms.setSnapshotPersistence(persist);
+    const room = rooms.create(owner, { name: "幂等准备状态" });
+    await rooms.waitForPersistence();
+    persist.mockClear();
+
+    rooms.setReady(room.id, owner.id, false);
+    await rooms.waitForPersistence();
+
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("gives disconnected players a reconnect grace period, then forfeits", () => {

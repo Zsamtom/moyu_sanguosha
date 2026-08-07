@@ -157,3 +157,63 @@ export function ChangePasswordModal({
     </Modal>
   );
 }
+
+export interface ProfileValues {
+  displayName: string;
+}
+
+interface ProfileModalProps {
+  open: boolean;
+  displayName: string;
+  loading: boolean;
+  error?: string;
+  onClose: () => void;
+  onUpdateProfile: (values: ProfileValues) => Promise<void>;
+}
+
+export function ProfileModal({
+  open,
+  displayName,
+  loading,
+  error,
+  onClose,
+  onUpdateProfile,
+}: ProfileModalProps) {
+  return (
+    <Modal
+      title="个人资料"
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      destroyOnClose
+      maskClosable={!loading}
+      closable={!loading}
+    >
+      <p>昵称会显示给同一房间内的其他玩家，修改不会退出其他已登录设备。</p>
+      {error && <Alert className="login-alert" type="error" showIcon message={error} />}
+      <Form<ProfileValues>
+        key={displayName}
+        layout="vertical"
+        requiredMark={false}
+        size="large"
+        initialValues={{ displayName }}
+        onFinish={onUpdateProfile}
+      >
+        <Form.Item
+          label="昵称"
+          name="displayName"
+          rules={[
+            { required: true, message: '请输入昵称' },
+            { whitespace: true, message: '昵称不能只包含空白字符' },
+            { max: 40, message: '昵称最多 40 位' },
+          ]}
+        >
+          <Input autoComplete="nickname" placeholder="输入要显示的昵称" autoFocus />
+        </Form.Item>
+        <Button className="primary-ink-button" type="primary" htmlType="submit" block loading={loading}>
+          保存资料
+        </Button>
+      </Form>
+    </Modal>
+  );
+}

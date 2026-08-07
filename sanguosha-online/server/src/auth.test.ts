@@ -171,6 +171,8 @@ const config: AppConfig = {
   port: 3_000,
   databaseUrl: "postgresql://unused",
   sessionSecret: "test-session-secret-at-least-32-characters",
+  settingsEncryptionSecret: "test-settings-secret-at-least-32-characters",
+  settingsEncryptionPreviousSecrets: [],
   initialAdmin: { username: "admin", password: "admin-password", displayName: "管理员" },
   trustProxy: 0,
   secureCookies: false,
@@ -179,11 +181,19 @@ const config: AppConfig = {
 };
 
 describe("account allocation and authorization", () => {
+  it("serves a restrictive content security policy", async () => {
+    const response = await request(app).get("/api/auth/me").expect(401);
+    expect(response.headers["content-security-policy"]).toContain("script-src 'self'");
+    expect(response.headers["content-security-policy"]).toContain("object-src 'none'");
+    expect(response.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+  });
+
   let users: MemoryUserStore;
   let app: ReturnType<typeof createApplication>;
   let botDecisions: BotDecisionRegistry;
   let llmGovernance: LlmGovernanceService;
   let directorJobs: MemoryHomesteadDirectorJobStore;
+  let securityEvents: SecurityEvents;
 
   beforeEach(async () => {
     users = new MemoryUserStore();
@@ -215,13 +225,14 @@ describe("account allocation and authorization", () => {
       new MemoryLlmGovernanceStore(),
     );
     directorJobs = new MemoryHomesteadDirectorJobStore();
+    securityEvents = new SecurityEvents();
     app = createApplication({
       config,
       pool: { query: async () => ({ rows: [{ "?column?": 1 }] }) } as never,
       sessionMiddleware: session({ secret: config.sessionSecret, resave: false, saveUninitialized: false }),
       users,
       rooms: new RoomService(),
-      securityEvents: new SecurityEvents(),
+      securityEvents,
       llmSettings,
       townWeatherSettings,
       llmGovernance,
@@ -243,11 +254,135 @@ describe("account allocation and authorization", () => {
     });
   });
 
-  it("does not expose registration and rejects anonymous admin requests", async () => {
-    await request(app).post("/api/auth/register").send({}).expect(404);
+  it("registers an invited player, normalizes the account and starts a usable session", async () => {
+    const invitedAgent = request.agent(app);
+    const registered = await invitedAgent.post("/api/auth/register").send({
+      invitationCode: "moyu2026",
+      username: "New_Player",
+      password: "new-player-password",
+    }).expect(201);
+
+    expect(registered.body.user).toMatchObject({
+      username: "new_player",
+      displayName: "new_player",
+      role: "player",
+      disabled: false,
+      mustChangePassword: false,
+    });
+    expect(registered.body.user).not.toHaveProperty("passwordHash");
+    expect(registered.body.user).not.toHaveProperty("sessionVersion");
+    await invitedAgent.get("/api/auth/me").expect(200);
+    await invitedAgent.get("/api/rooms").expect(200);
+    expect(users.audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "user.register", targetUserId: registered.body.user.id }),
+    ]));
+
+    const duplicate = await request(app).post("/api/auth/register").send({
+      invitationCode: "moyu2026",
+      username: "NEW_PLAYER",
+      password: "another-player-password",
+    }).expect(409);
+    expect(duplicate.body.error.code).toBe("USERNAME_EXISTS");
+  });
+
+  it("rejects invalid registration input and rate-limits repeated registration attempts", async () => {
+    const invalidInvite = await request(app).post("/api/auth/register").send({
+      invitationCode: "not-the-invite",
+      username: "new_player",
+      password: "new-player-password",
+    }).expect(400);
+    expect(invalidInvite.body.error.code).toBe("INVALID_INVITATION_CODE");
+
+    const invalidAccount = await request(app).post("/api/auth/register").send({
+      invitationCode: "moyu2026",
+      username: "not allowed",
+      password: "new-player-password",
+      extra: true,
+    }).expect(400);
+    expect(invalidAccount.body.error.code).toBe("VALIDATION_ERROR");
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await request(app).post("/api/auth/register").send({
+        invitationCode: "not-the-invite",
+        username: `player_${attempt}`,
+        password: "new-player-password",
+      }).expect(400);
+    }
+    const limited = await request(app).post("/api/auth/register").send({
+      invitationCode: "not-the-invite",
+      username: "another_player",
+      password: "new-player-password",
+    }).expect(429);
+    expect(limited.body.error.code).toBe("TOO_MANY_REGISTRATIONS");
+  });
+
+  it("rejects anonymous admin requests", async () => {
     const response = await request(app).get("/api/admin/users").expect(401);
     expect(response.body.error.code).toBe("UNAUTHENTICATED");
     await request(app).get("/api/admin/llm-usage").expect(401);
+  });
+
+  it("updates a player's nickname without invalidating their other sessions", async () => {
+    const firstSession = request.agent(app);
+    const otherSession = request.agent(app);
+    await firstSession.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    await otherSession.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+
+    const updated = await firstSession.patch("/api/auth/profile")
+      .send({ displayName: "新昵称" })
+      .expect(200);
+    expect(updated.body.user.displayName).toBe("新昵称");
+
+    const otherSessionUser = await otherSession.get("/api/auth/me").expect(200);
+    expect(otherSessionUser.body.user.displayName).toBe("新昵称");
+    expect(users.audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "user.change_display_name", targetUserId: PLAYER_ID }),
+    ]));
+  });
+
+  it("keeps the current password-change session and invalidates other sessions", async () => {
+    const currentSession = request.agent(app);
+    const otherSession = request.agent(app);
+    await currentSession.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    await otherSession.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+
+    await currentSession.post("/api/auth/change-password")
+      .send({ currentPassword: "player-password", newPassword: "changed-player-password" })
+      .expect(200);
+    await currentSession.get("/api/auth/me").expect(200);
+    await otherSession.get("/api/auth/me").expect(401);
+    await request(app).post("/api/auth/login")
+      .send({ username: "player", password: "changed-player-password" })
+      .expect(200);
+  });
+
+  it("ends only the current session on logout", async () => {
+    const currentSession = request.agent(app);
+    const otherSession = request.agent(app);
+    await currentSession.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    await otherSession.post("/api/auth/login")
+      .send({ username: "player", password: "player-password" })
+      .expect(200);
+    const sessionEnded = vi.fn();
+    const sessionRevoked = vi.fn();
+    securityEvents.onSessionEnded(sessionEnded);
+    securityEvents.onSessionRevoked(sessionRevoked);
+
+    await currentSession.post("/api/auth/logout").expect(204);
+
+    expect(sessionEnded).toHaveBeenCalledWith(PLAYER_ID, expect.any(String));
+    expect(sessionRevoked).not.toHaveBeenCalled();
+    await otherSession.get("/api/auth/me").expect(200);
   });
 
   it("exposes bounded LLM usage audits only to administrators", async () => {

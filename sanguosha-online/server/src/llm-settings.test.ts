@@ -122,6 +122,42 @@ describe("LLM settings service", () => {
     expect(restoredRegistry.supports("sanguosha")).toBe(true);
   });
 
+  it("migrates a stored API key from a previous encryption key", async () => {
+    const store = new InspectableSettingsStore();
+    const original = new LlmSettingsService(
+      store,
+      new BotDecisionRegistry(),
+      "old-settings-encryption-secret",
+    );
+    await original.initialize();
+    await original.update({
+      enabled: true,
+      model: "deepseek-v4-flash",
+      apiKey: "sk-rotated-secret",
+      thinkingEnabled: false,
+      timeoutMs: 2_000,
+      maximumOutputTokens: 16,
+    }, "11111111-1111-4111-8111-111111111111");
+
+    const migrating = new LlmSettingsService(
+      store,
+      new BotDecisionRegistry(),
+      {
+        current: "new-settings-encryption-secret",
+        previous: ["old-settings-encryption-secret"],
+      },
+    );
+    await migrating.initialize();
+
+    const currentOnly = new LlmSettingsService(
+      store,
+      new BotDecisionRegistry(),
+      "new-settings-encryption-secret",
+    );
+    await currentOnly.initialize();
+    expect(currentOnly.getPublicSettings().apiKeyConfigured).toBe(true);
+  });
+
   it("tests the selected DeepSeek model with the model-list endpoint and no inference call", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       object: "list",

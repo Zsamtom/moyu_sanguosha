@@ -28,7 +28,10 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import {
   loadRoomSnapshot,
+  loadRoomSnapshotEntries,
+  quarantineRoomSnapshotEntry,
   RoomSnapshotWriter,
+  selectRestorableRoomSnapshotEntries,
 } from "./room-persistence.js";
 import {
   DEFAULT_SERVER_ROOM_RULE_CONFIG,
@@ -38,6 +41,34 @@ import {
 
 function poolWithQuery(query: Pool["query"]): Pool {
   return { query } as unknown as Pool;
+}
+
+function waitingRoom(
+  id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  ownerId = "11111111-1111-4111-8111-111111111111",
+) {
+  return {
+    id,
+    name: "健康房间",
+    gameType: "sanguosha" as const,
+    ownerId,
+    status: "waiting" as const,
+    maxPlayers: 2,
+    botIntelligence: 3 as const,
+    botMode: "rules" as const,
+    createdAt: new Date().toISOString(),
+    ruleConfig: structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG),
+    players: [{
+      id: ownerId,
+      username: `owner-${id.slice(0, 4)}`,
+      displayName: "健康房主",
+      ready: false,
+      connected: false,
+      seat: 0,
+      isBot: false,
+      departed: false,
+    }],
+  };
 }
 
 function standardCard(id: string, kind: CardKind, suit: Card["suit"] = "spade"): Card {
@@ -2289,6 +2320,166 @@ describe("room snapshot persistence", () => {
     if (result.kind === "invalid") expect(result.reason).toContain("Required");
   });
 
+  it("restores healthy rooms when another room in the legacy snapshot is invalid", async () => {
+    const healthyRoom = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "健康房间",
+      gameType: "sanguosha" as const,
+      ownerId: "11111111-1111-4111-8111-111111111111",
+      status: "waiting" as const,
+      maxPlayers: 2,
+      botIntelligence: 3 as const,
+      botMode: "rules" as const,
+      createdAt: new Date().toISOString(),
+      ruleConfig: structuredClone(DEFAULT_SERVER_ROOM_RULE_CONFIG),
+      players: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        username: "healthy-owner",
+        displayName: "健康房主",
+        ready: false,
+        connected: false,
+        seat: 0,
+        isBot: false,
+        departed: false,
+      }],
+    };
+    const invalidRoom = {
+      ...structuredClone(healthyRoom),
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      ownerId: "22222222-2222-4222-8222-222222222222",
+      name: "",
+      players: [{
+        ...structuredClone(healthyRoom.players[0]!),
+        id: "22222222-2222-4222-8222-222222222222",
+      }],
+    };
+    const result = await loadRoomSnapshot(poolWithQuery(
+      vi.fn().mockResolvedValue({
+        rows: [{ snapshot: { version: 1, rooms: [healthyRoom, invalidRoom] } }],
+      }) as Pool["query"],
+    ));
+
+    expect(result).toMatchObject({
+      kind: "partial",
+      snapshot: { rooms: [{ id: healthyRoom.id }] },
+      invalidRooms: [{ snapshot: { id: invalidRoom.id } }],
+    });
+  });
+
+  it("loads per-room rows independently and quarantines only later user conflicts", async () => {
+    const first = waitingRoom();
+    const conflicting = waitingRoom(
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      first.ownerId,
+    );
+    const malformed = { ...waitingRoom("cccccccc-cccc-4ccc-8ccc-cccccccccccc"), name: "" };
+    const result = await loadRoomSnapshotEntries(poolWithQuery(
+      vi.fn().mockResolvedValue({
+        rows: [
+          { room_id: first.id, snapshot: first },
+          { room_id: conflicting.id, snapshot: conflicting },
+          { room_id: malformed.id, snapshot: malformed },
+        ],
+      }) as Pool["query"],
+    ));
+
+    expect(result).toMatchObject({
+      kind: "entries",
+      entries: [{ roomId: first.id, source: "room_state_entry" }],
+      invalidEntries: [
+        { roomId: conflicting.id, reason: "User appears in multiple rooms" },
+        { roomId: malformed.id, source: "room_state_entry" },
+      ],
+    });
+  });
+
+  it("imports legacy room_state one room at a time when no per-room rows exist", async () => {
+    const healthy = waitingRoom();
+    const malformed = { ...waitingRoom("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), name: "" };
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ snapshot: { version: 1, rooms: [healthy, malformed] } }],
+      });
+
+    const result = await loadRoomSnapshotEntries(poolWithQuery(query as Pool["query"]));
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      kind: "entries",
+      entries: [{ roomId: healthy.id, source: "legacy_room_state" }],
+      invalidEntries: [{ roomId: malformed.id, source: "legacy_room_state" }],
+    });
+  });
+
+  it("isolates a runtime-only restore failure without discarding an earlier healthy room", async () => {
+    const healthy = waitingRoom();
+    const unsupportedBotRoom = {
+      ...waitingRoom(
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "22222222-2222-4222-8222-222222222222",
+      ),
+      gameType: "number_connect" as const,
+      maxPlayers: 2,
+      players: [
+        ...waitingRoom(
+          "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "22222222-2222-4222-8222-222222222222",
+        ).players,
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          username: "unsupported-bot",
+          displayName: "拆弹机器人",
+          ready: false,
+          connected: false,
+          seat: 1,
+          isBot: true,
+          departed: false,
+        },
+      ],
+    };
+    const loaded = await loadRoomSnapshotEntries(poolWithQuery(
+      vi.fn().mockResolvedValue({
+        rows: [
+          { room_id: healthy.id, snapshot: healthy },
+          { room_id: unsupportedBotRoom.id, snapshot: unsupportedBotRoom },
+        ],
+      }) as Pool["query"],
+    ));
+    if (loaded.kind !== "entries") throw new Error("Expected per-room entries");
+
+    const selected = selectRestorableRoomSnapshotEntries(
+      loaded.entries,
+      (snapshot) => new RoomService().restoreSnapshot(snapshot),
+    );
+
+    expect(selected.entries.map((entry) => entry.roomId)).toEqual([healthy.id]);
+    expect(selected.invalidEntries).toMatchObject([
+      {
+        roomId: unsupportedBotRoom.id,
+        reason: expect.stringContaining("bot unsupported"),
+      },
+    ]);
+  });
+
+  it("moves only the invalid per-room row into the per-room quarantine", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const roomId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+    await quarantineRoomSnapshotEntry(poolWithQuery(query as Pool["query"]), {
+      roomId,
+      storageRoomId: roomId,
+      rawSnapshot: { id: roomId, broken: true },
+      source: "room_state_entry",
+      reason: "broken room",
+    });
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]?.[0]).toContain("room_state_entry_quarantine");
+    expect(query.mock.calls[0]?.[0]).toContain("DELETE FROM room_state_entry");
+    expect(query.mock.calls[0]?.[1]).toContain(roomId);
+  });
+
   it("coalesces queued mutations to the newest snapshot", async () => {
     let releaseFirstWrite: (() => void) | undefined;
     let releaseSecondWrite: (() => void) | undefined;
@@ -2311,8 +2502,9 @@ describe("room snapshot persistence", () => {
     let persisted = false;
     const firstBarrier = writer.enqueue(first).then(() => { persisted = true; });
     await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
-    writer.enqueue(middle);
+    const middleBarrier = writer.enqueue(middle);
     const newestBarrier = writer.enqueue(newest);
+    expect(middleBarrier).toBe(newestBarrier);
     releaseFirstWrite?.();
     await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
     expect(persisted).toBe(false);
@@ -2321,6 +2513,9 @@ describe("room snapshot persistence", () => {
     await writer.flush();
 
     expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls[1]?.[1]).toEqual([JSON.stringify(newest)]);
+    expect(query.mock.calls[1]?.[1]).toEqual([
+      JSON.stringify(newest.rooms),
+      JSON.stringify(newest),
+    ]);
   });
 });

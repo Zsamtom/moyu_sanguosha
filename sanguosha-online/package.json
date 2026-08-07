@@ -8,7 +8,12 @@
     "typecheck": "pnpm --filter @sanguosha/shared build && pnpm -r typecheck",
     "test": "pnpm -r test",
     "check": "pnpm typecheck && pnpm test && pnpm build",
+    "e2e": "pnpm build && playwright test",
+    "e2e:ci": "playwright test",
     "deploy:prod": "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy-production.ps1",
     "deploy:prod:check": "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy-production.ps1 -PreflightOnly"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }

@@ -2168,6 +2168,7 @@ export interface HomesteadGameState {
   emergencyBoosts: HomesteadEmergencyBoostState;
   handledWeatherAlertIds: string[];
   statistics: HomesteadStatistics;
+  nextLogId: number;
   logs: HomesteadLogEntry[];
   research: HomesteadResearchState;
   specializations: HomesteadSpecializations;
@@ -3703,6 +3704,31 @@ function ruleAdvice(
 function ensureLongTermState(game: HomesteadGameState, now: number): boolean {
   let changed = false;
   const raw = game as HomesteadGameState & Record<string, unknown>;
+  const numericLogIds = game.logs.flatMap(({ id }) => {
+    const match = /^homestead:(\d+)$/.exec(id);
+    const parsed = match ? Number(match[1]) : Number.NaN;
+    return Number.isSafeInteger(parsed) && parsed > 0 ? [parsed] : [];
+  });
+  let nextLogId = Number.isSafeInteger(raw.nextLogId) && Number(raw.nextLogId) > 0
+    ? Number(raw.nextLogId)
+    : 1;
+  nextLogId = Math.max(nextLogId, ...numericLogIds.map((id) => id + 1));
+  const seenLogIds = new Set<string>();
+  game.logs = game.logs.map((entry) => {
+    if (entry.id.length > 0 && !seenLogIds.has(entry.id)) {
+      seenLogIds.add(entry.id);
+      return entry;
+    }
+    let id = `homestead:${nextLogId++}`;
+    while (seenLogIds.has(id)) id = `homestead:${nextLogId++}`;
+    seenLogIds.add(id);
+    changed = true;
+    return { ...entry, id };
+  });
+  if (game.nextLogId !== nextLogId) {
+    game.nextLogId = nextLogId;
+    changed = true;
+  }
   const localTownId =
     game.townId ??
     game.townNetwork?.activeTownId ??
@@ -4303,12 +4329,16 @@ function addLog(
   message: string,
   now: number,
 ): void {
+  while (game.logs.some(({ id }) => id === `homestead:${game.nextLogId}`)) {
+    game.nextLogId += 1;
+  }
   game.logs.unshift({
-    id: `${game.revision + 1}:${now}:${type}`,
+    id: `homestead:${game.nextLogId}`,
     at: now,
     type,
     message,
   });
+  game.nextLogId += 1;
   if (game.logs.length > HOMESTEAD_MAX_LOGS) {
     game.logs.length = HOMESTEAD_MAX_LOGS;
   }
@@ -4496,6 +4526,7 @@ export function createHomesteadGame(input: {
       llmCompletionTokens: 0,
       generatedEventsApplied: 0,
     },
+    nextLogId: 1,
     logs: [],
     research: { unlocked: [] },
     specializations: createSpecializations(),
@@ -7535,6 +7566,10 @@ export function assertRestorableHomesteadGameState(
     !Array.isArray(value.orders) ||
     !isRecord(value.worldEvent) ||
     !isRecord(value.statistics) ||
+    (
+      value.nextLogId !== undefined &&
+      (!Number.isSafeInteger(value.nextLogId) || Number(value.nextLogId) < 1)
+    ) ||
     !Array.isArray(value.logs)
   ) {
     throw new Error("庄园存档结构无效");

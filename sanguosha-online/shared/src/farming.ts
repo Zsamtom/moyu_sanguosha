@@ -682,7 +682,10 @@ function addLog(
   text: string,
 ): void {
   game.logs.push({
-    id: game.revision + game.logs.length + 1,
+    id: Math.max(
+      -1,
+      ...game.logs.map((entry) => entry.id).filter(Number.isSafeInteger),
+    ) + 1,
     at,
     kind,
     text,
@@ -925,6 +928,7 @@ export function refreshFarmingGame(
 ): FarmingGameState {
   assertTime(now);
   const game = structuredClone(state);
+  normalizeLogIds(game);
   const effectiveNow = Math.max(now, game.updatedAt);
   const key = dayKey(effectiveNow);
   let changed = false;
@@ -957,6 +961,23 @@ export function refreshFarmingGame(
     game.revision += 1;
   }
   return game;
+}
+
+function normalizeLogIds(game: FarmingGameState): void {
+  const used = new Set<number>();
+  let nextId = Math.max(
+    -1,
+    ...game.logs.map((entry) => entry.id).filter(Number.isSafeInteger),
+  );
+  game.logs = game.logs.map((entry) => {
+    if (Number.isSafeInteger(entry.id) && entry.id >= 0 && !used.has(entry.id)) {
+      used.add(entry.id);
+      return entry;
+    }
+    nextId += 1;
+    used.add(nextId);
+    return { ...entry, id: nextId };
+  });
 }
 
 export function applyFarmingMarketDecision(

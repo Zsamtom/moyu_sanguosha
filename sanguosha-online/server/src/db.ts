@@ -59,6 +59,27 @@ export async function migrateDatabase(pool: Pool): Promise<void> {
       quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- New installations persist each room independently. The legacy
+    -- room_state row is intentionally retained during the rolling upgrade so
+    -- older application instances can still read a complete snapshot.
+    CREATE TABLE IF NOT EXISTS room_state_entry (
+      room_id UUID PRIMARY KEY,
+      snapshot JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS room_state_entry_updated_idx
+      ON room_state_entry (updated_at ASC, room_id ASC);
+
+    CREATE TABLE IF NOT EXISTS room_state_entry_quarantine (
+      id BIGSERIAL PRIMARY KEY,
+      room_id TEXT,
+      snapshot JSONB NOT NULL,
+      reason TEXT NOT NULL,
+      source TEXT NOT NULL,
+      quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS farm_state (
       user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       state JSONB NOT NULL,

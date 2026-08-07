@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
 import { asyncHandler } from "../errors.js";
 import { currentUser, requireAuth } from "../middleware/auth.js";
 import {
@@ -15,6 +16,15 @@ import type { UserStore } from "../users.js";
 export function createRoomsRouter(users: UserStore, rooms: RoomService): Router {
   const router = Router();
   router.use(requireAuth(users));
+  router.use(rateLimit({
+    windowMs: 10_000,
+    limit: 120,
+    skip: (request) => request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS",
+    keyGenerator: (request) => request.session.userId ?? request.ip ?? "anonymous",
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: { code: "ROOM_RATE_LIMITED", message: "房间操作过于频繁，请稍后再试" } },
+  }));
 
   router.get("/", (_request, response) => {
     response.json({ rooms: rooms.list(), currentRoom: rooms.getForUser(currentUser(response).id) ?? null });

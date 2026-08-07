@@ -546,6 +546,59 @@ describe("homestead linked economy", () => {
     ).toThrowError(HomesteadRuleError);
   });
 
+  it("assigns unique monotonic IDs when one action creates several logs", () => {
+    const { homestead, economy } = setup();
+    homestead.statistics.ordersCompleted = 75;
+    homestead.statistics.eventsResolved = 30;
+    const view = getHomesteadGameView(homestead, economy, start);
+    const selected = view.worldEvent.definition.options.find(
+      (option) => option.costs.length === 0,
+    ) ?? view.worldEvent.definition.options[0]!;
+    for (const requirement of selected.costs) {
+      if (requirement.source === "farm") {
+        economy.farmProduce[requirement.itemId] = requirement.quantity;
+      } else if (requirement.source === "ranch") {
+        economy.ranchProducts[requirement.itemId] = requirement.quantity;
+      } else if (requirement.source === "mine") {
+        economy.mineOres[requirement.itemId] = requirement.quantity;
+      } else {
+        homestead.goods[requirement.itemId] = requirement.quantity;
+      }
+    }
+
+    const result = applyHomesteadAction(
+      homestead,
+      economy,
+      { type: "homestead_choose_event", optionId: selected.id },
+      start,
+    );
+    const ids = result.homestead.logs.map(({ id }) => id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(result.homestead.nextLogId).toBeGreaterThan(ids.length);
+  });
+
+  it("repairs duplicate legacy log IDs and initializes the counter", () => {
+    const { homestead } = setup();
+    const legacy = homestead as Omit<typeof homestead, "nextLogId"> & {
+      nextLogId?: number;
+    };
+    delete legacy.nextLogId;
+    legacy.logs = [
+      { id: "legacy-duplicate", at: start, type: "event", message: "一" },
+      { id: "legacy-duplicate", at: start, type: "event", message: "二" },
+    ];
+
+    const migrated = refreshHomesteadGame(
+      legacy as typeof homestead,
+      start,
+    );
+    const ids = migrated.logs.map(({ id }) => id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(migrated.nextLogId).toBeGreaterThan(1);
+  });
+
   it("shows daily decision production effects, applies them, and expires them", () => {
     const { homestead, economy } = setup();
     homestead.worldEvent = {

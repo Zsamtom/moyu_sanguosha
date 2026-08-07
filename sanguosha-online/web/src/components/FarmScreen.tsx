@@ -13,7 +13,11 @@ import {
   isLatestRequest,
   isTownRevisionVectorAtLeast,
 } from '../snapshotGuards';
-import { useSerialActionQueue } from '../serialActionQueue';
+import {
+  awaitWithAbort,
+  isSerialActionTimeoutError,
+  useSerialActionQueue,
+} from '../serialActionQueue';
 import type {
   FarmClientAction,
   FarmCropDefinition,
@@ -383,7 +387,11 @@ export function FarmScreen() {
   const neighborFarmRef = useRef<FarmGameView>();
   const loadRequestSequence = useRef(0);
   const neighborRequestSequence = useRef(0);
-  const { enqueue: enqueueAction, pendingCount: queuedActionCount } =
+  const {
+    enqueue: enqueueAction,
+    cancelPending: cancelPendingActions,
+    pendingCount: queuedActionCount,
+  } =
     useSerialActionQueue();
   const previousQueuedActionCount = useRef(queuedActionCount);
   const [selectedCrop, setSelectedCrop] = useState<FarmCropId | null>(null);
@@ -514,7 +522,10 @@ export function FarmScreen() {
     return () => window.clearInterval(refresh);
   }, [neighborFarm?.ownerId]);
 
-  const executeAction = async (action: FarmClientAction, attempt = 0): Promise<void> => {
+  const executeAction = async (
+    action: FarmClientAction,
+    signal: AbortSignal,
+  ): Promise<void> => {
     const previous = snapshotRef.current;
     if (!previous) return;
     const expectedRevision = previous.farm.revision;
@@ -522,12 +533,15 @@ export function FarmScreen() {
     loadRequestSequence.current += 1;
     setPendingAction(action);
     commitSnapshot(optimisticFarmAction(previous, action, now));
-    let refreshAfterAction = false;
     try {
-      const next = await api.applyFarmAction(
-        expectedRevision,
-        action,
-        previous.farm.townId,
+      const next = await awaitWithAbort(
+        api.applyFarmAction(
+          expectedRevision,
+          action,
+          previous.farm.townId,
+          signal,
+        ),
+        signal,
       );
       commitSnapshot({
         farm: next.farm,
@@ -560,28 +574,28 @@ export function FarmScreen() {
       }
     } catch (error) {
       if (error instanceof ApiError && error.code === 'FARM_REVISION_CONFLICT') {
-        refreshAfterAction = true;
-        if (attempt >= 2) toast.error(errorMessage(error));
+        cancelPendingActions();
+        commitSnapshot(previous, true);
+        await load(true, true);
+        toast.warning('状态已刷新：本次及后续待处理操作已取消，请确认后重新提交。');
       } else {
         commitSnapshot(previous, true);
-        toast.error(errorMessage(error));
+        if (isSerialActionTimeoutError(error)) {
+          cancelPendingActions();
+          await load(true, true);
+          toast.warning('保存请求超时，已取消后续待处理操作并刷新状态；请确认结果后再试。');
+        } else {
+          toast.error(errorMessage(error));
+        }
       }
     } finally {
-      if (!refreshAfterAction) {
-        actionInFlight.current = false;
-        setPendingAction(undefined);
-      }
-    }
-    if (refreshAfterAction) {
-      await load(true, true);
       actionInFlight.current = false;
       setPendingAction(undefined);
-      if (attempt < 2) return executeAction(action, attempt + 1);
     }
   };
 
   const runAction = (action: FarmClientAction) => {
-    enqueueAction(() => executeAction(action));
+    enqueueAction((signal) => executeAction(action, signal));
   };
 
   const openNeighbor = async (ownerId: string) => {
