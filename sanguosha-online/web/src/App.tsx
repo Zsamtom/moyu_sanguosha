@@ -65,6 +65,8 @@ const MineScreen = lazy(() => import('./components/MineScreen')
   .then(({ MineScreen: component }) => ({ default: component })));
 const HomesteadScreen = lazy(() => import('./components/HomesteadScreen')
   .then(({ HomesteadScreen: component }) => ({ default: component })));
+const RestaurantScreen = lazy(() => import('./components/RestaurantScreen')
+  .then(({ RestaurantScreen: component }) => ({ default: component })));
 const LobbyScreen = lazy(() => import('./components/LobbyScreen')
   .then(({ LobbyScreen: component }) => ({ default: component })));
 const RoomScreen = lazy(() => import('./components/RoomScreen')
@@ -114,7 +116,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [rawGame, setRawGame] = useState<unknown | null>(null);
   const [extraLogs, setExtraLogs] = useState<GameLogEntry[]>([]);
-  const [workspaceView, setWorkspaceView] = useState<'lobby' | 'homestead' | 'farm' | 'ranch' | 'mine' | 'reader' | 'admin'>('lobby');
+  const [workspaceView, setWorkspaceView] = useState<'lobby' | 'homestead' | 'farm' | 'ranch' | 'mine' | 'restaurant' | 'reader' | 'admin'>('lobby');
   const [estateScreenKey, setEstateScreenKey] = useState(0);
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -807,6 +809,15 @@ export default function App() {
               onExit={() => setWorkspaceView('lobby')}
             />
             <MineScreen key={`mine:${estateScreenKey}`} />
+          </>
+        ) : workspaceView === 'restaurant' ? (
+          <>
+            <HomesteadNav
+              active="restaurant"
+              onNavigate={navigateEstate}
+              onExit={() => setWorkspaceView('lobby')}
+            />
+            <RestaurantScreen key={`restaurant:${estateScreenKey}`} />
           </>
         ) : workspaceView === 'reader' ? (
           <NovelReaderScreen />

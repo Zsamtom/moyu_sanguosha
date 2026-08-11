@@ -1,4 +1,4 @@
-import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmGovernanceSnapshot, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RegistrationInput, RoomDetail, RoomRuleConfig, RoomSummary, TownWeatherConnectionTestResult, TownWeatherSettings, UpdateLlmSettings, UpdateProfileInput, UpdateTownWeatherSettings } from './types';
+import type { AuthUser, BotIntelligence, BotMode, DeepSeekModel, DoudizhuLlmRecommendation, EstateTownId, FarmActionSnapshot, FarmClientAction, FarmGameView, FarmNeighborSummary, FarmSnapshot, FarmVisitClientAction, FarmVisitSnapshot, FullGeneralId, GameType, HomesteadClientAction, HomesteadSnapshot, LlmConnectionTestResult, LlmGovernanceSnapshot, LlmSettings, MineClientAction, MineSnapshot, PlayableFaction, RanchActionSnapshot, RanchClientAction, RanchGameView, RanchNeighborSummary, RanchSnapshot, RanchVisitClientAction, RanchVisitSnapshot, RegistrationInput, RestaurantClientAction, RestaurantSnapshot, RestaurantSupplyClientAction, RoomDetail, RoomRuleConfig, RoomSummary, TownWeatherConnectionTestResult, TownWeatherSettings, UpdateLlmSettings, UpdateProfileInput, UpdateTownWeatherSettings } from './types';
 import { normalizeRoomDetail, normalizeRoomSummary } from './types';
 
 export class ApiError extends Error {
@@ -366,6 +366,48 @@ export const api = {
         expectedMineRevision: snapshot.homestead.revisions.mine,
         expectedHomesteadRevision: snapshot.homestead.revision,
         expectedAccountRevision: snapshot.homestead.accountRevision,
+        action,
+      }),
+    });
+  },
+
+  async getRestaurant(): Promise<RestaurantSnapshot> {
+    return request<RestaurantSnapshot>('/api/restaurant');
+  },
+
+  async applyRestaurantAction(
+    snapshot: RestaurantSnapshot,
+    action: RestaurantClientAction,
+    signal?: AbortSignal,
+  ): Promise<RestaurantSnapshot> {
+    return request<RestaurantSnapshot>('/api/restaurant/actions', {
+      method: 'POST',
+      signal,
+      ...jsonBody({
+        expectedAccountRevision: snapshot.accountRevision,
+        expectedRestaurantRevision: snapshot.restaurant.revision,
+        action,
+      }),
+    });
+  },
+
+  async supplyRestaurantFromTown(
+    snapshot: RestaurantSnapshot,
+    action: RestaurantSupplyClientAction,
+    signal?: AbortSignal,
+  ): Promise<RestaurantSnapshot> {
+    const source = snapshot.supplySources.find((item) => item.townId === action.sourceTownId);
+    if (!source) throw new ApiError('该城镇当前不可供货', 400, 'RESTAURANT_SOURCE_TOWN_UNAVAILABLE');
+    return request<RestaurantSnapshot>('/api/restaurant/actions', {
+      method: 'POST',
+      signal,
+      ...jsonBody({
+        expectedAccountRevision: snapshot.accountRevision,
+        expectedRestaurantRevision: snapshot.restaurant.revision,
+        expectedFarmRevision: source.farmRevision,
+        expectedRanchRevision: source.ranchRevision,
+        expectedMineRevision: source.mineRevision,
+        expectedHomesteadRevision: source.homesteadRevision,
         action,
       }),
     });

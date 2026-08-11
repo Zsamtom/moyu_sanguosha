@@ -61,6 +61,12 @@ export type FarmCropId =
   | 'blueberry'
   | 'cotton'
   | 'dragonfruit'
+  | 'rice'
+  | 'green_pepper'
+  | 'cucumber'
+  | 'soybean'
+  | 'onion'
+  | 'garlic'
   | 'frost_barley'
   | 'snow_potato'
   | 'ice_turnip'
@@ -72,7 +78,11 @@ export type FarmCropId =
   | 'blue_rose'
   | 'silver_flax'
   | 'winter_melon'
-  | 'aurora_fruit';
+  | 'aurora_fruit'
+  | 'mountain_mushroom'
+  | 'snow_cabbage'
+  | 'frost_onion'
+  | 'alpine_pepper';
 
 export interface FarmCropDefinition {
   id: FarmCropId;
@@ -129,7 +139,7 @@ export interface FarmMarketQuote {
 
 export interface FarmGameView {
   kind: 'farm';
-  version: 2;
+  version: 3;
   townId: EstateTownId;
   townDefinition: TownDefinition;
   revision: number;
@@ -246,6 +256,8 @@ export type RanchAnimalId =
   | 'sheep'
   | 'cow'
   | 'goat'
+  | 'broiler_chicken'
+  | 'pig'
   | 'snow_chicken'
   | 'ptarmigan'
   | 'angora_rabbit'
@@ -260,6 +272,8 @@ export type RanchProductId =
   | 'wool'
   | 'milk'
   | 'goat_milk'
+  | 'raw_chicken'
+  | 'raw_pork'
   | 'snow_egg'
   | 'ptarmigan_egg'
   | 'angora_fur'
@@ -270,6 +284,7 @@ export type RanchProductId =
 export interface RanchAnimalDefinition {
   id: RanchAnimalId;
   name: string;
+  productionKind?: 'renewable' | 'meat';
   productId: RanchProductId;
   productName: string;
   requiredFarmLevel: number;
@@ -309,7 +324,7 @@ export interface RanchPen {
 
 export interface RanchGameView {
   kind: 'ranch';
-  version: 1;
+  version: 2;
   townId: EstateTownId;
   townDefinition: TownDefinition;
   revision: number;
@@ -376,6 +391,7 @@ export type RanchClientAction =
   | { type: 'ranch_clean'; penIndex: number }
   | { type: 'ranch_clean_all' }
   | { type: 'ranch_collect'; penIndex: number }
+  | { type: 'ranch_slaughter'; penIndex: number }
   | { type: 'ranch_collect_all' }
   | { type: 'ranch_sell'; productId: RanchProductId; quantity: number }
   | { type: 'ranch_expand_pen' };
@@ -460,7 +476,7 @@ export interface MineShaft {
 
 export interface MineGameView {
   kind: 'mine';
-  version: 1;
+  version: 2;
   townId: EstateTownId;
   townDefinition: TownDefinition;
   revision: number;
@@ -1315,7 +1331,6 @@ export interface HomesteadTownEstateView {
       quantity: number;
     }>;
     reputationReward: number;
-    renownReward: number;
     requirementsView: Array<{
       itemId: HomesteadTownResourceId;
       quantity: number;
@@ -1331,7 +1346,7 @@ export interface HomesteadMerchantItemView {
   name: string;
   description: string;
   coinPrice: number;
-  requiredRenown: number;
+  requiredLocalReputation: number;
   inventoryLimit: number;
   dailyPurchaseLimit: number;
   townId?: EstateTownId;
@@ -1455,7 +1470,6 @@ export interface HomesteadGameView {
   ownerId: string;
   ownerName: string;
   reputation: number;
-  merchantRenown: number;
   researchPoints: number;
   coins: number;
   accountRevision: number;
@@ -1672,6 +1686,172 @@ export type HomesteadClientAction =
 
 export interface HomesteadSnapshot {
   homestead: HomesteadGameView;
+}
+
+export type RestaurantIngredientId =
+  | 'wheat' | 'rice' | 'soybean' | 'tomato' | 'carrot' | 'green_pepper'
+  | 'cucumber' | 'onion' | 'garlic' | 'pumpkin' | 'strawberry'
+  | 'cloudberry' | 'snow_potato' | 'ice_lettuce' | 'alpine_herb'
+  | 'mountain_mushroom' | 'snow_cabbage' | 'frost_onion' | 'alpine_pepper'
+  | 'egg' | 'duck_egg' | 'milk' | 'goat_milk'
+  | 'yak_milk' | 'raw_chicken' | 'raw_pork' | 'flour' | 'polished_rice'
+  | 'tofu' | 'chicken_meat' | 'pork_slices' | 'butter' | 'mineral_salt'
+  | 'soy_sauce' | 'vinegar' | 'sugar' | 'pepper' | 'freshwater_fish'
+  | 'snow_crab' | 'rare_mushroom';
+
+export type RestaurantTechniqueId =
+  | 'knife_basics' | 'grain_milling' | 'butchery'
+  | 'sauce_craft' | 'cold_chain' | 'pastry';
+export type RestaurantProcessingId =
+  | 'mill_wheat' | 'polish_rice' | 'make_tofu'
+  | 'butcher_chicken' | 'butcher_pork' | 'churn_butter';
+export type RestaurantRecipeId =
+  | 'tomato_carrot_salad' | 'cucumber_garlic_salad' | 'green_pepper_egg'
+  | 'pumpkin_milk_soup' | 'duck_egg_tofu' | 'strawberry_goat_pudding'
+  | 'tofu_vegetable_pot'
+  | 'river_fish_soup' | 'farmhouse_bread'
+  | 'chicken_skewer' | 'pork_rice_bowl' | 'frost_berry_tart'
+  | 'yak_milk_stew' | 'mountain_mushroom_grill'
+  | 'snow_crab_salad' | 'rare_mushroom_stew';
+export type RestaurantShopItemId =
+  | 'mineral_salt_pack' | 'soy_sauce_pack' | 'vinegar_pack'
+  | 'sugar_pack' | 'butter_pack' | 'pepper_pack'
+  | 'freshwater_fish_crate' | 'snow_crab_crate'
+  | 'rare_mushroom_basket';
+
+export interface RestaurantIngredientLot {
+  lotId: number;
+  ingredientId: RestaurantIngredientId;
+  sourceTownId: EstateTownId | null;
+  sourceKind: 'farm' | 'ranch' | 'homestead_goods' | 'restaurant_shop' | 'processed';
+  quantity: number;
+  acquiredAt: number;
+}
+
+export interface RestaurantSupplyShipment {
+  id: string;
+  sourceTownId: EstateTownId;
+  manifest: Array<{
+    ingredientId: RestaurantIngredientId;
+    quantity: number;
+    sourceKind?: 'farm' | 'ranch' | 'homestead_goods';
+  }>;
+  dispatchedAt: number;
+  arrivesAt: number;
+  status: 'in_transit' | 'collected';
+}
+
+export interface RestaurantProcessingJob {
+  id: number;
+  processingId: RestaurantProcessingId;
+  quantity: number;
+  sourceTownId: EstateTownId | null;
+  startedAt: number;
+  completesAt: number;
+  collected: boolean;
+}
+
+export interface RestaurantServiceOrder {
+  id: string;
+  recipeId: RestaurantRecipeId;
+  coinReward: number;
+  experienceReward: number;
+  localReputationReward: number;
+  status: 'pending' | 'served' | 'expired';
+}
+
+export interface RestaurantGameView {
+  kind: 'restaurant';
+  version: 1;
+  ownerId: string;
+  ownerName: string;
+  revision: number;
+  level: number;
+  experience: number;
+  warehouseCapacity: number;
+  lots: RestaurantIngredientLot[];
+  inventory: Record<RestaurantIngredientId, number>;
+  shipments: RestaurantSupplyShipment[];
+  processingJobs: RestaurantProcessingJob[];
+  unlockedTechniqueIds: RestaurantTechniqueId[];
+  unlockedRecipeIds: RestaurantRecipeId[];
+  preparedDishes: Partial<Record<RestaurantRecipeId, number>>;
+  menu: RestaurantRecipeId[];
+  menuSlots: number;
+  service: {
+    id: string;
+    townId: EstateTownId;
+    openedAt: number;
+    orders: RestaurantServiceOrder[];
+    status: 'serving' | 'settled';
+  } | null;
+  shop: {
+    dayKey: string;
+    offers: Array<{ itemId: RestaurantShopItemId; remaining: number }>;
+    purchaseLedger: Partial<Record<RestaurantShopItemId, number>>;
+  };
+  statistics: {
+    ingredientsSupplied: number;
+    ingredientsProcessed: number;
+    dishesPrepared: number;
+    customersServed: number;
+    servicesCompleted: number;
+    coinsEarned: number;
+    shopPurchases: number;
+  };
+  logs: Array<{
+    id: number;
+    at: number;
+    kind: 'system' | 'supply' | 'processing' | 'shop' | 'service';
+    text: string;
+  }>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type RestaurantClientAction =
+  | { type: 'restaurant_buy_shop_item'; itemId: RestaurantShopItemId; quantity: number }
+  | { type: 'restaurant_learn_technique'; techniqueId: RestaurantTechniqueId; sponsorTownId: EstateTownId }
+  | { type: 'restaurant_unlock_recipe'; recipeId: RestaurantRecipeId; sponsorTownId: EstateTownId }
+  | { type: 'restaurant_start_processing'; processingId: RestaurantProcessingId; quantity: number }
+  | { type: 'restaurant_collect_processing'; jobId: number }
+  | { type: 'restaurant_collect_supply'; shipmentId: string }
+  | { type: 'restaurant_prepare_dish'; recipeId: RestaurantRecipeId; quantity: number }
+  | { type: 'restaurant_set_menu'; recipeIds: RestaurantRecipeId[] }
+  | { type: 'restaurant_open_service'; serviceTownId: EstateTownId }
+  | { type: 'restaurant_serve_order'; orderId: string }
+  | { type: 'restaurant_close_service' };
+
+export interface RestaurantSupplyClientAction {
+  type: 'restaurant_supply_from_town';
+  sourceTownId: EstateTownId;
+  lines: Array<{
+    source: 'farm' | 'ranch' | 'goods';
+    itemId: string;
+    quantity: number;
+  }>;
+}
+
+export interface RestaurantSupplySourceSnapshot {
+  townId: EstateTownId;
+  farmRevision: number;
+  ranchRevision: number;
+  mineRevision: number;
+  homesteadRevision: number;
+  lines: Array<{
+    source: 'farm' | 'ranch' | 'goods';
+    itemId: string;
+    ingredientId: RestaurantIngredientId;
+    quantity: number;
+  }>;
+}
+
+export interface RestaurantSnapshot {
+  restaurant: RestaurantGameView;
+  accountRevision: number;
+  coins: number;
+  localReputation: Record<EstateTownId, number>;
+  supplySources: RestaurantSupplySourceSnapshot[];
 }
 
 export type UserRole = 'admin' | 'player';

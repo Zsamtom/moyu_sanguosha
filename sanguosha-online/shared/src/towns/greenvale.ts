@@ -13,6 +13,12 @@ export const GREENVALE_CROP_IDS = [
   "blueberry",
   "cotton",
   "dragonfruit",
+  "rice",
+  "green_pepper",
+  "cucumber",
+  "soybean",
+  "onion",
+  "garlic",
 ] as const;
 
 export const GREENVALE_ANIMAL_IDS = [
@@ -22,6 +28,8 @@ export const GREENVALE_ANIMAL_IDS = [
   "sheep",
   "cow",
   "goat",
+  "broiler_chicken",
+  "pig",
 ] as const;
 
 export const GREENVALE_PRODUCT_IDS = [
@@ -31,6 +39,8 @@ export const GREENVALE_PRODUCT_IDS = [
   "wool",
   "milk",
   "goat_milk",
+  "raw_chicken",
+  "raw_pork",
 ] as const;
 
 export const GREENVALE_DEPOSIT_IDS = [
@@ -44,7 +54,7 @@ export const GREENVALE_DEPOSIT_IDS = [
 
 export const GREENVALE_TOWN_DEFINITION: TownDefinition = {
   id: "greenvale",
-  contentVersion: 1,
+  contentVersion: 2,
   rulesetId: "standard_three_sector_v1",
   name: "青禾镇",
   subtitle: "河谷三业庄园",

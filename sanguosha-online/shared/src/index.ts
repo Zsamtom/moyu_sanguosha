@@ -15,6 +15,7 @@ export * from "./homestead-longterm.js";
 export * from "./homestead-infrastructure.js";
 export * from "./homestead-town-rhythm.js";
 export * from "./estate-account.js";
+export * from "./restaurant.js";
 export * from "./towns/greenvale.js";
 export * from "./towns/frostpeak.js";
 export * from "./towns/registry.js";

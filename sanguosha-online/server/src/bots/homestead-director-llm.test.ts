@@ -174,7 +174,6 @@ describe("homestead LLM narrative director", () => {
       context: {
         coins: 900,
         localReputation: 17,
-        merchantRenown: 3,
         logistics: { used: 4, capacity: 6 },
         merchantCandidates: [
           { itemId: "merchant_banner", canBuy: true, owned: 1 },
@@ -233,7 +232,6 @@ describe("homestead LLM narrative director", () => {
       coins: 900,
       activeTown: "greenvale",
       localReputation: 17,
-      merchantRenown: 3,
       logistics: { used: 4, capacity: 6, remaining: 2 },
     });
     expect(decision.input.state.economicBottlenecks).toContain(
@@ -365,7 +363,6 @@ describe("homestead LLM narrative director", () => {
       liveWeather: true,
       context: {
         coins: 900,
-        merchantRenown: 3,
         logistics: { used: 3, capacity: 6 },
         merchantCandidates: [
           { itemId: "priority_dispatch", canBuy: true },
@@ -453,7 +450,6 @@ describe("homestead LLM narrative director", () => {
     const result = await provider(fetcher).decide(request({
       context: {
         coins: 900,
-        merchantRenown: 3,
         merchantCandidates: [
           { itemId: "merchant_banner", canBuy: true },
         ],

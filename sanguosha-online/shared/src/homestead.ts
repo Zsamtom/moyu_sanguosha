@@ -291,7 +291,6 @@ export interface HomesteadTownLandmarkStageDefinition {
     readonly quantity: number;
   }[];
   readonly reputationReward: number;
-  readonly renownReward: number;
 }
 
 export const HOMESTEAD_FROSTPEAK_LANDMARK_STAGES:
@@ -307,8 +306,7 @@ export const HOMESTEAD_FROSTPEAK_LANDMARK_STAGES:
         { itemId: "yak_milk", quantity: 1 },
         { itemId: "frost_crystal", quantity: 1 },
       ],
-      reputationReward: 5,
-      renownReward: 1,
+      reputationReward: 7,
     },
     {
       stage: 2,
@@ -321,8 +319,7 @@ export const HOMESTEAD_FROSTPEAK_LANDMARK_STAGES:
         { itemId: "yak_milk", quantity: 4 },
         { itemId: "frost_crystal", quantity: 4 },
       ],
-      reputationReward: 10,
-      renownReward: 2,
+      reputationReward: 14,
     },
     {
       stage: 3,
@@ -335,8 +332,7 @@ export const HOMESTEAD_FROSTPEAK_LANDMARK_STAGES:
         { itemId: "yak_milk", quantity: 8 },
         { itemId: "frost_crystal", quantity: 10 },
       ],
-      reputationReward: 18,
-      renownReward: 5,
+      reputationReward: 28,
     },
   ];
 
@@ -2139,7 +2135,6 @@ export interface HomesteadTownEstateState {
 
 export interface HomesteadTownNetworkState {
   activeTownId: HomesteadTownId;
-  merchantRenown: number;
   towns: Record<HomesteadTownId, HomesteadTownEstateState>;
 }
 
@@ -2198,7 +2193,6 @@ export interface HomesteadLinkedEconomy {
   readonly accountRevision?: number;
   readonly activeTownId?: EstateTownId;
   readonly unlockedTownIds?: readonly EstateTownId[];
-  readonly merchantRenown?: number;
   readonly townProgress?: Partial<Record<EstateTownId, EstateTownProgress>>;
   readonly merchantInventory?: EstateMerchantInventory;
   readonly purchaseLedger?: EstateAccountState["purchaseLedger"];
@@ -2583,7 +2577,6 @@ export interface HomesteadGameView {
   readonly ownerId: string;
   readonly ownerName: string;
   readonly reputation: number;
-  readonly merchantRenown: number;
   readonly researchPoints: number;
   readonly coins: number;
   readonly accountRevision: number;
@@ -2786,7 +2779,6 @@ function createTownEstate(townId: HomesteadTownId): HomesteadTownEstateState {
 function createTownNetwork(): HomesteadTownNetworkState {
   return {
     activeTownId: "greenvale",
-    merchantRenown: 0,
     towns: {
       greenvale: createTownEstate("greenvale"),
       frostpeak: createTownEstate("frostpeak"),
@@ -5068,7 +5060,7 @@ function updateAdviceAfterAction(
   }
 }
 
-function awardMerchantRenownMilestones(
+function awardLocalReputationMilestones(
   game: HomesteadGameState,
   now: number,
 ): void {
@@ -5076,42 +5068,44 @@ function awardMerchantRenownMilestones(
     {
       id: "renown:orders:10",
       reached: game.statistics.ordersCompleted >= 10,
-      reward: 1,
+      reward: 3,
       label: "稳定履约",
     },
     {
       id: "renown:orders:30",
       reached: game.statistics.ordersCompleted >= 30,
-      reward: 2,
+      reward: 6,
       label: "区域供应商",
     },
     {
       id: "renown:orders:75",
       reached: game.statistics.ordersCompleted >= 75,
-      reward: 3,
+      reward: 10,
       label: "跨镇骨干商户",
     },
     {
       id: "renown:events:10",
       reached: game.statistics.eventsResolved >= 10,
-      reward: 1,
+      reward: 3,
       label: "社区协作者",
     },
     {
       id: "renown:events:30",
       reached: game.statistics.eventsResolved >= 30,
-      reward: 2,
+      reward: 6,
       label: "公共事务伙伴",
     },
   ] as const;
   for (const milestone of milestones) {
     if (!milestone.reached) continue;
     if (!unlockCollection(game, milestone.id, now)) continue;
-    game.townNetwork.merchantRenown += milestone.reward;
+    game.reputation += milestone.reward;
+    game.townNetwork.towns[game.townNetwork.activeTownId].reputation =
+      game.reputation;
     addLog(
       game,
       "community",
-      `达成“${milestone.label}”，商会名望 +${milestone.reward}。`,
+      `达成“${milestone.label}”，当地声望 +${milestone.reward}。`,
       now,
     );
   }
@@ -5353,7 +5347,6 @@ export function applyHomesteadAction(
     town.resolvedProblemIds.push(currentProblem.id);
     town.reputation += currentProblem.reputationReward;
     game.reputation += currentProblem.reputationReward;
-    game.townNetwork.merchantRenown += 1;
     game.researchPoints += currentProblem.researchReward;
     economy.coins += currentProblem.coinReward;
     economy.farmRevision += 1;
@@ -5398,7 +5391,6 @@ export function applyHomesteadAction(
     town.landmarkStage = nextStage.stage;
     town.reputation += nextStage.reputationReward;
     game.reputation += nextStage.reputationReward;
-    game.townNetwork.merchantRenown += nextStage.renownReward;
     unlockCollection(
       game,
       `town:frostpeak:landmark:${nextStage.stage}`,
@@ -5408,7 +5400,7 @@ export function applyHomesteadAction(
     addLog(
       game,
       "community",
-      `完成山地热力站阶段“${nextStage.name}”，全局名望 +${nextStage.renownReward}。`,
+      `完成山地热力站阶段“${nextStage.name}”，当地声望 +${nextStage.reputationReward}。`,
       effectiveNow,
     );
   } else if (action.type === "homestead_complete_value_route") {
@@ -6220,7 +6212,8 @@ export function applyHomesteadAction(
         milestone.goodReward.quantity;
     }
     if (milestone.id === "legend") {
-      game.townNetwork.merchantRenown += 2;
+      game.reputation += 8;
+      game.townNetwork.towns[localTownId].reputation = game.reputation;
     }
     game.honor.claimedMilestones.push(milestone.id);
     game.statistics.honorRewardsClaimed += 1;
@@ -6381,7 +6374,7 @@ export function applyHomesteadAction(
   }
   if (ranchChanged) economy.ranchRevision += 1;
   if (mineChanged) economy.mineRevision += 1;
-  awardMerchantRenownMilestones(game, effectiveNow);
+  awardLocalReputationMilestones(game, effectiveNow);
   synchronizeHonorCollections(game, effectiveNow);
   updateAdviceAfterAction(game, economy, effectiveNow);
   finishMutation(game, effectiveNow);
@@ -6600,8 +6593,6 @@ export function getHomesteadGameView(
     now: game.createdAt,
     coins: economy.coins,
     researchPoints: game.researchPoints,
-    merchantRenown:
-      economy.merchantRenown ?? game.townNetwork.merchantRenown,
     unlockedResearchIds: game.research.unlocked,
   });
   account.revision = economy.accountRevision ?? 0;
@@ -6614,8 +6605,6 @@ export function getHomesteadGameView(
     unlockedIds: [...game.research.unlocked],
   };
   account.unlockedResearchIds = [...game.research.unlocked];
-  account.merchantRenown =
-    economy.merchantRenown ?? game.townNetwork.merchantRenown;
   account.townProgress = structuredClone(
     economy.townProgress ?? {
       greenvale: {
@@ -6748,7 +6737,6 @@ export function getHomesteadGameView(
     ownerId: game.ownerId,
     ownerName: game.ownerName,
     reputation: game.reputation,
-    merchantRenown: account.merchantRenown,
     researchPoints: game.researchPoints,
     coins: economy.coins,
     accountRevision: account.revision,
@@ -6837,9 +6825,12 @@ export function getHomesteadGameView(
         const owned = account.merchantInventory[item.id];
         const purchasedToday =
           account.purchaseLedger.counts[item.id];
+        const reputationTownId = item.townId ?? activeTownId;
+        const localReputation =
+          account.townProgress[reputationTownId]?.localReputation ?? 0;
         const disabledReason =
-          account.merchantRenown < item.requiredRenown
-            ? `商会名望达到 ${item.requiredRenown} 后开放`
+          localReputation < item.requiredLocalReputation
+            ? `${TOWN_DEFINITIONS[reputationTownId].name}当地声望达到 ${item.requiredLocalReputation} 后开放`
             : economy.coins < item.coinPrice
               ? "金币不足"
               : owned >= item.inventoryLimit
@@ -8114,7 +8105,6 @@ export function assertRestorableHomesteadGameState(
       !HOMESTEAD_TOWN_IDS.includes(
         townNetwork.activeTownId as HomesteadTownId,
       ) ||
-      !isNonNegativeInteger(townNetwork.merchantRenown) ||
       !isRecord(townNetwork.towns)
     ) {
       throw new Error("庄园城镇网络存档无效");

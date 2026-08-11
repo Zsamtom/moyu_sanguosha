@@ -44,6 +44,7 @@ describe('three-sector interface capability coverage', () => {
       'ranch_clean_all',
       'ranch_collect',
       'ranch_collect_all',
+      'ranch_slaughter',
       'ranch_sell',
       'ranch_expand_pen',
       'ranch_help',
@@ -90,6 +91,23 @@ describe('three-sector interface capability coverage', () => {
       'homestead_complete_value_route',
       'homestead_dispatch_cargo',
       'homestead_collect_cargo',
+    ]);
+  });
+
+  it('keeps the full account-level restaurant loop reachable', () => {
+    expectActions('RestaurantScreen.tsx', [
+      'restaurant_supply_from_town',
+      'restaurant_collect_supply',
+      'restaurant_buy_shop_item',
+      'restaurant_learn_technique',
+      'restaurant_unlock_recipe',
+      'restaurant_start_processing',
+      'restaurant_collect_processing',
+      'restaurant_prepare_dish',
+      'restaurant_set_menu',
+      'restaurant_open_service',
+      'restaurant_serve_order',
+      'restaurant_close_service',
     ]);
   });
 });

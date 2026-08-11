@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ALL_FARMING_CROP_IDS,
   ESTATE_TOWN_IDS,
+  FARMING_MAX_PLOTS,
 } from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
 import type {
@@ -15,10 +16,10 @@ import { currentUser } from "../middleware/auth.js";
 const cropIdSchema = z.enum(ALL_FARMING_CROP_IDS);
 const townIdSchema = z.enum(ESTATE_TOWN_IDS);
 const quantitySchema = z.number().int().min(1).max(99);
-const plotIndexSchema = z.number().int().min(0).max(11);
+const plotIndexSchema = z.number().int().min(0).max(FARMING_MAX_PLOTS - 1);
 const plotIndicesSchema = z.array(plotIndexSchema)
   .min(2)
-  .max(12)
+  .max(FARMING_MAX_PLOTS)
   .refine(
     (indices) => new Set(indices).size === indices.length,
     "田块编号不能重复",

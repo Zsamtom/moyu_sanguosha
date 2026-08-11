@@ -142,6 +142,20 @@ export async function migrateDatabase(pool: Pool): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS restaurant_state (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      state JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS restaurant_state_quarantine (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      state JSONB NOT NULL,
+      reason TEXT NOT NULL,
+      quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS town_estate_state (
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       town_id TEXT NOT NULL,

@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ALL_MINE_DEPOSIT_IDS,
   ESTATE_TOWN_IDS,
+  MINE_MAX_SHAFTS,
 } from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
 import type { FarmService, MineClientAction } from "../farm-service.js";
@@ -10,7 +11,7 @@ import { currentUser } from "../middleware/auth.js";
 
 const depositIdSchema = z.enum(ALL_MINE_DEPOSIT_IDS);
 const townIdSchema = z.enum(ESTATE_TOWN_IDS);
-const shaftIndexSchema = z.number().int().min(0).max(5);
+const shaftIndexSchema = z.number().int().min(0).max(MINE_MAX_SHAFTS - 1);
 const quantitySchema = z.number().int().min(1).max(99);
 
 const actionSchema = z.discriminatedUnion("type", [

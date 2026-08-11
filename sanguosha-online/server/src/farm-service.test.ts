@@ -19,6 +19,7 @@ import {
   type HomesteadGameState,
   type MineGameState,
   type RanchGameState,
+  type RestaurantGameState,
 } from "@sanguosha/shared";
 import {
   BotDecisionRegistry,
@@ -266,7 +267,7 @@ describe("real-time FarmService", () => {
     const restored = await new FarmService(store, registry, () => start).getOrCreate(user);
     expect(restored.farm).toEqual(changed.farm);
     expect(restored.farm).toMatchObject({
-      version: 2,
+      version: 3,
       inventory: {
         coins: initial.farm.inventory!.coins - FARMING_CROPS.wheat.seedCost,
       },
@@ -294,11 +295,86 @@ describe("real-time FarmService", () => {
     ).getOrCreate(user);
 
     expect(migrated.farm).toMatchObject({
-      version: 2,
+      version: 3,
       ownerId: user.id,
     });
     expect(migrated.farm.plots[0]).toMatchObject({ cropId: "tomato" });
-    expect((await store.load(user.id) as FarmingGameState).version).toBe(2);
+    expect((await store.load(user.id) as FarmingGameState).version).toBe(3);
+  });
+
+  it("migrates all production capacities in a stored town bundle before validation", async () => {
+    const store = new MemoryFarmStateStore();
+    const firstService = new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    );
+    await firstService.getOrCreate(user);
+    const bundle = structuredClone(
+      await store.loadTownEstate(user.id, "greenvale"),
+    ) as TownEstateBundle;
+    bundle.farm.unlockedPlots = 12;
+    bundle.farm.revision = 17;
+    bundle.farm.plots[11]!.cycle = 5;
+    bundle.ranch.unlockedPens = 8;
+    bundle.ranch.revision = 23;
+    bundle.ranch.pens[7]!.cycle = 6;
+    bundle.mine.unlockedShafts = 6;
+    bundle.mine.revision = 29;
+    bundle.mine.shafts[5]!.cycle = 7;
+    store.setRawTownEstate(user.id, "greenvale", {
+      ...bundle,
+      farm: {
+        ...bundle.farm,
+        version: 2,
+        plots: bundle.farm.plots.slice(0, 12),
+      },
+      ranch: {
+        ...bundle.ranch,
+        version: 1,
+        pens: bundle.ranch.pens.slice(0, 8),
+      },
+      mine: {
+        ...bundle.mine,
+        version: 1,
+        shafts: bundle.mine.shafts.slice(0, 6),
+      },
+    } as unknown);
+
+    const restored = await new FarmService(
+      store,
+      new BotDecisionRegistry(),
+      () => start,
+    ).getOrCreate(user);
+    const persisted = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+
+    expect(restored.farm).toMatchObject({
+      version: 3,
+      revision: 17,
+      unlockedPlots: 12,
+    });
+    expect(persisted.ranch).toMatchObject({
+      version: 2,
+      revision: 23,
+      unlockedPens: 8,
+    });
+    expect(persisted.mine).toMatchObject({
+      version: 2,
+      revision: 29,
+      unlockedShafts: 6,
+    });
+    expect(restored.farm.plots).toHaveLength(24);
+    expect(persisted.ranch.pens).toHaveLength(12);
+    expect(persisted.mine.shafts).toHaveLength(8);
+    expect(restored.farm.plots[11]).toMatchObject({ cycle: 5 });
+    expect(persisted.ranch.pens[7]).toMatchObject({ cycle: 6 });
+    expect(persisted.mine.shafts[5]).toMatchObject({ cycle: 7 });
+    expect(persisted.farm).toMatchObject({ version: 3, revision: 17 });
+    expect(persisted.ranch).toMatchObject({ version: 2, revision: 23 });
+    expect(persisted.mine).toMatchObject({ version: 2, revision: 29 });
   });
 
   it("rejects stale revisions instead of overwriting a newer save", async () => {
@@ -336,7 +412,7 @@ describe("real-time FarmService", () => {
 
     expect(recovered.farm).toMatchObject({
       kind: "farm",
-      version: 2,
+      version: 3,
       revision: 0,
       ownerId: user.id,
     });
@@ -713,7 +789,7 @@ describe("real-time FarmService", () => {
 
     expect(recovered.ranch).toMatchObject({
       kind: "ranch",
-      version: 1,
+      version: 2,
       revision: 0,
     });
     expect(store.quarantinedRanches).toHaveLength(1);
@@ -865,7 +941,7 @@ describe("real-time FarmService", () => {
 
     expect(recovered.mine).toMatchObject({
       kind: "mine",
-      version: 1,
+      version: 2,
       revision: 0,
     });
     expect(store.quarantinedMines).toHaveLength(1);
@@ -1686,6 +1762,157 @@ describe("real-time FarmService", () => {
     ).toBe(18);
   });
 
+  it("atomically supplies the one account restaurant from a town inventory", async () => {
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(store, new BotDecisionRegistry(), () => start);
+    await service.getOrCreateRestaurant(user);
+    const bundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    bundle.farm.produce.tomato = 3;
+    bundle.ranch.products.egg = 2;
+    store.setRawTownEstate(user.id, "greenvale", bundle);
+
+    const before = await service.getOrCreateRestaurant(user);
+    const source = before.supplySources.find(({ townId }) => townId === "greenvale")!;
+    const supplied = await service.supplyRestaurantFromTown(
+      user,
+      before.accountRevision,
+      before.restaurant.revision,
+      source.farmRevision,
+      source.ranchRevision,
+      source.mineRevision,
+      source.homesteadRevision,
+      {
+        type: "restaurant_supply_from_town",
+        sourceTownId: "greenvale",
+        lines: [
+          { source: "farm", itemId: "tomato", quantity: 1 },
+          { source: "ranch", itemId: "egg", quantity: 1 },
+        ],
+      },
+    );
+
+    expect(supplied.coins).toBe(before.coins - 9);
+    const savedBundle = await store.loadTownEstate(
+      user.id,
+      "greenvale",
+    ) as TownEstateBundle;
+    expect(savedBundle.farm.produce.tomato).toBe(2);
+    expect(savedBundle.ranch.products.egg).toBe(1);
+    expect(supplied.restaurant.shipments).toHaveLength(1);
+    expect(supplied.restaurant.shipments[0]?.manifest).toEqual([
+      { ingredientId: "tomato", quantity: 1, sourceKind: "farm" },
+      { ingredientId: "egg", quantity: 1, sourceKind: "ranch" },
+    ]);
+
+    const collected = await service.applyRestaurantAction(
+      user,
+      supplied.accountRevision,
+      supplied.restaurant.revision,
+      {
+        type: "restaurant_collect_supply",
+        shipmentId: supplied.restaurant.shipments[0]!.id,
+      },
+    );
+    expect(collected.restaurant.inventory.tomato).toBe(1);
+    expect(collected.restaurant.inventory.egg).toBe(1);
+    expect(
+      (await store.loadRestaurant(user.id) as RestaurantGameState).lots,
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ingredientId: "tomato",
+        sourceTownId: "greenvale",
+        sourceKind: "farm",
+        quantity: 1,
+      }),
+      expect.objectContaining({
+        ingredientId: "egg",
+        sourceTownId: "greenvale",
+        sourceKind: "ranch",
+        quantity: 1,
+      }),
+    ]));
+
+    await expect(service.supplyRestaurantFromTown(
+      user,
+      before.accountRevision,
+      before.restaurant.revision,
+      source.farmRevision,
+      source.ranchRevision,
+      source.mineRevision,
+      source.homesteadRevision,
+      {
+        type: "restaurant_supply_from_town",
+        sourceTownId: "greenvale",
+        lines: [{ source: "farm", itemId: "tomato", quantity: 1 }],
+      },
+    )).rejects.toMatchObject({ status: 409 });
+    expect(
+      (await store.loadTownEstate(user.id, "greenvale") as TownEstateBundle)
+        .farm.produce.tomato,
+    ).toBe(2);
+  });
+
+  it("supplies the same restaurant from an unlocked non-active town", async () => {
+    const store = new MemoryFarmStateStore();
+    const service = new FarmService(store, new BotDecisionRegistry(), () => start);
+    await service.getOrCreateRestaurant(user);
+    const account = await store.loadEstateAccount(user.id) as EstateAccountState;
+    account.townProgress.frostpeak = {
+      unlocked: true,
+      unlockedAt: start,
+      localReputation: 30,
+      farmLevel: 1,
+      ranchLevel: 1,
+      mineLevel: 1,
+      landmarkStage: 0,
+      lastVisitedAt: start,
+    };
+    account.revision += 1;
+    store.setRawEstateAccount(user.id, account);
+
+    await service.getOrCreateRestaurant(user);
+    const frostBundle = await store.loadTownEstate(
+      user.id,
+      "frostpeak",
+    ) as TownEstateBundle;
+    frostBundle.farm.produce.cloudberry = 2;
+    store.setRawTownEstate(user.id, "frostpeak", frostBundle);
+    const before = await service.getOrCreateRestaurant(user);
+    const source = before.supplySources.find(({ townId }) => townId === "frostpeak")!;
+
+    const supplied = await service.supplyRestaurantFromTown(
+      user,
+      before.accountRevision,
+      before.restaurant.revision,
+      source.farmRevision,
+      source.ranchRevision,
+      source.mineRevision,
+      source.homesteadRevision,
+      {
+        type: "restaurant_supply_from_town",
+        sourceTownId: "frostpeak",
+        lines: [{ source: "farm", itemId: "cloudberry", quantity: 1 }],
+      },
+    );
+
+    expect(supplied.supplySources.map(({ townId }) => townId))
+      .toEqual(["greenvale", "frostpeak"]);
+    expect(supplied.restaurant.shipments[0]).toMatchObject({
+      sourceTownId: "frostpeak",
+      arrivesAt: start + 120_000,
+      status: "in_transit",
+    });
+    expect(
+      (await store.loadTownEstate(user.id, "frostpeak") as TownEstateBundle)
+        .farm.produce.cloudberry,
+    ).toBe(1);
+    expect((await store.loadRestaurant(user.id) as RestaurantGameState).ownerId)
+      .toBe(user.id);
+  });
+
   it("rebuilds a missing account from complete town bundles without relocking Frostpeak", async () => {
     const store = new MemoryFarmStateStore();
     const now = start + 60_000;
@@ -1725,7 +1952,6 @@ describe("real-time FarmService", () => {
       townId: "frostpeak",
     });
     frostHomestead.reputation = 47;
-    frostHomestead.townNetwork.merchantRenown = 6;
     const frostBundle: TownEstateBundle = {
       kind: "town_estate_bundle",
       version: 1,
@@ -1750,7 +1976,7 @@ describe("real-time FarmService", () => {
     expect(recovered.homestead.activeTownId).toBe("frostpeak");
     expect(recovered.homestead.coins).toBe(4_321);
     expect(account.activeTownId).toBe("frostpeak");
-    expect(account.merchantRenown).toBe(6);
+    expect(account).not.toHaveProperty("merchantRenown");
     expect(account.townProgress.frostpeak).toMatchObject({
       unlocked: true,
       localReputation: 47,

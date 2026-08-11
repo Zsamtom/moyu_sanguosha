@@ -34,7 +34,6 @@ function unlockReadyAccount() {
     ownerName: "庄园主",
     now: start,
     coins: 2_000,
-    merchantRenown: 3,
     unlockedResearchIds: ["civic_network"],
   });
   account = updateEstateTownProgress(account, {
@@ -67,7 +66,7 @@ describe("estate account, travel, logistics, and merchant sinks", () => {
       ranchLevel: 1,
       mineLevel: 1,
     });
-    expect(unlocked.merchantRenown).toBe(5);
+    expect("merchantRenown" in unlocked).toBe(false);
     expect(() => unlockEstateTown(unlocked, "frostpeak", start + 2))
       .toThrow();
   });

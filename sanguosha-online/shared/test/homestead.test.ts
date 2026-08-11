@@ -7,6 +7,7 @@ import {
   HOMESTEAD_WORLD_EVENTS,
   MINE_DEPOSIT_IDS,
   RANCH_PRODUCT_IDS,
+  RESTAURANT_TOWN_SUPPLIES,
   HomesteadRuleError,
   applyHomesteadAction,
   assertRestorableHomesteadGameState,
@@ -66,11 +67,13 @@ function setup() {
 describe("homestead linked economy", () => {
   it("gives every primary product a server-authoritative non-sale route", () => {
     const covered = new Set(
-      HOMESTEAD_VALUE_ROUTE_IDS.flatMap((routeId) =>
+      [...HOMESTEAD_VALUE_ROUTE_IDS.flatMap((routeId) =>
         HOMESTEAD_VALUE_ROUTES[routeId].requirements.map(
           ({ source, itemId }) => `${source}:${itemId}`,
         )
-      ),
+      ), ...RESTAURANT_TOWN_SUPPLIES
+        .filter(({ townId }) => townId === "greenvale")
+        .map(({ source, itemId }) => `${source}:${itemId}`)],
     );
     for (const cropId of FARMING_CROP_IDS) {
       expect(covered, `农产品 ${cropId} 缺少增值路线`)
@@ -189,7 +192,7 @@ describe("homestead linked economy", () => {
       { type: "homestead_restore_town_landmark" },
       start + 8 * 60_000 + 4,
     );
-    expect(restored.homestead.reputation).toBe(23);
+    expect(restored.homestead.reputation).toBe(25);
     expect(
       restored.homestead.townNetwork.towns.frostpeak.landmarkStage,
     ).toBe(1);

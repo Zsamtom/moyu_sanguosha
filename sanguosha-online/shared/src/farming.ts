@@ -20,9 +20,9 @@ import {
   applyPriceModifier,
 } from "./production-modifier.js";
 
-export const FARMING_STATE_VERSION = 2 as const;
+export const FARMING_STATE_VERSION = 3 as const;
 export const FARMING_STARTING_PLOTS = 6;
-export const FARMING_MAX_PLOTS = 12;
+export const FARMING_MAX_PLOTS = 24;
 export const FARMING_MAX_LOGS = 80;
 export const FARMING_MAX_DAILY_HELPS = 20;
 export const FARMING_MAX_DAILY_STEALS = 20;
@@ -200,6 +200,78 @@ export const FARMING_CROPS: Readonly<Record<
     yield: 9,
     harvestExperience: 115,
   },
+  rice: {
+    id: "rice",
+    name: "水稻",
+    unlockLevel: 2,
+    seedCost: 7,
+    basePrice: 12,
+    minimumPrice: 8,
+    maximumPrice: 18,
+    growthSeconds: 18 * MINUTE,
+    yield: 4,
+    harvestExperience: 14,
+  },
+  green_pepper: {
+    id: "green_pepper",
+    name: "青椒",
+    unlockLevel: 3,
+    seedCost: 10,
+    basePrice: 17,
+    minimumPrice: 11,
+    maximumPrice: 24,
+    growthSeconds: 26 * MINUTE,
+    yield: 4,
+    harvestExperience: 18,
+  },
+  cucumber: {
+    id: "cucumber",
+    name: "黄瓜",
+    unlockLevel: 4,
+    seedCost: 15,
+    basePrice: 24,
+    minimumPrice: 15,
+    maximumPrice: 35,
+    growthSeconds: 45 * MINUTE,
+    yield: 5,
+    harvestExperience: 23,
+  },
+  soybean: {
+    id: "soybean",
+    name: "大豆",
+    unlockLevel: 5,
+    seedCost: 24,
+    basePrice: 38,
+    minimumPrice: 24,
+    maximumPrice: 55,
+    growthSeconds: 90 * MINUTE,
+    yield: 5,
+    harvestExperience: 31,
+  },
+  onion: {
+    id: "onion",
+    name: "洋葱",
+    unlockLevel: 6,
+    seedCost: 32,
+    basePrice: 50,
+    minimumPrice: 31,
+    maximumPrice: 72,
+    growthSeconds: 150 * MINUTE,
+    yield: 6,
+    harvestExperience: 40,
+  },
+  garlic: {
+    id: "garlic",
+    name: "大蒜",
+    unlockLevel: 7,
+    seedCost: 44,
+    basePrice: 66,
+    minimumPrice: 41,
+    maximumPrice: 94,
+    growthSeconds: 210 * MINUTE,
+    yield: 6,
+    harvestExperience: 49,
+  },
 };
 
 const ALL_FARMING_CROPS: Readonly<
@@ -246,6 +318,18 @@ export const FARMING_LEVEL_EXPERIENCE = [
   1_450,
   1_750,
   2_100,
+  2_480,
+  2_890,
+  3_340,
+  3_840,
+  4_400,
+  5_020,
+  5_700,
+  6_460,
+  7_300,
+  8_230,
+  9_260,
+  10_400,
 ] as const;
 
 export interface FarmingPlotExpansion {
@@ -261,6 +345,18 @@ export const FARMING_PLOT_EXPANSIONS: readonly FarmingPlotExpansion[] = [
   { plotIndex: 9, requiredLevel: 9, coinCost: 900 },
   { plotIndex: 10, requiredLevel: 11, coinCost: 1_450 },
   { plotIndex: 11, requiredLevel: 13, coinCost: 2_200 },
+  { plotIndex: 12, requiredLevel: 14, coinCost: 3_100 },
+  { plotIndex: 13, requiredLevel: 15, coinCost: 3_450 },
+  { plotIndex: 14, requiredLevel: 16, coinCost: 3_850 },
+  { plotIndex: 15, requiredLevel: 17, coinCost: 4_300 },
+  { plotIndex: 16, requiredLevel: 18, coinCost: 4_800 },
+  { plotIndex: 17, requiredLevel: 19, coinCost: 5_350 },
+  { plotIndex: 18, requiredLevel: 20, coinCost: 5_950 },
+  { plotIndex: 19, requiredLevel: 21, coinCost: 6_600 },
+  { plotIndex: 20, requiredLevel: 22, coinCost: 7_300 },
+  { plotIndex: 21, requiredLevel: 23, coinCost: 8_100 },
+  { plotIndex: 22, requiredLevel: 24, coinCost: 8_950 },
+  { plotIndex: 23, requiredLevel: 25, coinCost: 9_900 },
 ];
 
 export interface FarmingDogUpgrade {
@@ -920,6 +1016,81 @@ export function migrateLegacyFarmGame(
   game.updatedAt = now;
   assertRestorableFarmingGameState(game);
   return game;
+}
+
+/**
+ * Expands v2 real-time farm saves before their strict v3 validation runs.
+ * Existing plots retain their indices and progress; the appended plots start
+ * empty and remain locked until the player purchases each expansion.
+ */
+export function migrateFarmingCapacityState(value: unknown): FarmingGameState {
+  if (!isRecord(value) || value.kind !== "farm") {
+    throw new Error("实时农场存档结构无效");
+  }
+  if (
+    ![2, FARMING_STATE_VERSION].includes(Number(value.version)) ||
+    !Array.isArray(value.plots) ||
+    ![12, FARMING_MAX_PLOTS].includes(value.plots.length)
+  ) {
+    throw new Error("实时农场存档容量迁移版本无效");
+  }
+
+  const migrated = structuredClone(value) as Omit<
+    FarmingGameState,
+    "version" | "plots"
+  > & {
+    version: number;
+    plots: FarmingPlotState[];
+  };
+  if (!isNonNegativeInteger(migrated.revision)) {
+    throw new Error("实时农场存档修订号无效");
+  }
+  migrated.version = FARMING_STATE_VERSION;
+  if (isNonNegativeInteger(migrated.experience)) {
+    // v2 capped the farm at level 13. Once later thresholds are appended,
+    // long-running saves can already have enough experience for the new
+    // levels even though their persisted level is still the old cap.
+    migrated.level = levelForExperience(migrated.experience);
+  }
+  if (migrated.plots.length < FARMING_MAX_PLOTS) {
+    const firstNewIndex = migrated.plots.length;
+    migrated.plots.push(
+      ...Array.from(
+        { length: FARMING_MAX_PLOTS - firstNewIndex },
+        (_, index) => emptyPlot(index + firstNewIndex),
+      ),
+    );
+  }
+  const townId = isEstateTownId(migrated.townId)
+    ? migrated.townId
+    : "greenvale";
+  const ids = farmingCropIds(townId);
+  for (const field of ["seeds", "produce", "mutations"] as const) {
+    const previous: Record<string, unknown> = isRecord(migrated[field])
+      ? migrated[field]
+      : {};
+    migrated[field] = Object.fromEntries(
+      ids.map((cropId) => [
+        cropId,
+        isNonNegativeInteger(previous[cropId]) ? previous[cropId] : 0,
+      ]),
+    ) as FarmingCropCounts;
+  }
+  const previousMarket = isRecord(migrated.market)
+    ? migrated.market as Record<string, FarmingMarketQuote>
+    : {};
+  const normalizedMarket = marketForDay(
+    migrated.seed,
+    migrated.marketDay,
+    townId,
+  );
+  for (const cropId of ids) {
+    const quote = previousMarket[cropId];
+    if (quote) normalizedMarket[cropId] = structuredClone(quote);
+  }
+  migrated.market = normalizedMarket;
+  assertRestorableFarmingGameState(migrated);
+  return migrated;
 }
 
 export function refreshFarmingGame(

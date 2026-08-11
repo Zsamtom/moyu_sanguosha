@@ -3,6 +3,9 @@ import {
   FARMING_CROPS,
   MINE_DEPOSITS,
   RANCH_ANIMALS,
+  RANCH_LEVEL_EXPERIENCE,
+  RANCH_MAX_PENS,
+  RANCH_PEN_EXPANSIONS,
   RanchRuleError,
   applyRanchAction,
   applyRanchVisitAction,
@@ -11,6 +14,7 @@ import {
   createRanchGame,
   getRanchGameView,
   getRanchNeighborSummary,
+  migrateRanchCapacityState,
   refreshRanchGame,
   type RanchEconomyState,
 } from "../src/index.js";
@@ -61,7 +65,9 @@ describe("persistent ranch engine", () => {
   });
 
   it("keeps permanent animals as multi-cycle capital investments", () => {
-    for (const animal of Object.values(RANCH_ANIMALS)) {
+    for (const animal of Object.values(RANCH_ANIMALS).filter(
+      ({ productionKind }) => (productionKind ?? "renewable") === "renewable",
+    )) {
       const feedValue =
         FARMING_CROPS[animal.feedCropId as keyof typeof FARMING_CROPS]
           .basePrice * animal.feedAmount;
@@ -72,6 +78,68 @@ describe("persistent ranch engine", () => {
       expect(animal.purchaseCost / netCycleValue).toBeGreaterThanOrEqual(4);
       expect(animal.resalePrice).toBeLessThan(animal.purchaseCost);
     }
+  });
+
+  it("makes meat animals leave the pen exactly once and blocks neighbor collection", () => {
+    let ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "经营者",
+      seed: "meat-animal",
+      now: start,
+    });
+    ranch.experience = RANCH_LEVEL_EXPERIENCE[1]!;
+    ranch.level = 2;
+    let linked = economy({ farmLevel: 3, coins: 2_000 });
+    let result = applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_buy_animal", animalId: "broiler_chicken", penIndex: 0 },
+      start,
+    );
+    result = applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_feed", penIndex: 0 },
+      start,
+    );
+    ranch = result.ranch;
+    linked = result.economy;
+    const readyAt = ranch.pens[0]!.producesAt!;
+    expect(() => applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_collect", penIndex: 0 },
+      readyAt,
+    )).toThrowError(RanchRuleError);
+
+    const visitor = createRanchGame({
+      ownerId: "visitor",
+      ownerName: "访客",
+      seed: "meat-visitor",
+      now: start,
+    });
+    expect(() => applyRanchVisitAction(
+      ranch,
+      visitor,
+      { type: "ranch_neighbor_collect", penIndex: 0 },
+      0,
+      readyAt,
+    )).toThrowError(RanchRuleError);
+
+    result = applyRanchAction(
+      ranch,
+      linked,
+      { type: "ranch_slaughter", penIndex: 0 },
+      readyAt,
+    );
+    expect(result.ranch.products.raw_chicken).toBeGreaterThan(0);
+    expect(result.ranch.pens[0]!.animalId).toBeNull();
+    expect(() => applyRanchAction(
+      result.ranch,
+      result.economy,
+      { type: "ranch_slaughter", penIndex: 0 },
+      readyAt,
+    )).toThrowError(RanchRuleError);
   });
 
   it("prices a starter chicken below one late-game gold ore", () => {
@@ -502,5 +570,45 @@ describe("persistent ranch engine", () => {
       ...ranch,
       products: { ...ranch.products, egg: -1 },
     })).toThrow("牧场主状态无效");
+  });
+
+  it("migrates v1 capacity saves to 12 pens without changing old pens or revision", () => {
+    const ranch = createRanchGame({
+      ownerId: "owner",
+      ownerName: "主人",
+      seed: "ranch-capacity-migration",
+      now: start,
+    });
+    ranch.unlockedPens = 8;
+    ranch.revision = 23;
+    ranch.experience = 4_998;
+    ranch.level = 10;
+    ranch.pens[7]!.cycle = 4;
+    const legacy = {
+      ...ranch,
+      version: 1,
+      pens: ranch.pens.slice(0, 8),
+    } as unknown;
+
+    const migrated = migrateRanchCapacityState(legacy);
+
+    expect(migrated).toMatchObject({
+      version: 2,
+      revision: 23,
+      level: 13,
+      unlockedPens: 8,
+    });
+    expect(migrated.pens).toHaveLength(RANCH_MAX_PENS);
+    expect(migrated.pens[7]).toMatchObject({ index: 7, cycle: 4 });
+    expect(migrated.pens[8]).toMatchObject({ index: 8, animalId: null });
+    expect(migrated.pens[11]).toMatchObject({ index: 11, animalId: null });
+    expect(RANCH_LEVEL_EXPERIENCE).toHaveLength(14);
+    expect(RANCH_PEN_EXPANSIONS.at(-1)).toEqual({
+      penIndex: 11,
+      requiredFarmLevel: 19,
+      requiredRanchLevel: 14,
+      coinCost: 8_100,
+    });
+    expect(() => assertRestorableRanchGameState(migrated)).not.toThrow();
   });
 });

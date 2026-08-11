@@ -23,10 +23,10 @@ import {
   applyPriceModifier,
 } from "./production-modifier.js";
 
-export const RANCH_STATE_VERSION = 1 as const;
+export const RANCH_STATE_VERSION = 2 as const;
 export const RANCH_REQUIRED_FARM_LEVEL = 1;
 export const RANCH_STARTING_PENS = 3;
-export const RANCH_MAX_PENS = 8;
+export const RANCH_MAX_PENS = 12;
 export const RANCH_MAX_LOGS = 80;
 export const RANCH_MAX_DAILY_HELPS = 20;
 export const RANCH_MAX_DAILY_COLLECTS = 10;
@@ -51,6 +51,8 @@ export type RanchProductCounts = Record<RanchProductId, number>;
 export interface RanchAnimalDefinition {
   readonly id: RanchAnimalId;
   readonly name: string;
+  /** Renewable animals keep their pen after collection; meat animals leave it after slaughter. */
+  readonly productionKind?: "renewable" | "meat";
   readonly productId: RanchProductId;
   readonly productName: string;
   readonly requiredFarmLevel: number;
@@ -175,6 +177,42 @@ export const RANCH_ANIMALS: Readonly<Record<
     productPrice: 165,
     collectExperience: 68,
   },
+  broiler_chicken: {
+    id: "broiler_chicken",
+    name: "肉鸡",
+    productionKind: "meat",
+    productId: "raw_chicken",
+    productName: "整鸡原料",
+    requiredFarmLevel: 3,
+    requiredRanchLevel: 2,
+    purchaseCost: 240,
+    resalePrice: 100,
+    feedCropId: "wheat",
+    feedAmount: 2,
+    careCost: 8,
+    productionSeconds: 20 * MINUTE,
+    yield: 3,
+    productPrice: 35,
+    collectExperience: 18,
+  },
+  pig: {
+    id: "pig",
+    name: "肉猪",
+    productionKind: "meat",
+    productId: "raw_pork",
+    productName: "猪肉原料",
+    requiredFarmLevel: 6,
+    requiredRanchLevel: 4,
+    purchaseCost: 700,
+    resalePrice: 300,
+    feedCropId: "soybean",
+    feedAmount: 3,
+    careCost: 20,
+    productionSeconds: 90 * MINUTE,
+    yield: 4,
+    productPrice: 75,
+    collectExperience: 35,
+  },
 };
 
 const ALL_RANCH_ANIMALS: Readonly<
@@ -218,6 +256,10 @@ export const RANCH_LEVEL_EXPERIENCE = [
   1_200,
   1_650,
   2_200,
+  2_850,
+  3_600,
+  4_450,
+  5_400,
 ] as const;
 
 export interface RanchPenExpansion {
@@ -233,6 +275,10 @@ export const RANCH_PEN_EXPANSIONS: readonly RanchPenExpansion[] = [
   { penIndex: 5, requiredFarmLevel: 7, requiredRanchLevel: 5, coinCost: 900 },
   { penIndex: 6, requiredFarmLevel: 9, requiredRanchLevel: 7, coinCost: 1_450 },
   { penIndex: 7, requiredFarmLevel: 11, requiredRanchLevel: 9, coinCost: 2_300 },
+  { penIndex: 8, requiredFarmLevel: 13, requiredRanchLevel: 10, coinCost: 3_300 },
+  { penIndex: 9, requiredFarmLevel: 15, requiredRanchLevel: 12, coinCost: 4_600 },
+  { penIndex: 10, requiredFarmLevel: 17, requiredRanchLevel: 13, coinCost: 6_200 },
+  { penIndex: 11, requiredFarmLevel: 19, requiredRanchLevel: 14, coinCost: 8_100 },
 ];
 
 export interface RanchPenState {
@@ -346,6 +392,10 @@ export type RanchAction =
       readonly penIndex: number;
     }
   | {
+      readonly type: "ranch_slaughter";
+      readonly penIndex: number;
+    }
+  | {
       readonly type: "ranch_collect_all";
     }
   | {
@@ -455,6 +505,7 @@ export type RanchRuleErrorCode =
   | "RANCH_NOT_FED"
   | "RANCH_CARE_NOT_NEEDED"
   | "RANCH_NOT_READY"
+  | "RANCH_SLAUGHTER_REQUIRED"
   | "RANCH_MAX_PENS"
   | "RANCH_LEVEL_REQUIRED"
   | "RANCH_CANNOT_VISIT_SELF"
@@ -645,7 +696,9 @@ function messAppeared(pen: RanchPenState, now: number): boolean {
 
 function penYield(pen: RanchPenState, now: number): number {
   if (!pen.animalId || pen.producesAt === null) return 0;
-  const base = ALL_RANCH_ANIMALS[pen.animalId].yield;
+  const animal = ALL_RANCH_ANIMALS[pen.animalId];
+  if ((animal.productionKind ?? "renewable") === "meat") return 0;
+  const base = animal.yield;
   return applyDiscreteProductionModifier(
     Math.max(1, base - (messAppeared(pen, now) ? 1 : 0)),
     pen.productionModifierPercent ?? 0,
@@ -713,6 +766,65 @@ export function createRanchGame(input: {
       text: `长期牧场已经建立；农场达到 ${RANCH_REQUIRED_FARM_LEVEL} 级后即可购入第一只动物。`,
     }],
   };
+}
+
+/**
+ * Expands v1 ranch saves before v2 validation. Existing pens (including
+ * animals and in-progress production) are preserved exactly by index.
+ */
+export function migrateRanchCapacityState(value: unknown): RanchGameState {
+  if (!isRecord(value) || value.kind !== "ranch") {
+    throw new Error("牧场存档结构无效");
+  }
+  if (
+    ![1, RANCH_STATE_VERSION].includes(Number(value.version)) ||
+    !Array.isArray(value.pens) ||
+    ![8, RANCH_MAX_PENS].includes(value.pens.length)
+  ) {
+    throw new Error("牧场存档容量迁移版本无效");
+  }
+
+  const migrated = structuredClone(value) as Omit<
+    RanchGameState,
+    "version" | "pens"
+  > & {
+    version: number;
+    pens: RanchPenState[];
+  };
+  if (!isNonNegativeInteger(migrated.revision)) {
+    throw new Error("牧场存档修订号无效");
+  }
+  migrated.version = RANCH_STATE_VERSION;
+  if (isNonNegativeInteger(migrated.experience)) {
+    // v1 persisted the old level-10 cap even when additional experience had
+    // already accumulated. Recompute it against the appended thresholds.
+    migrated.level = levelForExperience(migrated.experience);
+  }
+  if (migrated.pens.length < RANCH_MAX_PENS) {
+    const firstNewIndex = migrated.pens.length;
+    migrated.pens.push(
+      ...Array.from(
+        { length: RANCH_MAX_PENS - firstNewIndex },
+        (_, index) => emptyPen(index + firstNewIndex),
+      ),
+    );
+  }
+  const townId = isEstateTownId(migrated.townId)
+    ? migrated.townId
+    : "greenvale";
+  const previousProducts: Record<string, unknown> = isRecord(migrated.products)
+    ? migrated.products
+    : {};
+  migrated.products = Object.fromEntries(
+    ranchProductIds(townId).map((productId) => [
+      productId,
+      isNonNegativeInteger(previousProducts[productId])
+        ? previousProducts[productId]
+        : 0,
+    ]),
+  ) as RanchProductCounts;
+  assertRestorableRanchGameState(migrated);
+  return migrated;
 }
 
 export function refreshRanchGame(
@@ -969,6 +1081,7 @@ export function applyRanchAction(
       .filter((pen) =>
         pen.index < ranch.unlockedPens &&
         pen.animalId !== null &&
+        (animals[pen.animalId].productionKind ?? "renewable") === "renewable" &&
         pen.producesAt !== null &&
         effectiveNow >= pen.producesAt
       )
@@ -996,6 +1109,38 @@ export function applyRanchAction(
     ranch.updatedAt = effectiveNow;
     ranch.revision = baseRevision + 1;
     return { ranch, economy, economyChanged: false };
+  } else if (action.type === "ranch_slaughter") {
+    const pen = requirePen(ranch, action.penIndex);
+    if (!pen.animalId || pen.producesAt === null) {
+      throw new RanchRuleError("RANCH_NOT_FED", "肉畜尚未进入育肥周期");
+    }
+    const animal = animals[pen.animalId];
+    if ((animal.productionKind ?? "renewable") !== "meat") {
+      throw new RanchRuleError("RANCH_SLAUGHTER_REQUIRED", "该动物应通过常规收取获得产品");
+    }
+    if (effectiveNow < pen.producesAt) {
+      throw new RanchRuleError("RANCH_NOT_READY", "肉畜尚未完成育肥");
+    }
+    const baseYield = Math.max(
+      1,
+      animal.yield - (messAppeared(pen, effectiveNow) ? 1 : 0),
+    );
+    const settlement = applyAccumulatedProductionModifier(
+      baseYield,
+      pen.productionModifierPercent ?? 0,
+      ranch.productionRemainder,
+    );
+    ranch.productionRemainder = settlement.remainder;
+    ranch.products[animal.productId] += settlement.quantity;
+    ranch.statistics.productsCollected += settlement.quantity;
+    addExperience(ranch, animal.collectExperience, effectiveNow);
+    addLog(
+      ranch,
+      effectiveNow,
+      "collect",
+      `完成 ${pen.index + 1} 号畜舍${animal.name}出栏，获得 ${settlement.quantity} 份${animal.productName}。`,
+    );
+    Object.assign(pen, emptyPen(pen.index));
   } else if (action.type === "ranch_collect") {
     const pen = requirePen(ranch, action.penIndex);
     if (!pen.animalId || pen.producesAt === null) {
@@ -1005,6 +1150,9 @@ export function applyRanchAction(
       throw new RanchRuleError("RANCH_NOT_READY", "动物产品尚未产出");
     }
     const animal = animals[pen.animalId];
+    if ((animal.productionKind ?? "renewable") === "meat") {
+      throw new RanchRuleError("RANCH_SLAUGHTER_REQUIRED", "肉畜育肥完成后需要执行出栏屠宰");
+    }
     const baseYield = Math.max(
       1,
       animal.yield - (messAppeared(pen, effectiveNow) ? 1 : 0),
@@ -1153,6 +1301,9 @@ export function applyRanchVisitAction(
     }
     if (!pen.animalId || pen.producesAt === null || effectiveNow < pen.producesAt) {
       throw new RanchRuleError("RANCH_NOT_READY", "动物产品尚未产出");
+    }
+    if ((animals[pen.animalId].productionKind ?? "renewable") === "meat") {
+      throw new RanchRuleError("RANCH_NOTHING_TO_COLLECT", "肉畜只能由场主一次性出栏");
     }
     if (pen.collectAttempts.includes(visitor.ownerId)) {
       throw new RanchRuleError("RANCH_ALREADY_ATTEMPTED", "你已经尝试过这间畜舍");

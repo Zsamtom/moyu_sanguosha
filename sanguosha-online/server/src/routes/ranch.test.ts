@@ -58,9 +58,18 @@ describe("ranch HTTP schemas", () => {
       expectedRanchRevision: 3,
       action: {
         type: "ranch_sell_animal",
-        penIndex: 1,
+        penIndex: 11,
       },
     })).toBeTruthy();
+    expect(() => ranchActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 3,
+      action: {
+        type: "ranch_sell_animal",
+        penIndex: 12,
+      },
+    })).toThrow();
   });
 
   it("rejects injected owners, unsupported animals and invalid quantities", () => {

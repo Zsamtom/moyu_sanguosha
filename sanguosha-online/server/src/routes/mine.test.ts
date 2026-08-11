@@ -11,9 +11,20 @@ describe("mine HTTP schemas", () => {
       action: {
         type: "mine_start",
         depositId: "coal",
-        shaftIndex: 0,
+        shaftIndex: 7,
       },
     })).toBeTruthy();
+    expect(() => mineActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedFarmRevision: 8,
+      expectedRanchRevision: 5,
+      expectedMineRevision: 2,
+      action: {
+        type: "mine_start",
+        depositId: "coal",
+        shaftIndex: 8,
+      },
+    })).toThrow();
     expect(() => mineActionEnvelopeSchema.parse({
       townId: "greenvale",
       expectedFarmRevision: 8,

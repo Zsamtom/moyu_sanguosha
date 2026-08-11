@@ -339,8 +339,8 @@ describe("homestead progression and economy invariants", () => {
       ownerName: "商店审计",
       now: start,
       coins: 100_000,
-      merchantRenown: 99,
     });
+    account.townProgress.greenvale!.localReputation = 100;
     const weeklyOffers = new Set<string>();
     for (let offset = 0; offset < 7; offset += 1) {
       account = refreshEstateAccount(account, start + offset * day);

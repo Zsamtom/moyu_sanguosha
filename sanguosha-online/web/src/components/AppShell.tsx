@@ -3,7 +3,7 @@ import { GAME_REGISTRY } from '../games/registry';
 import type { AuthUser } from '../types';
 import { Brand } from './Brand';
 
-type ShellView = 'lobby' | 'homestead' | 'farm' | 'ranch' | 'mine' | 'reader' | 'admin' | 'room' | 'game';
+type ShellView = 'lobby' | 'homestead' | 'farm' | 'ranch' | 'mine' | 'restaurant' | 'reader' | 'admin' | 'room' | 'game';
 
 interface AppShellProps {
   user: AuthUser;

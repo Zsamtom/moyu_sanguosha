@@ -18,6 +18,7 @@ import { createFarmRouter } from "./routes/farm.js";
 import { createHomesteadRouter } from "./routes/homestead.js";
 import { createMineRouter } from "./routes/mine.js";
 import { createRanchRouter } from "./routes/ranch.js";
+import { createRestaurantRouter } from "./routes/restaurant.js";
 import { createRoomsRouter } from "./routes/rooms.js";
 import type { RoomService } from "./rooms.js";
 import type { SecurityEvents } from "./security-events.js";
@@ -115,6 +116,7 @@ export function createApplication(options: {
     app.use("/api/ranch", requireAuth(users), requirePasswordChangeComplete, createRanchRouter(farm));
     app.use("/api/mine", requireAuth(users), requirePasswordChangeComplete, createMineRouter(farm));
     app.use("/api/homestead", requireAuth(users), requirePasswordChangeComplete, createHomesteadRouter(farm));
+    app.use("/api/restaurant", requireAuth(users), requirePasswordChangeComplete, createRestaurantRouter(farm));
   }
   app.use("/api/rooms", requireAuth(users), requirePasswordChangeComplete, createRoomsRouter(users, rooms));
 

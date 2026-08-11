@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   MINE_DEPOSITS,
+  MINE_LEVEL_EXPERIENCE,
+  MINE_MAX_SHAFTS,
+  MINE_SHAFT_EXPANSIONS,
   MineRuleError,
   applyMineAction,
   assertRestorableMineGameState,
@@ -8,6 +11,7 @@ import {
   createMineGame,
   createRanchGame,
   getMineGameView,
+  migrateMineCapacityState,
   type MineLinkedEconomy,
 } from "../src/index.js";
 
@@ -336,5 +340,46 @@ describe("linked mine engine", () => {
       ...mine,
       ores: { ...mine.ores, gold: -1 },
     })).toThrow("矿山主状态无效");
+  });
+
+  it("migrates v1 capacity saves to 8 shafts without changing old shafts or revision", () => {
+    const mine = createMineGame({
+      ownerId: "owner",
+      ownerName: "主人",
+      seed: "mine-capacity-migration",
+      now: start,
+    });
+    mine.unlockedShafts = 6;
+    mine.revision = 29;
+    mine.experience = 3_500;
+    mine.level = 10;
+    mine.shafts[5]!.cycle = 6;
+    const legacy = {
+      ...mine,
+      version: 1,
+      shafts: mine.shafts.slice(0, 6),
+    } as unknown;
+
+    const migrated = migrateMineCapacityState(legacy);
+
+    expect(migrated).toMatchObject({
+      version: 2,
+      revision: 29,
+      level: 11,
+      unlockedShafts: 6,
+    });
+    expect(migrated.shafts).toHaveLength(MINE_MAX_SHAFTS);
+    expect(migrated.shafts[5]).toMatchObject({ index: 5, cycle: 6 });
+    expect(migrated.shafts[6]).toMatchObject({ index: 6, depositId: null });
+    expect(migrated.shafts[7]).toMatchObject({ index: 7, depositId: null });
+    expect(MINE_LEVEL_EXPERIENCE).toHaveLength(12);
+    expect(MINE_SHAFT_EXPANSIONS.at(-1)).toEqual({
+      shaftIndex: 7,
+      requiredFarmLevel: 16,
+      requiredRanchLevel: 13,
+      requiredMineLevel: 12,
+      coinCost: 6_800,
+    });
+    expect(() => assertRestorableMineGameState(migrated)).not.toThrow();
   });
 });

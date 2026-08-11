@@ -29,9 +29,18 @@ describe("real-time farm HTTP schemas", () => {
       action: {
         type: "farming_tend",
         care: "pest",
-        plotIndex: 11,
+        plotIndex: 23,
       },
     })).toBeTruthy();
+    expect(() => farmActionEnvelopeSchema.parse({
+      townId: "greenvale",
+      expectedRevision: 5,
+      action: {
+        type: "farming_tend",
+        care: "pest",
+        plotIndex: 24,
+      },
+    })).toThrow();
     expect(farmActionEnvelopeSchema.parse({
       townId: "greenvale",
       expectedRevision: 6,

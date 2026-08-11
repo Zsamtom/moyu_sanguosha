@@ -5,7 +5,7 @@ import {
   type EstateTownId,
 } from "./towns/registry.js";
 
-export const ESTATE_ACCOUNT_STATE_VERSION = 1 as const;
+export const ESTATE_ACCOUNT_STATE_VERSION = 2 as const;
 export const ESTATE_MAX_TRAVEL_LOGS = 24;
 export const ESTATE_DAILY_LOGISTICS_CAPACITY = 6;
 export const ESTATE_MAX_SHIPMENTS = 32;
@@ -210,7 +210,7 @@ export interface EstateMerchantItemDefinition {
   readonly name: string;
   readonly description: string;
   readonly coinPrice: number;
-  readonly requiredRenown: number;
+  readonly requiredLocalReputation: number;
   readonly inventoryLimit: number;
   readonly dailyPurchaseLimit: number;
   readonly townId?: EstateTownId;
@@ -242,7 +242,7 @@ function merchantBundle(
   description: string,
   townId: EstateTownId,
   coinPrice: number,
-  requiredRenown: number,
+  reputationTier: number,
   source: "farm" | "ranch" | "mine" | "goods",
   itemId: string,
   quantity: number,
@@ -253,7 +253,7 @@ function merchantBundle(
     description,
     townId,
     coinPrice,
-    requiredRenown,
+    requiredLocalReputation: [0, 10, 20, 35, 50, 70][reputationTier] ?? 70,
     inventoryLimit: 3,
     dailyPurchaseLimit: 1,
     category: ESTATE_RESILIENCE_MERCHANT_ITEM_IDS.has(id)
@@ -272,7 +272,7 @@ export const ESTATE_MERCHANT_ITEMS: Readonly<
     description:
       "将一个加工任务的原始工期缩短 10%，最多节省 30 分钟；每个任务只能使用一次。",
     coinPrice: 180,
-    requiredRenown: 2,
+    requiredLocalReputation: 20,
     inventoryLimit: 3,
     dailyPurchaseLimit: 1,
     category: "utility",
@@ -287,7 +287,7 @@ export const ESTATE_MERCHANT_ITEMS: Readonly<
     name: "商会联运票",
     description: "下一次跨镇客运基础票价减半，不减免货运费用。",
     coinPrice: 50,
-    requiredRenown: 1,
+    requiredLocalReputation: 10,
     inventoryLimit: 2,
     dailyPurchaseLimit: 1,
     category: "utility",
@@ -298,7 +298,7 @@ export const ESTATE_MERCHANT_ITEMS: Readonly<
     name: "商会纪念旗",
     description: "纯展示收藏品，用于长期经营后的金币回收。",
     coinPrice: 1_200,
-    requiredRenown: 5,
+    requiredLocalReputation: 70,
     inventoryLimit: 9,
     dailyPurchaseLimit: 1,
     category: "cosmetic",
@@ -400,7 +400,6 @@ export interface EstateAccountState {
   updatedAt: number;
   coins: number;
   researchPoints: number;
-  merchantRenown: number;
   activeTownId: EstateTownId;
   townResearch: EstateTownResearch;
   /** @deprecated Active-town compatibility mirror. */
@@ -500,7 +499,6 @@ export function createEstateAccount(input: {
   readonly now: number;
   readonly coins?: number;
   readonly researchPoints?: number;
-  readonly merchantRenown?: number;
   readonly unlockedResearchIds?: readonly string[];
 }): EstateAccountState {
   const dayKey = accountDayKey(input.now);
@@ -524,7 +522,6 @@ export function createEstateAccount(input: {
     updatedAt: input.now,
     coins: Math.max(0, Math.floor(input.coins ?? 20)),
     researchPoints: Math.max(0, Math.floor(input.researchPoints ?? 0)),
-    merchantRenown: Math.max(0, Math.floor(input.merchantRenown ?? 0)),
     activeTownId: "greenvale",
     townResearch: {
       greenvale: {
@@ -746,9 +743,6 @@ export function unlockEstateTown(
     landmarkStage: 0,
     lastVisitedAt: null,
   };
-  if (townId === "frostpeak") {
-    account.merchantRenown += 2;
-  }
   account.revision += 1;
   account.updatedAt = Math.max(account.updatedAt, now);
   return account;
@@ -810,8 +804,13 @@ export function buyEstateMerchantItem(
   if (!estateMerchantOfferIds(account).includes(itemId)) {
     throw new Error("该商品不在今日三项供应中，请等待每日刷新");
   }
-  if (account.merchantRenown < item.requiredRenown) {
-    throw new Error(`商会名望达到 ${item.requiredRenown} 后开放`);
+  const reputationTownId = item.townId ?? account.activeTownId;
+  const localReputation =
+    account.townProgress[reputationTownId]?.localReputation ?? -1;
+  if (localReputation < item.requiredLocalReputation) {
+    throw new Error(
+      `${TOWN_DEFINITIONS[reputationTownId].name}当地声望达到 ${item.requiredLocalReputation} 后开放`,
+    );
   }
   if (account.coins < item.coinPrice) throw new Error("购买商品所需金币不足");
   if (account.merchantInventory[itemId] >= item.inventoryLimit) {
@@ -939,6 +938,22 @@ export function collectEstateShipment(
   return account;
 }
 
+/**
+ * Removes the retired global merchant-renown balance before strict validation.
+ * Local reputation already lives under townProgress and is deliberately not
+ * increased from the former global value.
+ */
+export function migrateEstateAccountState(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const raw = structuredClone(value) as Record<string, unknown>;
+  if (raw.kind !== "estate_account") return value;
+  if (raw.version === 1) {
+    delete raw.merchantRenown;
+    raw.version = ESTATE_ACCOUNT_STATE_VERSION;
+  }
+  return raw;
+}
+
 export function assertRestorableEstateAccount(
   value: unknown,
 ): asserts value is EstateAccountState {
@@ -961,8 +976,6 @@ export function assertRestorableEstateAccount(
     Number(state.coins) < 0 ||
     !Number.isSafeInteger(state.researchPoints) ||
     Number(state.researchPoints) < 0 ||
-    !Number.isSafeInteger(state.merchantRenown) ||
-    Number(state.merchantRenown) < 0 ||
     !ESTATE_TOWN_IDS.includes(state.activeTownId as EstateTownId) ||
     !Array.isArray(state.unlockedResearchIds) ||
     !state.townProgress ||

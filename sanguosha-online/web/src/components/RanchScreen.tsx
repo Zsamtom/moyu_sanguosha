@@ -634,7 +634,7 @@ export function RanchScreen() {
         </article>
         <article>
           <span>已扩建畜舍</span>
-          <strong>{displayGame.unlockedPens} / 8</strong>
+          <strong>{displayGame.unlockedPens} / {displayGame.pens.length}</strong>
           <small>PERMANENT PENS</small>
         </article>
         <article>
@@ -951,12 +951,14 @@ export function RanchScreen() {
                               type="primary"
                               size="small"
                               disabled={busy}
-                              onClick={() => void runAction({
-                                type: 'ranch_collect',
-                                penIndex: pen.index,
-                              })}
+                              onClick={() => void runAction(
+                                animal.productionKind === 'meat'
+                                  ? { type: 'ranch_slaughter', penIndex: pen.index }
+                                  : { type: 'ranch_collect', penIndex: pen.index },
+                              )}
                             >
-                              收取{animal.productName}
+                              {animal.productionKind === 'meat' ? '出栏' : '收取'}
+                              {animal.productName}
                             </Button>
                           )}
                         </div>

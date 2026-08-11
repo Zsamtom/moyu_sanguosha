@@ -936,7 +936,6 @@ export function HomesteadScreen() {
         <div className="homestead-metrics">
           <div><strong>{homestead.coins}</strong><span>共享金币</span></div>
           <div><strong>{homestead.reputation}</strong><span>当地声望</span></div>
-          <div><strong>{homestead.merchantRenown}</strong><span>商会名望</span></div>
           <div><strong>{homestead.researchPoints}</strong><span>研究点</span></div>
           <div>
             <strong>{logisticsRemaining}/{homestead.logistics.capacity}</strong>
@@ -2085,7 +2084,7 @@ export function HomesteadScreen() {
                 ? 'LLM 情境推荐'
                 : '规则推荐'}
             </Tag>
-            <span>商会名望 {homestead.merchantRenown}</span>
+            <span>当地声望 {homestead.reputation}</span>
           </div>
         </div>
         <Alert
@@ -2114,7 +2113,7 @@ export function HomesteadScreen() {
                 <div className="homestead-merchant-stock">
                   <span>持有 {item.owned}/{item.inventoryLimit}</span>
                   <span>今日 {item.purchasedToday}/{item.dailyPurchaseLimit}</span>
-                  <span>名望要求 {item.requiredRenown}</span>
+                  <span>当地声望要求 {item.requiredLocalReputation}</span>
                 </div>
                 <Button
                   type={item.canBuy ? 'primary' : 'default'}

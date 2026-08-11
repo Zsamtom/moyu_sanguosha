@@ -838,7 +838,7 @@ export function FarmScreen() {
         </article>
         <article>
           <span>已开垦土地</span>
-          <strong>{displayGame.unlockedPlots} / 12</strong>
+          <strong>{displayGame.unlockedPlots} / {displayGame.plots.length}</strong>
           <small>PERMANENT PLOTS</small>
         </article>
         <article>

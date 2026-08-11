@@ -16,6 +16,7 @@ import {
   createFarmingGame,
   getFarmingGameView,
   getFarmingNeighborSummary,
+  migrateFarmingCapacityState,
   migrateLegacyFarmGame,
   refreshFarmingGame,
   type FarmingAction,
@@ -27,12 +28,14 @@ import {
   type EstateProductionRule,
   RanchRuleError,
   RANCH_REQUIRED_FARM_LEVEL,
+  RANCH_STATE_VERSION,
   applyRanchAction,
   applyRanchVisitAction,
   assertRestorableRanchGameState,
   createRanchGame,
   getRanchGameView,
   getRanchNeighborSummary,
+  migrateRanchCapacityState,
   refreshRanchGame,
   type RanchAction,
   type RanchGameState,
@@ -41,10 +44,12 @@ import {
   type RanchVisitAction,
   type RanchVisitResult,
   MineRuleError,
+  MINE_STATE_VERSION,
   applyMineAction,
   assertRestorableMineGameState,
   createMineGame,
   getMineGameView,
+  migrateMineCapacityState,
   type MineAction,
   type MineGameState,
   type MineGameView,
@@ -63,6 +68,7 @@ import {
   type HomesteadLinkedEconomy,
   type HomesteadWorldEventId,
   assertRestorableEstateAccount,
+  migrateEstateAccountState,
   buyEstateMerchantItem,
   collectEstateShipment,
   consumeEstateMerchantItem,
@@ -82,8 +88,26 @@ import {
   type EstateCargoDefinition,
   type EstateMerchantItemId,
   type EstateTownId,
+  ESTATE_TOWN_IDS,
   TOWN_DEFINITIONS,
   getTownRoute,
+  RestaurantRuleError,
+  applyRestaurantAction as applyRestaurantLinkedAction,
+  assertRestorableRestaurantGameState,
+  createRestaurantGame,
+  dispatchRestaurantSupply,
+  getRestaurantGameView,
+  getRestaurantTownSupplyDefinition,
+  RESTAURANT_TOWN_SUPPLIES,
+  RESTAURANT_SHOP_ITEMS,
+  refreshRestaurantGame,
+  restaurantLocalReputationRecord,
+  type RestaurantAction,
+  type RestaurantEconomy,
+  type RestaurantGameState,
+  type RestaurantGameView,
+  type RestaurantIngredientAmount,
+  type RestaurantTownSupplySource,
 } from "@sanguosha/shared";
 import {
   botDecisionFailureReason,
@@ -117,6 +141,17 @@ export type RanchClientAction = RanchAction;
 export type RanchVisitClientAction = RanchVisitAction;
 export type MineClientAction = MineAction;
 export type HomesteadClientAction = HomesteadAction;
+export type RestaurantClientAction = RestaurantAction;
+
+export interface RestaurantSupplyClientAction {
+  readonly type: "restaurant_supply_from_town";
+  readonly sourceTownId: EstateTownId;
+  readonly lines: readonly {
+    readonly source: RestaurantTownSupplySource;
+    readonly itemId: string;
+    readonly quantity: number;
+  }[];
+}
 
 export interface FarmSnapshot {
   readonly farm: FarmingGameView;
@@ -154,6 +189,28 @@ export interface MineSnapshot {
 
 export interface HomesteadSnapshot {
   readonly homestead: HomesteadGameView;
+}
+
+export interface RestaurantSupplySourceSnapshot {
+  readonly townId: EstateTownId;
+  readonly farmRevision: number;
+  readonly ranchRevision: number;
+  readonly mineRevision: number;
+  readonly homesteadRevision: number;
+  readonly lines: readonly {
+    readonly source: RestaurantTownSupplySource;
+    readonly itemId: string;
+    readonly ingredientId: string;
+    readonly quantity: number;
+  }[];
+}
+
+export interface RestaurantSnapshot {
+  readonly restaurant: RestaurantGameView;
+  readonly accountRevision: number;
+  readonly coins: number;
+  readonly localReputation: Record<EstateTownId, number>;
+  readonly supplySources: readonly RestaurantSupplySourceSnapshot[];
 }
 
 export const TOWN_ESTATE_BUNDLE_VERSION = 1 as const;
@@ -260,6 +317,25 @@ export interface FarmStateStore {
   ): Promise<void>;
   loadEstateAccount(userId: string): Promise<unknown | undefined>;
   saveEstateAccount(userId: string, state: EstateAccountState): Promise<void>;
+  loadRestaurant(userId: string): Promise<unknown | undefined>;
+  saveRestaurant(userId: string, state: RestaurantGameState): Promise<void>;
+  saveAccountAndRestaurant(
+    userId: string,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+  ): Promise<void>;
+  saveAccountRestaurantAndTownEstate(
+    userId: string,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+    townId: EstateTownId,
+    state: TownEstateBundle,
+  ): Promise<void>;
+  quarantineRestaurant(
+    userId: string,
+    state: unknown,
+    reason: string,
+  ): Promise<void>;
   loadTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -754,6 +830,121 @@ export class PostgresFarmStateStore implements FarmStateStore {
     );
   }
 
+  async loadRestaurant(userId: string): Promise<unknown | undefined> {
+    const result = await this.query<{ state: unknown }>(
+      "SELECT state FROM restaurant_state WHERE user_id = $1",
+      [userId],
+    );
+    return result.rows[0]?.state;
+  }
+
+  async saveRestaurant(
+    userId: string,
+    state: RestaurantGameState,
+  ): Promise<void> {
+    await this.query(
+      `INSERT INTO restaurant_state (user_id, state, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+       SET state = EXCLUDED.state, updated_at = NOW()`,
+      [userId, JSON.stringify(state)],
+    );
+  }
+
+  async saveAccountAndRestaurant(
+    userId: string,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+  ): Promise<void> {
+    const { client, release } = await this.acquireClient();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO estate_account_state (user_id, state, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET state = EXCLUDED.state, updated_at = NOW()`,
+        [userId, JSON.stringify(account)],
+      );
+      await client.query(
+        `INSERT INTO restaurant_state (user_id, state, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET state = EXCLUDED.state, updated_at = NOW()`,
+        [userId, JSON.stringify(restaurant)],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      release();
+    }
+  }
+
+  async saveAccountRestaurantAndTownEstate(
+    userId: string,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+    townId: EstateTownId,
+    state: TownEstateBundle,
+  ): Promise<void> {
+    const { client, release } = await this.acquireClient();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO estate_account_state (user_id, state, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET state = EXCLUDED.state, updated_at = NOW()`,
+        [userId, JSON.stringify(account)],
+      );
+      await client.query(
+        `INSERT INTO restaurant_state (user_id, state, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET state = EXCLUDED.state, updated_at = NOW()`,
+        [userId, JSON.stringify(restaurant)],
+      );
+      await client.query(
+        `INSERT INTO town_estate_state (user_id, town_id, state, updated_at)
+         VALUES ($1, $2, $3::jsonb, NOW())
+         ON CONFLICT (user_id, town_id) DO UPDATE
+         SET state = EXCLUDED.state, updated_at = NOW()`,
+        [userId, townId, JSON.stringify(state)],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      release();
+    }
+  }
+
+  async quarantineRestaurant(
+    userId: string,
+    state: unknown,
+    reason: string,
+  ): Promise<void> {
+    const { client, release } = await this.acquireClient();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO restaurant_state_quarantine (user_id, state, reason)
+         VALUES ($1, $2::jsonb, $3)`,
+        [userId, JSON.stringify(state), reason],
+      );
+      await client.query("DELETE FROM restaurant_state WHERE user_id = $1", [userId]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      release();
+    }
+  }
+
   async loadTownEstate(
     userId: string,
     townId: EstateTownId,
@@ -1022,6 +1213,7 @@ export class MemoryFarmStateStore implements FarmStateStore {
   private readonly mineStates = new Map<string, unknown>();
   private readonly homesteadStates = new Map<string, unknown>();
   private readonly estateAccounts = new Map<string, unknown>();
+  private readonly restaurants = new Map<string, unknown>();
   private readonly townEstates = new Map<string, unknown>();
   readonly quarantined: Array<{ userId: string; state: unknown; reason: string }> = [];
   readonly quarantinedRanches: Array<{
@@ -1042,6 +1234,11 @@ export class MemoryFarmStateStore implements FarmStateStore {
   readonly quarantinedTownEstates: Array<{
     userId: string;
     townId: EstateTownId;
+    state: unknown;
+    reason: string;
+  }> = [];
+  readonly quarantinedRestaurants: Array<{
+    userId: string;
     state: unknown;
     reason: string;
   }> = [];
@@ -1228,6 +1425,55 @@ export class MemoryFarmStateStore implements FarmStateStore {
     this.estateAccounts.set(userId, structuredClone(state));
   }
 
+  async loadRestaurant(userId: string): Promise<unknown | undefined> {
+    const state = this.restaurants.get(userId);
+    return state === undefined ? undefined : structuredClone(state);
+  }
+
+  async saveRestaurant(
+    userId: string,
+    state: RestaurantGameState,
+  ): Promise<void> {
+    this.restaurants.set(userId, structuredClone(state));
+  }
+
+  async saveAccountAndRestaurant(
+    userId: string,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+  ): Promise<void> {
+    this.estateAccounts.set(userId, structuredClone(account));
+    this.restaurants.set(userId, structuredClone(restaurant));
+  }
+
+  async saveAccountRestaurantAndTownEstate(
+    userId: string,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+    townId: EstateTownId,
+    state: TownEstateBundle,
+  ): Promise<void> {
+    this.estateAccounts.set(userId, structuredClone(account));
+    this.restaurants.set(userId, structuredClone(restaurant));
+    this.townEstates.set(
+      this.townEstateKey(userId, townId),
+      structuredClone(state),
+    );
+  }
+
+  async quarantineRestaurant(
+    userId: string,
+    state: unknown,
+    reason: string,
+  ): Promise<void> {
+    this.quarantinedRestaurants.push({
+      userId,
+      state: structuredClone(state),
+      reason,
+    });
+    this.restaurants.delete(userId);
+  }
+
   private townEstateKey(userId: string, townId: EstateTownId): string {
     return `${userId}:${townId}`;
   }
@@ -1374,6 +1620,10 @@ export class MemoryFarmStateStore implements FarmStateStore {
 
   setRawEstateAccount(userId: string, state: unknown): void {
     this.estateAccounts.set(userId, structuredClone(state));
+  }
+
+  setRawRestaurant(userId: string, state: unknown): void {
+    this.restaurants.set(userId, structuredClone(state));
   }
 
   setRawTownEstate(
@@ -1864,6 +2114,224 @@ export class FarmService {
           this.clock(),
         ),
       };
+    });
+  }
+
+  async getOrCreateRestaurant(user: PublicUser): Promise<RestaurantSnapshot> {
+    return this.serializedMany([user.id], async () => {
+      const account = await this.loadOrCreateEstateAccount(user);
+      const restaurant = await this.loadOrCreateRestaurant(user);
+      return this.restaurantSnapshot(user, account, restaurant);
+    });
+  }
+
+  async applyRestaurantAction(
+    user: PublicUser,
+    expectedAccountRevision: number,
+    expectedRestaurantRevision: number,
+    action: RestaurantClientAction,
+  ): Promise<RestaurantSnapshot> {
+    return this.serializedMany([user.id], async () => {
+      let account = await this.loadOrCreateEstateAccount(user);
+      const restaurant = await this.loadOrCreateRestaurant(user);
+      this.assertAccountRevision(account, expectedAccountRevision);
+      this.assertRestaurantRevision(restaurant, expectedRestaurantRevision);
+      const operationTownId = action.type === "restaurant_open_service"
+        ? action.serviceTownId
+        : action.type === "restaurant_learn_technique" ||
+            action.type === "restaurant_unlock_recipe"
+        ? action.sponsorTownId
+        : action.type === "restaurant_buy_shop_item"
+        ? RESTAURANT_SHOP_ITEMS[action.itemId].supplierTownId
+        : action.type === "restaurant_serve_order"
+        ? restaurant.service?.townId
+        : undefined;
+      if (operationTownId && !account.townProgress[operationTownId]?.unlocked) {
+        throw new HttpError(
+          400,
+          "RESTAURANT_TOWN_LOCKED",
+          "该餐厅操作关联的城镇尚未解锁",
+        );
+      }
+      const operationBundle = operationTownId
+        ? await this.loadOrCreateTownEstate(user, operationTownId, account)
+        : undefined;
+      const previousEconomy = this.restaurantEconomy(account);
+      let result: ReturnType<typeof applyRestaurantLinkedAction>;
+      try {
+        result = applyRestaurantLinkedAction(
+          restaurant,
+          previousEconomy,
+          action,
+          this.clock(),
+        );
+      } catch (error) {
+        this.mapRestaurantRuleError(error);
+      }
+      const changedReputationTowns = ESTATE_TOWN_IDS.filter((townId) =>
+        result!.economy.localReputation[townId] !==
+          previousEconomy.localReputation[townId]
+      );
+      account = this.syncAccountFromRestaurantEconomy(
+        account,
+        result!.economy,
+      );
+      if (changedReputationTowns.length > 1) {
+        throw new HttpError(
+          400,
+          "RESTAURANT_MULTI_TOWN_REPUTATION",
+          "单次餐厅操作不能同时修改多个城镇的当地声望",
+        );
+      }
+      if (changedReputationTowns.length === 1) {
+        const townId = changedReputationTowns[0]!;
+        if (!operationBundle || operationTownId !== townId) {
+          throw new HttpError(
+            400,
+            "RESTAURANT_REPUTATION_TOWN_MISMATCH",
+            "餐厅声望结算城镇与本次操作不一致",
+          );
+        }
+        let bundle = operationBundle;
+        bundle = this.syncBundleFromAccount(bundle, account);
+        await this.store.saveAccountRestaurantAndTownEstate(
+          user.id,
+          account,
+          result!.state,
+          townId,
+          bundle,
+        );
+      } else {
+        await this.store.saveAccountAndRestaurant(
+          user.id,
+          account,
+          result!.state,
+        );
+      }
+      return this.restaurantSnapshot(user, account, result!.state);
+    });
+  }
+
+  async supplyRestaurantFromTown(
+    user: PublicUser,
+    expectedAccountRevision: number,
+    expectedRestaurantRevision: number,
+    expectedFarmRevision: number,
+    expectedRanchRevision: number,
+    expectedMineRevision: number,
+    expectedHomesteadRevision: number,
+    action: RestaurantSupplyClientAction,
+  ): Promise<RestaurantSnapshot> {
+    return this.serializedMany([user.id], async () => {
+      let account = await this.loadOrCreateEstateAccount(user);
+      if (!account.townProgress[action.sourceTownId]?.unlocked) {
+        throw new HttpError(400, "RESTAURANT_SOURCE_TOWN_LOCKED", "供货城镇尚未解锁");
+      }
+      let bundle = await this.loadOrCreateTownEstate(
+        user,
+        action.sourceTownId,
+        account,
+      );
+      const restaurant = await this.loadOrCreateRestaurant(user);
+      this.assertAccountRevision(account, expectedAccountRevision);
+      this.assertRestaurantRevision(restaurant, expectedRestaurantRevision);
+      this.assertRevision(bundle.farm, expectedFarmRevision);
+      this.assertRanchRevision(bundle.ranch, expectedRanchRevision);
+      this.assertMineRevision(bundle.mine, expectedMineRevision);
+      this.assertHomesteadRevision(bundle.homestead, expectedHomesteadRevision);
+      if (action.lines.length < 1 || action.lines.length > 8) {
+        throw new HttpError(400, "RESTAURANT_INVALID_MANIFEST", "供货清单应包含1至8项");
+      }
+      const manifestByIngredient = new Map<string, RestaurantIngredientAmount>();
+      const lineKeys = new Set<string>();
+      let farmChanged = false;
+      let ranchChanged = false;
+      let homesteadChanged = false;
+      let totalQuantity = 0;
+      for (const line of action.lines) {
+        const key = `${line.source}:${line.itemId}`;
+        if (lineKeys.has(key)) {
+          throw new HttpError(400, "RESTAURANT_DUPLICATE_SUPPLY", "供货清单包含重复项目");
+        }
+        lineKeys.add(key);
+        const definition = getRestaurantTownSupplyDefinition(
+          action.sourceTownId,
+          line.source,
+          line.itemId,
+        );
+        if (!definition) {
+          throw new HttpError(400, "RESTAURANT_INGREDIENT_NOT_ELIGIBLE", "该物资不能作为餐厅食材供货");
+        }
+        if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 999) {
+          throw new HttpError(400, "RESTAURANT_INVALID_QUANTITY", "供货数量无效");
+        }
+        const stock = line.source === "farm"
+          ? bundle.farm.produce as Record<string, number>
+          : line.source === "ranch"
+            ? bundle.ranch.products as Record<string, number>
+            : bundle.homestead.goods as Record<string, number>;
+        if ((stock[line.itemId] ?? 0) < line.quantity) {
+          throw new HttpError(400, "RESTAURANT_SUPPLY_SHORTAGE", "来源城镇库存不足");
+        }
+        stock[line.itemId] = (stock[line.itemId] ?? 0) - line.quantity;
+        farmChanged ||= line.source === "farm";
+        ranchChanged ||= line.source === "ranch";
+        homesteadChanged ||= line.source === "goods";
+        totalQuantity += line.quantity;
+        const sourceKind = line.source === "goods"
+          ? "homestead_goods"
+          : line.source;
+        const manifestKey = `${definition.ingredientId}:${sourceKind}`;
+        const existing = manifestByIngredient.get(manifestKey);
+        manifestByIngredient.set(manifestKey, {
+          ingredientId: definition.ingredientId,
+          quantity: (existing?.quantity ?? 0) + line.quantity,
+          sourceKind,
+        });
+      }
+      const shippingCost = 5 + totalQuantity * 2 +
+        (account.activeTownId === action.sourceTownId ? 0 : 10);
+      if (account.coins < shippingCost) {
+        throw new HttpError(400, "RESTAURANT_COINS_SHORTAGE", "餐厅供货运费所需金币不足");
+      }
+      const now = this.clock();
+      account.coins -= shippingCost;
+      account.revision += 1;
+      account.updatedAt = Math.max(account.updatedAt, now);
+      if (farmChanged) {
+        bundle.farm.revision += 1;
+        bundle.farm.updatedAt = Math.max(bundle.farm.updatedAt, now);
+      }
+      if (ranchChanged) {
+        bundle.ranch.revision += 1;
+        bundle.ranch.updatedAt = Math.max(bundle.ranch.updatedAt, now);
+      }
+      if (homesteadChanged) {
+        bundle.homestead.revision += 1;
+        bundle.homestead.updatedAt = Math.max(bundle.homestead.updatedAt, now);
+      }
+      const manifest = [...manifestByIngredient.values()];
+      let nextRestaurant: RestaurantGameState;
+      try {
+        nextRestaurant = dispatchRestaurantSupply(restaurant, {
+          shipmentId: `${now}:${restaurant.revision + 1}:${action.sourceTownId}`,
+          sourceTownId: action.sourceTownId,
+          manifest,
+          now,
+          durationSeconds: account.activeTownId === action.sourceTownId ? 0 : 120,
+        });
+      } catch (error) {
+        this.mapRestaurantRuleError(error);
+      }
+      bundle = this.syncBundleFromAccount(bundle, account);
+      await this.store.saveAccountRestaurantAndTownEstate(
+        user.id,
+        account,
+        nextRestaurant!,
+        action.sourceTownId,
+        bundle,
+      );
+      return this.restaurantSnapshot(user, account, nextRestaurant!);
     });
   }
 
@@ -2592,8 +3060,9 @@ export class FarmService {
     const loaded = await this.store.loadEstateAccount(userId);
     if (loaded !== undefined) {
       try {
-        assertRestorableEstateAccount(loaded);
-        activeTownId = loaded.activeTownId;
+        const migrated = migrateEstateAccountState(loaded);
+        assertRestorableEstateAccount(migrated);
+        activeTownId = migrated.activeTownId;
       } catch {
         // A recoverable account will be rebuilt inside the serialized section.
       }
@@ -3088,16 +3557,140 @@ export class FarmService {
     );
   }
 
+  private async loadOrCreateRestaurant(
+    user: PublicUser,
+  ): Promise<RestaurantGameState> {
+    const loaded = await this.store.loadRestaurant(user.id);
+    if (loaded !== undefined) {
+      try {
+        assertRestorableRestaurantGameState(loaded);
+        const original = structuredClone(loaded);
+        const restaurant = refreshRestaurantGame(original, this.clock());
+        let changed = restaurant.revision !== original.revision;
+        if (restaurant.ownerId !== user.id) {
+          throw new Error("餐厅存档所有者不匹配");
+        }
+        if (restaurant.ownerName !== user.displayName) {
+          restaurant.ownerName = user.displayName;
+          restaurant.revision += 1;
+          restaurant.updatedAt = Math.max(restaurant.updatedAt, this.clock());
+          changed = true;
+        }
+        if (changed) await this.store.saveRestaurant(user.id, restaurant);
+        return restaurant;
+      } catch (error) {
+        await this.store.quarantineRestaurant(
+          user.id,
+          loaded,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    const restaurant = createRestaurantGame({
+      ownerId: user.id,
+      ownerName: user.displayName,
+      seed: randomBytes(24).toString("hex"),
+      now: this.clock(),
+    });
+    await this.store.saveRestaurant(user.id, restaurant);
+    return restaurant;
+  }
+
+  private restaurantEconomy(account: EstateAccountState): RestaurantEconomy {
+    return {
+      coins: account.coins,
+      localReputation: Object.fromEntries(
+        ESTATE_TOWN_IDS.map((townId) => [
+          townId,
+          account.townProgress[townId]?.unlocked
+            ? account.townProgress[townId]!.localReputation
+            : -1,
+        ]),
+      ) as Record<EstateTownId, number>,
+    };
+  }
+
+  private syncAccountFromRestaurantEconomy(
+    state: EstateAccountState,
+    economy: RestaurantEconomy,
+  ): EstateAccountState {
+    const account = structuredClone(state);
+    let changed = account.coins !== economy.coins;
+    account.coins = economy.coins;
+    for (const townId of ESTATE_TOWN_IDS) {
+      const progress = account.townProgress[townId];
+      if (!progress?.unlocked || economy.localReputation[townId] < 0) continue;
+      if (progress.localReputation !== economy.localReputation[townId]) {
+        progress.localReputation = economy.localReputation[townId];
+        changed = true;
+      }
+    }
+    if (changed) {
+      account.revision += 1;
+      account.updatedAt = Math.max(account.updatedAt, this.clock());
+    }
+    return account;
+  }
+
+  private async restaurantSnapshot(
+    user: PublicUser,
+    account: EstateAccountState,
+    restaurant: RestaurantGameState,
+  ): Promise<RestaurantSnapshot> {
+    const supplySources: RestaurantSupplySourceSnapshot[] = [];
+    for (const townId of ESTATE_TOWN_IDS) {
+      if (!account.townProgress[townId]?.unlocked) continue;
+      const bundle = await this.loadOrCreateTownEstate(user, townId, account);
+      const definitions = RESTAURANT_TOWN_SUPPLIES.filter(
+        (definition) => definition.townId === townId,
+      );
+      supplySources.push({
+        townId,
+        farmRevision: bundle.farm.revision,
+        ranchRevision: bundle.ranch.revision,
+        mineRevision: bundle.mine.revision,
+        homesteadRevision: bundle.homestead.revision,
+        lines: definitions.map((definition) => {
+          const stock = definition.source === "farm"
+            ? bundle.farm.produce as Record<string, number>
+            : definition.source === "ranch"
+              ? bundle.ranch.products as Record<string, number>
+              : bundle.homestead.goods as Record<string, number>;
+          return {
+            source: definition.source,
+            itemId: definition.itemId,
+            ingredientId: definition.ingredientId,
+            quantity: stock[definition.itemId] ?? 0,
+          };
+        }),
+      });
+    }
+    return {
+      restaurant: getRestaurantGameView(restaurant, this.clock()),
+      accountRevision: account.revision,
+      coins: account.coins,
+      localReputation: restaurantLocalReputationRecord(
+        Object.fromEntries(ESTATE_TOWN_IDS.map((townId) => [
+          townId,
+          account.townProgress[townId]?.localReputation ?? 0,
+        ])),
+      ),
+      supplySources,
+    };
+  }
+
   private async loadOrCreateEstateAccount(
     user: PublicUser,
   ): Promise<EstateAccountState> {
     const loaded = await this.store.loadEstateAccount(user.id);
     if (loaded !== undefined) {
       try {
-        assertRestorableEstateAccount(loaded);
-        const original = structuredClone(loaded);
+        const migrated = migrateEstateAccountState(loaded);
+        assertRestorableEstateAccount(migrated);
+        const original = structuredClone(migrated);
         let account = refreshEstateAccount(original, this.clock());
-        let changed = account.revision !== original.revision;
+        let changed = !jsonValuesEqual(loaded, migrated) ||
+          account.revision !== original.revision;
         if (account.ownerName !== user.displayName) {
           account.ownerName = user.displayName;
           account.revision += 1;
@@ -3138,24 +3731,21 @@ export class FarmService {
     ]);
     try {
       if (rawFarm !== undefined) {
-        assertRestorableFarmingGameState(rawFarm);
-        legacyFarm = structuredClone(rawFarm);
+        legacyFarm = migrateFarmingCapacityState(rawFarm);
       }
     } catch {
       // The legacy recovery path remains available when the town is loaded.
     }
     try {
       if (rawRanch !== undefined) {
-        assertRestorableRanchGameState(rawRanch);
-        legacyRanch = structuredClone(rawRanch);
+        legacyRanch = migrateRanchCapacityState(rawRanch);
       }
     } catch {
       // Ignore an invalid legacy projection here.
     }
     try {
       if (rawMine !== undefined) {
-        assertRestorableMineGameState(rawMine);
-        legacyMine = structuredClone(rawMine);
+        legacyMine = migrateMineCapacityState(rawMine);
       }
     } catch {
       // Ignore an invalid legacy projection here.
@@ -3174,8 +3764,16 @@ export class FarmService {
     ] as const) {
       if (rawBundle === undefined) continue;
       try {
-        this.assertTownEstateBundle(rawBundle, user.id, townId);
-        recoveredTownBundles[townId] = structuredClone(rawBundle);
+        const capacityMigration = this.migrateTownEstateCapacities(rawBundle);
+        this.assertTownEstateBundle(capacityMigration.bundle, user.id, townId);
+        recoveredTownBundles[townId] = structuredClone(capacityMigration.bundle);
+        if (capacityMigration.migrated) {
+          await this.store.saveTownEstate(
+            user.id,
+            townId,
+            recoveredTownBundles[townId]!,
+          );
+        }
       } catch (error) {
         await this.store.quarantineTownEstate(
           user.id,
@@ -3211,13 +3809,6 @@ export class FarmService {
     const recoveredFrostResearch = new Set(
       recoveredTownBundles.frostpeak?.homestead.research.unlocked ?? [],
     );
-    const recoveredMerchantRenown = Math.max(
-      legacyHomestead?.townNetwork?.merchantRenown ?? 0,
-      ...recoveredBundles.map((bundle) =>
-        bundle.homestead.townNetwork.merchantRenown
-      ),
-    );
-
     const account = createEstateAccount({
       ownerId: user.id,
       ownerName: user.displayName,
@@ -3226,7 +3817,6 @@ export class FarmService {
       researchPoints:
         recoveredTownBundles.greenvale?.homestead.researchPoints ??
         legacyHomestead?.researchPoints,
-      merchantRenown: recoveredMerchantRenown,
       unlockedResearchIds: [...recoveredGreenResearch],
     });
     account.townResearch.greenvale = {
@@ -3337,8 +3927,9 @@ export class FarmService {
       );
     }
     try {
-      assertRestorableEstateAccount(loaded);
-      return refreshEstateAccount(structuredClone(loaded), this.clock());
+      const migrated = migrateEstateAccountState(loaded);
+      assertRestorableEstateAccount(migrated);
+      return refreshEstateAccount(structuredClone(migrated), this.clock());
     } catch {
       throw new HttpError(
         404,
@@ -3356,13 +3947,18 @@ export class FarmService {
     const loaded = await this.store.loadTownEstate(user.id, townId);
     if (loaded !== undefined) {
       try {
-        this.assertTownEstateBundle(loaded, user.id, townId);
-        const bundle = structuredClone(loaded);
+        const capacityMigration = this.migrateTownEstateCapacities(loaded);
+        this.assertTownEstateBundle(capacityMigration.bundle, user.id, townId);
+        const bundle = structuredClone(capacityMigration.bundle);
         bundle.farm.ownerName = user.displayName;
         bundle.ranch.ownerName = user.displayName;
         bundle.mine.ownerName = user.displayName;
         bundle.homestead.ownerName = user.displayName;
-        return this.syncBundleFromAccount(bundle, account);
+        const synced = this.syncBundleFromAccount(bundle, account);
+        if (capacityMigration.migrated) {
+          await this.store.saveTownEstate(user.id, townId, synced);
+        }
+        return synced;
       } catch (error) {
         await this.store.quarantineTownEstate(
           user.id,
@@ -3436,14 +4032,18 @@ export class FarmService {
       );
     }
     try {
-      this.assertTownEstateBundle(loaded, userId, townId);
-      const bundle = structuredClone(loaded);
+      const capacityMigration = this.migrateTownEstateCapacities(loaded);
+      this.assertTownEstateBundle(capacityMigration.bundle, userId, townId);
+      const bundle = structuredClone(capacityMigration.bundle);
       bundle.farm = refreshFarmingGame(bundle.farm, this.clock());
       bundle.ranch = refreshRanchGame(bundle.ranch, this.clock());
       bundle.homestead = refreshHomesteadGame(
         bundle.homestead,
         this.clock(),
       );
+      if (capacityMigration.migrated) {
+        await this.store.saveTownEstate(userId, townId, bundle);
+      }
       return bundle;
     } catch (error) {
       await this.store.quarantineTownEstate(
@@ -3507,6 +4107,39 @@ export class FarmService {
     return this.syncBundleFromAccount(bundle, account);
   }
 
+  private migrateTownEstateCapacities(value: unknown): {
+    readonly bundle: unknown;
+    readonly migrated: boolean;
+  } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { bundle: value, migrated: false };
+    }
+    const raw = value as {
+      readonly farm?: unknown;
+      readonly ranch?: unknown;
+      readonly mine?: unknown;
+      readonly townId?: unknown;
+      readonly contentVersion?: unknown;
+    };
+    const townId = typeof raw.townId === "string" &&
+        Object.prototype.hasOwnProperty.call(TOWN_DEFINITIONS, raw.townId)
+      ? raw.townId as EstateTownId
+      : undefined;
+    const normalized = {
+      ...structuredClone(raw),
+      ...(townId
+        ? { contentVersion: TOWN_DEFINITIONS[townId].contentVersion }
+        : {}),
+      farm: migrateFarmingCapacityState(raw.farm),
+      ranch: migrateRanchCapacityState(raw.ranch),
+      mine: migrateMineCapacityState(raw.mine),
+    };
+    return {
+      bundle: normalized,
+      migrated: !jsonValuesEqual(value, normalized),
+    };
+  }
+
   private assertTownEstateBundle(
     value: unknown,
     ownerId: string,
@@ -3523,6 +4156,9 @@ export class FarmService {
       throw new Error("城镇庄园存档结构无效");
     }
     const bundle = value as TownEstateBundle;
+    if (bundle.contentVersion !== TOWN_DEFINITIONS[townId].contentVersion) {
+      throw new Error("城镇庄园内容版本无效");
+    }
     assertRestorableFarmingGameState(bundle.farm);
     assertRestorableRanchGameState(bundle.ranch);
     assertRestorableMineGameState(bundle.mine);
@@ -3557,7 +4193,12 @@ export class FarmService {
       ...new Set(localResearch.unlockedIds),
     ] as HomesteadGameState["research"]["unlocked"];
     bundle.homestead.townNetwork.activeTownId = bundle.townId;
-    bundle.homestead.townNetwork.merchantRenown = account.merchantRenown;
+    const localReputation =
+      account.townProgress[bundle.townId]?.localReputation ??
+      bundle.homestead.reputation;
+    bundle.homestead.reputation = localReputation;
+    bundle.homestead.townNetwork.towns[bundle.townId].reputation =
+      localReputation;
     (bundle.farm as FarmingGameState & { townId?: EstateTownId }).townId =
       bundle.townId;
     (bundle.ranch as RanchGameState & { townId?: EstateTownId }).townId =
@@ -3579,7 +4220,6 @@ export class FarmService {
       return JSON.stringify([
         value.coins,
         value.townResearch[bundle.townId].points,
-        value.merchantRenown,
         [...value.townResearch[bundle.townId].unlockedIds].sort(),
         progress
           ? [
@@ -3609,8 +4249,6 @@ export class FarmService {
         ...account.townResearch[bundle.townId].unlockedIds,
       ];
     }
-    account.merchantRenown =
-      bundle.homestead.townNetwork.merchantRenown;
     const recommendedItemId =
       bundle.homestead.advice.merchantRecommendationId;
     if (recommendedItemId === null) {
@@ -3742,9 +4380,14 @@ export class FarmService {
       return ranch;
     }
     let ranch: RanchGameState;
+    const capacityMigrated = !(
+      loaded &&
+      typeof loaded === "object" &&
+      "version" in loaded &&
+      loaded.version === RANCH_STATE_VERSION
+    );
     try {
-      assertRestorableRanchGameState(loaded);
-      ranch = structuredClone(loaded);
+      ranch = migrateRanchCapacityState(loaded);
     } catch (error) {
       return this.recoverInvalidRanch(
         user.id,
@@ -3761,7 +4404,7 @@ export class FarmService {
         user,
       );
     }
-    let changed = false;
+    let changed = capacityMigrated;
     if (ranch.ownerName !== user.displayName) {
       ranch.ownerName = user.displayName;
       changed = true;
@@ -3781,9 +4424,14 @@ export class FarmService {
       throw new HttpError(404, "RANCH_NEIGHBOR_NOT_FOUND", "该农友尚未建立牧场");
     }
     let ranch: RanchGameState;
+    const capacityMigrated = !(
+      loaded &&
+      typeof loaded === "object" &&
+      "version" in loaded &&
+      loaded.version === RANCH_STATE_VERSION
+    );
     try {
-      assertRestorableRanchGameState(loaded);
-      ranch = structuredClone(loaded);
+      ranch = migrateRanchCapacityState(loaded);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       await this.store.quarantineRanch(userId, loaded, reason);
@@ -3806,7 +4454,7 @@ export class FarmService {
       );
     }
     const refreshed = refreshRanchGame(ranch, this.clock());
-    if (refreshed.revision !== ranch.revision) {
+    if (capacityMigrated || refreshed.revision !== ranch.revision) {
       await this.store.saveRanch(userId, refreshed);
     }
     return refreshed;
@@ -3820,9 +4468,14 @@ export class FarmService {
       return mine;
     }
     let mine: MineGameState;
+    const capacityMigrated = !(
+      loaded &&
+      typeof loaded === "object" &&
+      "version" in loaded &&
+      loaded.version === MINE_STATE_VERSION
+    );
     try {
-      assertRestorableMineGameState(loaded);
-      mine = structuredClone(loaded);
+      mine = migrateMineCapacityState(loaded);
     } catch (error) {
       return this.recoverInvalidMine(
         user.id,
@@ -3839,7 +4492,7 @@ export class FarmService {
         user,
       );
     }
-    if (mine.ownerName !== user.displayName) {
+    if (capacityMigrated || mine.ownerName !== user.displayName) {
       mine.ownerName = user.displayName;
       mine.updatedAt = Math.max(mine.updatedAt, this.clock());
       await this.store.saveMine(user.id, mine);
@@ -3927,6 +4580,16 @@ export class FarmService {
     ) {
       assertRestorableFarmingGameState(loaded);
       return structuredClone(loaded);
+    }
+    if (
+      loaded &&
+      typeof loaded === "object" &&
+      "version" in loaded &&
+      loaded.version === 2
+    ) {
+      const migrated = migrateFarmingCapacityState(loaded);
+      await this.store.save(userId, migrated);
+      return migrated;
     }
     try {
       const migrated = migrateLegacyFarmGame(loaded, this.clock());
@@ -4072,7 +4735,6 @@ export class FarmService {
       coins: account.coins,
       localReputation:
         account.townProgress[account.activeTownId]?.localReputation ?? 0,
-      merchantRenown: account.merchantRenown,
       logistics: structuredClone(account.logistics),
       merchantCandidates: estateMerchantOfferIds(account).map(
         (itemId) => ESTATE_MERCHANT_ITEMS[itemId],
@@ -4080,9 +4742,12 @@ export class FarmService {
           const owned = account.merchantInventory[item.id];
           const purchasedToday =
             account.purchaseLedger.counts[item.id];
+          const reputationTownId = item.townId ?? account.activeTownId;
+          const localReputation =
+            account.townProgress[reputationTownId]?.localReputation ?? 0;
           const disabledReason =
-            account.merchantRenown < item.requiredRenown
-              ? `商会名望达到 ${item.requiredRenown} 后开放`
+            localReputation < item.requiredLocalReputation
+              ? `${TOWN_DEFINITIONS[reputationTownId].name}当地声望达到 ${item.requiredLocalReputation} 后开放`
               : account.coins < item.coinPrice
                 ? "金币不足"
                 : owned >= item.inventoryLimit
@@ -4453,6 +5118,32 @@ export class FarmService {
     }
   }
 
+  private assertAccountRevision(
+    account: EstateAccountState,
+    expectedRevision: number,
+  ): void {
+    if (account.revision !== expectedRevision) {
+      throw new HttpError(
+        409,
+        "ESTATE_ACCOUNT_REVISION_CONFLICT",
+        "庄园账户状态已更新，请刷新后重试",
+      );
+    }
+  }
+
+  private assertRestaurantRevision(
+    restaurant: RestaurantGameState,
+    expectedRevision: number,
+  ): void {
+    if (restaurant.revision !== expectedRevision) {
+      throw new HttpError(
+        409,
+        "RESTAURANT_REVISION_CONFLICT",
+        "餐厅状态已更新，请刷新后重试",
+      );
+    }
+  }
+
   private assertExpectedTown(
     activeTownId: EstateTownId,
     expectedTownId?: EstateTownId,
@@ -4489,6 +5180,13 @@ export class FarmService {
 
   private mapHomesteadRuleError(error: unknown): never {
     if (error instanceof HomesteadRuleError) {
+      throw new HttpError(400, error.code, error.message);
+    }
+    throw error;
+  }
+
+  private mapRestaurantRuleError(error: unknown): never {
+    if (error instanceof RestaurantRuleError) {
       throw new HttpError(400, error.code, error.message);
     }
     throw error;
@@ -4637,7 +5335,6 @@ export class FarmService {
             unlockedTownIds: Object.entries(account.townProgress)
               .filter(([, progress]) => progress?.unlocked)
               .map(([townId]) => townId as EstateTownId),
-            merchantRenown: account.merchantRenown,
             townProgress: structuredClone(account.townProgress),
             merchantInventory: structuredClone(account.merchantInventory),
             purchaseLedger: structuredClone(account.purchaseLedger),

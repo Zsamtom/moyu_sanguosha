@@ -20,11 +20,11 @@ import {
   applyPriceModifier,
 } from "./production-modifier.js";
 
-export const MINE_STATE_VERSION = 1 as const;
+export const MINE_STATE_VERSION = 2 as const;
 export const MINE_REQUIRED_FARM_LEVEL = 1;
 export const MINE_REQUIRED_RANCH_LEVEL = 1;
 export const MINE_STARTING_SHAFTS = 2;
-export const MINE_MAX_SHAFTS = 6;
+export const MINE_MAX_SHAFTS = 8;
 export const MINE_MAX_LOGS = 80;
 export const MINE_UNREINFORCED_YIELD_PENALTY = 1;
 export const MINE_REINFORCED_YIELD_BONUS = 1;
@@ -197,6 +197,8 @@ export const MINE_LEVEL_EXPERIENCE = [
   1_430,
   1_950,
   2_600,
+  3_350,
+  4_200,
 ] as const;
 
 export interface MineShaftExpansion {
@@ -212,6 +214,8 @@ export const MINE_SHAFT_EXPANSIONS: readonly MineShaftExpansion[] = [
   { shaftIndex: 3, requiredFarmLevel: 8, requiredRanchLevel: 5, requiredMineLevel: 4, coinCost: 1_200 },
   { shaftIndex: 4, requiredFarmLevel: 10, requiredRanchLevel: 7, requiredMineLevel: 6, coinCost: 2_000 },
   { shaftIndex: 5, requiredFarmLevel: 12, requiredRanchLevel: 9, requiredMineLevel: 8, coinCost: 3_200 },
+  { shaftIndex: 6, requiredFarmLevel: 14, requiredRanchLevel: 11, requiredMineLevel: 10, coinCost: 4_800 },
+  { shaftIndex: 7, requiredFarmLevel: 16, requiredRanchLevel: 13, requiredMineLevel: 12, coinCost: 6_800 },
 ];
 
 export interface MinePickaxeUpgrade {
@@ -639,6 +643,56 @@ export function createMineGame(input: {
       text: `矿山档案已经建立；农场 ${MINE_REQUIRED_FARM_LEVEL} 级、牧场 ${MINE_REQUIRED_RANCH_LEVEL} 级后开放。`,
     }],
   };
+}
+
+/**
+ * Expands v1 mine saves before v2 validation. Existing shafts retain every
+ * expedition field; only the two newly appended shafts are empty and locked.
+ */
+export function migrateMineCapacityState(value: unknown): MineGameState {
+  if (!isRecord(value) || value.kind !== "mine") {
+    throw new Error("矿山存档结构无效");
+  }
+  if (value.version === MINE_STATE_VERSION) {
+    const current = structuredClone(value) as unknown as MineGameState;
+    if (isNonNegativeInteger(current.experience)) {
+      current.level = levelForExperience(current.experience);
+    }
+    assertRestorableMineGameState(current);
+    return current;
+  }
+  if (
+    value.version !== 1 ||
+    !Array.isArray(value.shafts) ||
+    value.shafts.length !== 6
+  ) {
+    throw new Error("矿山存档容量迁移版本无效");
+  }
+
+  const migrated = structuredClone(value) as Omit<
+    MineGameState,
+    "version" | "shafts"
+  > & {
+    version: number;
+    shafts: MineShaftState[];
+  };
+  if (!isNonNegativeInteger(migrated.revision)) {
+    throw new Error("矿山存档修订号无效");
+  }
+  migrated.version = MINE_STATE_VERSION;
+  if (isNonNegativeInteger(migrated.experience)) {
+    // v1 persisted the old level-10 cap; accumulated experience can already
+    // qualify the save for one of the newly appended levels.
+    migrated.level = levelForExperience(migrated.experience);
+  }
+  migrated.shafts.push(
+    ...Array.from(
+      { length: MINE_MAX_SHAFTS - migrated.shafts.length },
+      (_, index) => emptyShaft(index + migrated.shafts.length),
+    ),
+  );
+  assertRestorableMineGameState(migrated);
+  return migrated;
 }
 
 export function applyMineAction(

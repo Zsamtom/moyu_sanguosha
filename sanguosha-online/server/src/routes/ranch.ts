@@ -4,6 +4,7 @@ import {
   ALL_RANCH_ANIMAL_IDS,
   ALL_RANCH_PRODUCT_IDS,
   ESTATE_TOWN_IDS,
+  RANCH_MAX_PENS,
 } from "@sanguosha/shared";
 import { asyncHandler } from "../errors.js";
 import type {
@@ -17,7 +18,7 @@ const animalIdSchema = z.enum(ALL_RANCH_ANIMAL_IDS);
 const productIdSchema = z.enum(ALL_RANCH_PRODUCT_IDS);
 const townIdSchema = z.enum(ESTATE_TOWN_IDS);
 const quantitySchema = z.number().int().min(1).max(99);
-const penIndexSchema = z.number().int().min(0).max(7);
+const penIndexSchema = z.number().int().min(0).max(RANCH_MAX_PENS - 1);
 
 const actionSchema = z.discriminatedUnion("type", [
   z.object({
@@ -45,6 +46,10 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ranch_clean_all") }).strict(),
   z.object({
     type: z.literal("ranch_collect"),
+    penIndex: penIndexSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("ranch_slaughter"),
     penIndex: penIndexSchema,
   }).strict(),
   z.object({ type: z.literal("ranch_collect_all") }).strict(),

@@ -21,6 +21,10 @@ export const FROSTPEAK_CROP_IDS = [
   "silver_flax",
   "winter_melon",
   "aurora_fruit",
+  "mountain_mushroom",
+  "snow_cabbage",
+  "frost_onion",
+  "alpine_pepper",
 ] as const;
 
 export const FROSTPEAK_FARM_CROPS: Readonly<
@@ -85,6 +89,26 @@ export const FROSTPEAK_FARM_CROPS: Readonly<
     id: "aurora_fruit", name: "极光果", unlockLevel: 13, seedCost: 174,
     basePrice: 229, minimumPrice: 139, maximumPrice: 319,
     growthSeconds: 18 * HOUR, yield: 9, harvestExperience: 119,
+  },
+  mountain_mushroom: {
+    id: "mountain_mushroom", name: "山地菌菇", unlockLevel: 4, seedCost: 22,
+    basePrice: 34, minimumPrice: 22, maximumPrice: 49,
+    growthSeconds: 70 * MINUTE, yield: 4, harvestExperience: 29,
+  },
+  snow_cabbage: {
+    id: "snow_cabbage", name: "雪白菜", unlockLevel: 5, seedCost: 30,
+    basePrice: 46, minimumPrice: 29, maximumPrice: 66,
+    growthSeconds: 2 * HOUR, yield: 5, harvestExperience: 37,
+  },
+  frost_onion: {
+    id: "frost_onion", name: "霜洋葱", unlockLevel: 7, seedCost: 56,
+    basePrice: 82, minimumPrice: 51, maximumPrice: 116,
+    growthSeconds: 4 * HOUR, yield: 6, harvestExperience: 56,
+  },
+  alpine_pepper: {
+    id: "alpine_pepper", name: "高原辣椒", unlockLevel: 9, seedCost: 100,
+    basePrice: 140, minimumPrice: 86, maximumPrice: 197,
+    growthSeconds: 8 * HOUR, yield: 7, harvestExperience: 82,
   },
 };
 
@@ -217,7 +241,7 @@ export const FROSTPEAK_MINE_DEPOSITS: Readonly<
 
 export const FROSTPEAK_TOWN_DEFINITION: TownDefinition = {
   id: "frostpeak",
-  contentVersion: 1,
+  contentVersion: 2,
   rulesetId: "standard_three_sector_v1",
   name: "霜岭镇",
   subtitle: "高寒三业庄园",

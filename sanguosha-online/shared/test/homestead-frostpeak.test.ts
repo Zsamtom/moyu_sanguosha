@@ -32,6 +32,7 @@ import {
   createMineGame,
   createRanchGame,
   getHomesteadGameView,
+  RESTAURANT_TOWN_SUPPLIES,
   type HomesteadLinkedEconomy,
 } from "../src/index.js";
 
@@ -237,18 +238,26 @@ describe("Frostpeak complete homestead content pack", () => {
     }
   });
 
-  it("keeps every one of the 24 Frostpeak primary products economically useful", () => {
+  it("keeps every Frostpeak primary product economically useful", () => {
     const routeResources = FROSTPEAK_HOMESTEAD_VALUE_ROUTES.flatMap(
       (route) => route.requirements,
     );
-    const covered = new Set(routeResources.map(resourceKey));
+    const covered = new Set([
+      ...routeResources.map(resourceKey),
+      ...RESTAURANT_TOWN_SUPPLIES
+        .filter(({ townId }) => townId === "frostpeak")
+        .map(({ source, itemId }) => `${source}:${itemId}`),
+    ]);
     const expected = new Set([
       ...FROSTPEAK_CROP_IDS.map((id) => `farm:${id}`),
       ...FROSTPEAK_PRODUCT_IDS.map((id) => `ranch:${id}`),
       ...FROSTPEAK_DEPOSIT_IDS.map((id) => `mine:${id}`),
     ]);
 
-    expect(expected.size).toBe(24);
+    expect(expected.size).toBe(
+      FROSTPEAK_CROP_IDS.length + FROSTPEAK_PRODUCT_IDS.length +
+        FROSTPEAK_DEPOSIT_IDS.length,
+    );
     for (const resource of expected) {
       expect(covered.has(resource), `${resource} has no value route`).toBe(true);
     }

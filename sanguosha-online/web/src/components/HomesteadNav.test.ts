@@ -9,6 +9,7 @@ describe('HomesteadNav', () => {
       '农场',
       '牧场',
       '矿山',
+      '餐厅',
     ]);
     expect(HOMESTEAD_NAV_ENTRIES.some(({ label }) => label.includes('青禾')))
       .toBe(false);

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   FARMING_CROPS,
   FARMING_LEVEL_EXPERIENCE,
+  FARMING_MAX_PLOTS,
+  FARMING_PLOT_EXPANSIONS,
   FarmingRuleError,
   applyFarmingAction,
   applyFarmingVisitAction,
@@ -10,6 +12,7 @@ import {
   migrateLegacyFarmGame,
   getFarmingGameView,
   getFarmingNeighborSummary,
+  migrateFarmingCapacityState,
   refreshFarmingGame,
   type FarmingGameState,
 } from "../src/farming.js";
@@ -33,7 +36,7 @@ describe("real-time farming engine", () => {
   it("creates six unlocked plots, starter crops, and a restorable account save", () => {
     const state = game();
     expect(state).toMatchObject({
-      version: 2,
+      version: 3,
       level: 1,
       unlockedPlots: 6,
       coins: 100,
@@ -42,7 +45,7 @@ describe("real-time farming engine", () => {
         carrot: 3,
       },
     });
-    expect(state.plots).toHaveLength(12);
+    expect(state.plots).toHaveLength(24);
     expect(() => assertRestorableFarmingGameState(state)).not.toThrow();
   });
 
@@ -494,7 +497,7 @@ describe("real-time farming engine", () => {
     const migrated = migrateLegacyFarmGame(legacy, start);
 
     expect(migrated).toMatchObject({
-      version: 2,
+      version: 3,
       ownerId: "legacy-owner",
       ownerName: "老农友",
       coins: legacy.players[0]!.coins,
@@ -507,6 +510,37 @@ describe("real-time farming engine", () => {
     expect(migrated.discoveredCrops).toEqual(
       expect.arrayContaining(["wheat", "carrot", "tomato"]),
     );
+    expect(() => assertRestorableFarmingGameState(migrated)).not.toThrow();
+  });
+
+  it("migrates v2 capacity saves to 24 plots without changing old plots or revision", () => {
+    const current = game();
+    current.unlockedPlots = 12;
+    current.revision = 19;
+    current.experience = 6_278;
+    current.level = 13;
+    current.plots = current.plots.slice(0, 12);
+    current.plots[11]!.cycle = 7;
+    const legacy = { ...current, version: 2 } as unknown;
+
+    const migrated = migrateFarmingCapacityState(legacy);
+
+    expect(migrated).toMatchObject({
+      version: 3,
+      revision: 19,
+      level: 20,
+      unlockedPlots: 12,
+    });
+    expect(migrated.plots).toHaveLength(FARMING_MAX_PLOTS);
+    expect(migrated.plots[11]).toMatchObject({ index: 11, cycle: 7 });
+    expect(migrated.plots[12]).toMatchObject({ index: 12, cropId: null });
+    expect(migrated.plots[23]).toMatchObject({ index: 23, cropId: null });
+    expect(FARMING_LEVEL_EXPERIENCE).toHaveLength(25);
+    expect(FARMING_PLOT_EXPANSIONS.at(-1)).toEqual({
+      plotIndex: 23,
+      requiredLevel: 25,
+      coinCost: 9_900,
+    });
     expect(() => assertRestorableFarmingGameState(migrated)).not.toThrow();
   });
 });

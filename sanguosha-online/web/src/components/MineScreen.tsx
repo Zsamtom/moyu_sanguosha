@@ -502,7 +502,7 @@ export function MineScreen() {
         <span><i className="farm-status-dot" /> 存档：服务器实时持久化</span>
         <span>城镇：{game.townDefinition.name}</span>
         <span>矿主：{game.ownerName}</span>
-        <span>矿山：LV {game.level} / {game.unlockedShafts} 条矿井</span>
+        <span>矿山：LV {game.level} · {game.unlockedShafts} / {game.shafts.length} 条矿井</span>
         <span>农场：LV {game.farmLevel}</span>
         <span>牧场：LV {game.ranchLevel}</span>
         <span>

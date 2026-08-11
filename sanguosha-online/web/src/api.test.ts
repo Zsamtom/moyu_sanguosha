@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
-import type { HomesteadSnapshot, RoomRuleConfig } from './types';
+import type { HomesteadSnapshot, RestaurantSnapshot, RoomRuleConfig } from './types';
 
 const ruleConfig: RoomRuleConfig = {
   ruleSetVersion: 'original-66-v1',
@@ -266,7 +266,7 @@ describe('room draft API', () => {
 describe('farm API', () => {
   it('submits an owner action and accepts the lightweight action snapshot', async () => {
     const payload = {
-      farm: { version: 2, revision: 3 },
+      farm: { version: 3, revision: 3 },
       marketDirectorAvailable: false,
     };
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(payload));
@@ -302,8 +302,8 @@ describe('farm API', () => {
 
   it('submits a cross-account farm action with both optimistic revisions', async () => {
     const payload = {
-      farm: { version: 2 },
-      neighbor: { version: 2 },
+      farm: { version: 3 },
+      neighbor: { version: 3 },
       neighbors: [],
       outcome: 'helped',
       marketDirectorAvailable: false,
@@ -345,7 +345,7 @@ describe('farm API', () => {
 describe('ranch API', () => {
   it('submits linked actions with farm and ranch optimistic revisions', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
-      ranch: { version: 1 },
+      ranch: { version: 2 },
       neighbors: [],
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -373,8 +373,8 @@ describe('ranch API', () => {
 
   it('submits cross-account ranch actions with both ranch revisions', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
-      ranch: { version: 1 },
-      neighbor: { version: 1 },
+      ranch: { version: 2 },
+      neighbor: { version: 2 },
       neighbors: [],
       outcome: 'collected',
     }));
@@ -406,7 +406,7 @@ describe('ranch API', () => {
 describe('mine API', () => {
   it('submits actions with farm, ranch and mine optimistic revisions', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
-      mine: { version: 1 },
+      mine: { version: 2 },
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -502,6 +502,71 @@ describe('homestead API', () => {
             type: 'homestead_talk_npc',
             npcId: 'agronomist_lin',
             topicId: 'rotation',
+          },
+        }),
+      }),
+    );
+  });
+});
+
+describe('restaurant API', () => {
+  it('submits account, restaurant and source-town revision vectors', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse({
+      restaurant: { version: 1 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const snapshot = {
+      accountRevision: 8,
+      restaurant: { revision: 5 },
+      supplySources: [{
+        townId: 'frostpeak',
+        farmRevision: 12,
+        ranchRevision: 9,
+        mineRevision: 6,
+        homesteadRevision: 4,
+        lines: [],
+      }],
+    } as unknown as RestaurantSnapshot;
+
+    await api.applyRestaurantAction(snapshot, {
+      type: 'restaurant_set_menu',
+      recipeIds: ['tomato_carrot_salad'],
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/restaurant/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedAccountRevision: 8,
+          expectedRestaurantRevision: 5,
+          action: {
+            type: 'restaurant_set_menu',
+            recipeIds: ['tomato_carrot_salad'],
+          },
+        }),
+      }),
+    );
+
+    await api.supplyRestaurantFromTown(snapshot, {
+      type: 'restaurant_supply_from_town',
+      sourceTownId: 'frostpeak',
+      lines: [{ source: 'farm', itemId: 'cloudberry', quantity: 2 }],
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/restaurant/actions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          expectedAccountRevision: 8,
+          expectedRestaurantRevision: 5,
+          expectedFarmRevision: 12,
+          expectedRanchRevision: 9,
+          expectedMineRevision: 6,
+          expectedHomesteadRevision: 4,
+          action: {
+            type: 'restaurant_supply_from_town',
+            sourceTownId: 'frostpeak',
+            lines: [{ source: 'farm', itemId: 'cloudberry', quantity: 2 }],
           },
         }),
       }),

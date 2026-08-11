@@ -75,7 +75,6 @@ export interface HomesteadDirectorEvidenceFact {
 export interface HomesteadDirectorContext {
   readonly coins?: number;
   readonly localReputation?: number;
-  readonly merchantRenown?: number;
   readonly logistics?: {
     readonly used: number;
     readonly capacity: number;
@@ -133,7 +132,6 @@ export interface HomesteadDirectorCompactState {
   readonly coins: number;
   readonly reputation: number;
   readonly localReputation: number;
-  readonly merchantRenown: number;
   readonly researchPoints: number;
   readonly builtFacilities: readonly string[];
   readonly farmStock: number;
@@ -348,7 +346,7 @@ function isMerchantItemId(value: unknown): value is EstateMerchantItemId {
 function merchantCandidates(
   context: HomesteadDirectorContext | undefined,
   coins: number,
-  merchantRenown: number,
+  localReputation: number,
 ): CompactMerchantCandidate[] {
   const supplied: readonly HomesteadDirectorMerchantCandidate[] =
     context?.merchantCandidates ??
@@ -365,13 +363,13 @@ function merchantCandidates(
     }
     const definition = ESTATE_MERCHANT_ITEMS[candidate.itemId];
     // With no authoritative account context, only expose recommendations that
-    // are at least affordable and renown-eligible. Purchase validation remains
+    // are at least affordable and local-reputation-eligible. Purchase validation remains
     // entirely server-side.
     if (
       context?.merchantCandidates === undefined &&
       (
         coins < definition.coinPrice ||
-        merchantRenown < definition.requiredRenown
+        localReputation < definition.requiredLocalReputation
       )
     ) {
       continue;
@@ -529,13 +527,13 @@ export function createHomesteadDirectorDecision(
   const ranchStock = total(ranch.products);
   const mineStock = total(mine.ores);
   const coins = availableCoins;
-  const merchantRenown = context?.merchantRenown ??
-    homestead.townNetwork?.merchantRenown ??
-    0;
+  const localReputation = context?.localReputation ??
+    activeTown?.reputation ??
+    homestead.reputation;
   const shopCandidates = merchantCandidates(
     context,
     coins,
-    merchantRenown,
+    localReputation,
   );
   const logistics = context?.logistics
     ? {
@@ -770,10 +768,7 @@ export function createHomesteadDirectorDecision(
         mineLevel: mine.level,
         coins,
         reputation: homestead.reputation,
-        localReputation: context?.localReputation ??
-          activeTown?.reputation ??
-          homestead.reputation,
-        merchantRenown,
+        localReputation,
         researchPoints: homestead.researchPoints,
         builtFacilities: homestead.facilities
           .filter(({ built }) => built)
